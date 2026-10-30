@@ -71,3 +71,15 @@ Done: inventory of the shipped image (libs, toolchain, NetSurf), baseline in the
 **Not done (no cheap step exists):** no modern engine was built or run; no JS/flex/grid page renders in ClokeOS yet. Untested: all
 sizes/effort/performance numbers marked *(est.)*, WebKit/Ladybird/Servo Darwin viability (only public information), x86_64 behaviour
 (not run; NetSurf package identical by construction), whether `SOCK_SEQPACKET`-style IPC works on PD (not probed).
+
+## 5. Update 2026-10-30: WebKitGTK runs on ClokeOS arm64
+
+The WebKitGTK spike from section 3 was done instead of Ladybird: WebKitGTK 2.54.2 cross-builds on the Mac (`webkit/`, six small patches, no Apple
+sources needed) and runs in the arm64 VM (HVF, software rendering): `webkit-modern-page-arm64.png` (grid, flexbox, CSS variables, canvas, fetch,
+ES2020+, Intl over HTTP), `webkit-https-example-arm64.png` (HTTPS/HTTP2 through glib-networking + the image's GnuTLS), and
+`clokesearch-webkit-https-arm64.png` (the Search app on WebKit with tabs and an address field). Search starts it when `/opt/webkit` is
+installed, otherwise NetSurf as before. Traps found (all in `webkit/README.md`): PureDarwin's `gethostuuid()` hangs the kernel when gettext asks
+CFPreferences (set `LANG=C`), AF_UNIX `SOCK_SEQPACKET` is unsupported (IPC uses `SOCK_DGRAM` + `sysctl net.local.dgram.maxdgram`), no SysV shm,
+D-Bus portals that do not exist make the first request wait minutes.
+Still open: JIT/WASM (JS runs in the C-loop interpreter: correct but slow, heavy sites such as Wikipedia untested), x86_64 (untested),
+publishing the ~36 MB package as a release asset (not in the repo), WebGL/video/printing, and the Safari-like extras of `clokeos.html`.
