@@ -1,4 +1,4 @@
-// jit.c – Block-JIT x86_64 -> arm64 (ganzzahliger Befehlssatz), Aufbau und Grenzen: docs/translation-study.md, Abschnitt 14.
+// jit.c – Block-JIT x86_64 -> arm64 (ganzzahliger Befehlssatz), Aufbau und Grenzen: docs/translation-study.md, Abschnitt 16.
 //
 // Überblick:
 //  * Gastspeicher: Host-Adresse = Gast-Adresse + delta (ein fester Versatz, Register x20). Der Bereich [delta, delta+2^38) wird einmal

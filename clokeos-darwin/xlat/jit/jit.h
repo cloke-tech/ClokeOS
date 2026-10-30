@@ -1,4 +1,4 @@
-// jit.h – Block-JIT x86_64 -> arm64 für ucrun (siehe docs/translation-study.md, Abschnitt 14)
+// jit.h – Block-JIT x86_64 -> arm64 für ucrun (siehe docs/translation-study.md, Abschnitt 16)
 //
 // Gastregister liegen beim Ablauf in den Host-Registern x0..x15 (gleiche Nummer wie bei x86: rax=0 rcx=1 rdx=2 rbx=3 rsp=4
 // rbp=5 rsi=6 rdi=7 r8..r15); in JitCtx stehen sie nur, wenn der JIT-Code verlassen wird.

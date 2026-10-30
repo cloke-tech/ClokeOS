@@ -1,5 +1,5 @@
 #!/bin/bash
-# Baut die Werkzeuge des Block-JIT (Studie Abschnitt 14) für den Host-Mac (arm64):
+# Baut die Werkzeuge des Block-JIT (Studie Abschnitt 16) für den Host-Mac (arm64):
 #   jit/build.sh <Ausgabeordner> <Unicorn-Bauordner>      (z. B. ein cmake-Build von $WORK/download/unicorn/src mit -DUNICORN_ARCH=x86)
 # Ergebnis: jtest (Differenztest gegen Unicorn), ucrun (Host-Build mit JIT), bench / t-sys / t-jit (x86_64, statisch).
 set -euo pipefail

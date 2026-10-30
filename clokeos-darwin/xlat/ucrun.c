@@ -23,7 +23,7 @@
 #include <pthread.h>
 #include <sys/wait.h>
 #include <unicorn/unicorn.h>
-#include "jit/jit.h"     // JIT (UCRUN_JIT=1): siehe jit/ und Studie Abschnitt 14
+#include "jit/jit.h"     // JIT (UCRUN_JIT=1): siehe jit/ und Studie Abschnitt 16
 #include "jit/ucsync.h"
 
 #define STACK_TOP 0x7ffee0100000ULL
