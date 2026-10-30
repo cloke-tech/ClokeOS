@@ -252,15 +252,21 @@ static void gil_unlock(void) { pthread_mutex_lock(&gm); g_serving++; pthread_con
 static uint64_t slice_us = 1000000;  // Zeitscheibe 1 s: Wechsel praktisch nur an blockierenden Aufrufen
 static uint64_t thread_entry, tsd_offset, mts_offset;  // von bsdthread_register
 
+// Anhalten: Unicorn prüft nach jedem Gast-Speicherzugriff, ob ein Halt angefordert ist, und setzt dann auf den Anfang DIESES Befehls zurück. Ein von
+// außen (Zeitgeber, Signal-Handler) mitten im Block angeforderter Halt führt Ladebefehle wie "ldr x8, [x8]" deshalb zweimal aus (die Basis ist dann schon
+// überschrieben). Darum fordert nur ein Block-Hook den Halt an: er läuft vor dem ersten Befehl des Blocks, dort ist der Zustand genau.
+static volatile int stop_flag;
+static void on_block(uc_engine *u, uint64_t addr, uint32_t size, void *ud) { (void)addr; (void)size; (void)ud; if (stop_flag) { stop_flag = 0; uc_emu_stop(u); } }
+static void *slice_timer(void *p) { (void)p; for (;;) { usleep(slice_us); stop_flag = 1; } return 0; }
 static uc_engine *new_engine(void) {
 	uc_engine *e; if (uc_open(UC_ARCH_ARM64, UC_MODE_ARM, &e)) return 0;
-	uc_ctl_set_cpu_model(e, UC_CPU_ARM64_MAX);  // alle Befehlssatzerweiterungen (LSE-Atomics, Crypto ...): Apple-Programme setzen sie voraus
+	uc_ctl_set_cpu_model(e, getenv("A64_CPU") && !strcmp(getenv("A64_CPU"), "a57") ? UC_CPU_ARM64_A57 : UC_CPU_ARM64_MAX);  // alle Befehlssatzerweiterungen (LSE-Atomics, Crypto ...): Apple-Programme setzen sie voraus
 	uint64_t cpacr = 3 << 20; uc_reg_write(e, UC_ARM64_REG_CPACR_EL1, &cpacr);  // Gleitkomma/NEON im EL0 freigeben
 	pthread_mutex_lock(&big);
 	for (int i = 0; i < nregs; i++) uc_mem_map_ptr(e, regs[i].g, regs[i].n, UC_PROT_ALL, regs[i].h);
 	engs[neng++] = e;
 	pthread_mutex_unlock(&big);
-	uc_hook h1, h2; uc_hook_add(e, &h1, UC_HOOK_INTR, do_syscall, 0, 1, 0); uc_hook_add(e, &h2, UC_HOOK_MEM_UNMAPPED, on_fault, 0, 1, 0);
+	uc_hook h1, h2, h3; uc_hook_add(e, &h3, UC_HOOK_BLOCK, on_block, 0, 1, 0); uc_hook_add(e, &h1, UC_HOOK_INTR, do_syscall, 0, 1, 0); uc_hook_add(e, &h2, UC_HOOK_MEM_UNMAPPED, on_fault, 0, 1, 0);
 	return e;
 }
 static Th *th_of(uc_engine *u) { for (int i = 0; i < 64; i++) if (eth[i] && eth[i]->u == u) return eth[i]; return 0; }
@@ -272,8 +278,8 @@ static Th *th_of(uc_engine *u) { for (int i = 0; i < 64; i++) if (eth[i] && eth[
 static struct { uint64_t handler, tramp; uint32_t mask, flags; } gsa[32];
 static volatile uint32_t sig_pending; static uint32_t gmask;
 static int sig_wake = 1;
-static void wake_engines(void) { for (int i = 0; i < neng; i++) uc_emu_stop(engs[i]); }
-static void hsig(int s) { __atomic_or_fetch(&sig_pending, 1u << s, __ATOMIC_SEQ_CST); if (sig_wake) wake_engines(); }
+static void hsig(int s) { __atomic_or_fetch(&sig_pending, 1u << s, __ATOMIC_SEQ_CST); if (sig_wake) stop_flag = 1; }
+
 static int sig_waiting(void) { return (__atomic_load_n(&sig_pending, __ATOMIC_SEQ_CST) & ~(gmask << 1)) != 0; }
 
 static void push_signal(Th *t, int sig, uint64_t addr) {
@@ -326,7 +332,7 @@ static uc_err run_engine(Th *t) {
 	for (;;) {
 		gil_lock();
 		deliver_pending(t, &pc);
-		e = uc_emu_start(t->u, pc, 0, slice_us, 0);
+		e = uc_emu_start(t->u, pc, 0, 0, 0);
 		uc_reg_read(t->u, UC_ARM64_REG_PC, &pc);
 		if (t->resume) { pc = t->resume_pc; t->resume = 0; }
 		int sg = t->fault_sig; t->fault_sig = 0;
@@ -924,7 +930,7 @@ static void do_syscall(uc_engine *u, uint32_t intno, void *ud) {
 		fflush(0); pid_t pid = fork();
 		if (pid < 0) { err = errno; res = errno; goto done; }
 		res = pid; x1v = pid == 0 ? 1 : 0;
-		if (pid == 0) nsys = 0;
+		if (pid == 0) { nsys = 0; pthread_t tt; pthread_attr_t ta; pthread_attr_init(&ta); pthread_attr_setdetachstate(&ta, PTHREAD_CREATE_DETACHED); pthread_create(&tt, &ta, slice_timer, 0); }  // Zeitgeber-Thread gibt es im Kind nicht mehr
 		goto done;
 	}
 	if (nr == 244) {  // posix_spawn(pid_t *pid, path, adesc, argv, envp): fork + Dateiaktionen + execve (SETEXEC: ohne fork)
@@ -1027,7 +1033,8 @@ int main(int argc, char **argv) {
 	if (mh->magic != MH_MAGIC_64 || mh->cputype != (int)CPU_ARM64) { fprintf(stderr, "a64run: %s ist kein arm64-Mach-O\n", argv[1]); return 126; }
 	uc_err e = UC_ERR_OK; uc = new_engine(); if (!uc) { fprintf(stderr, "uc_open fehlgeschlagen\n"); return 3; }
 	if (getenv("A64_RING")) { use_ring = 1; uc_hook ch; uc_hook_add(uc, &ch, UC_HOOK_CODE, on_code, 0, 1, 0); }
-	if (getenv("A64_SLICE_MS")) { slice_us = atoll(getenv("A64_SLICE_MS")) * 1000; sig_wake = 0; }
+	if (getenv("A64_SLICE_MS")) slice_us = atoll(getenv("A64_SLICE_MS")) * 1000;
+	{ pthread_t tt; pthread_attr_t ta; pthread_attr_init(&ta); pthread_attr_setdetachstate(&ta, PTHREAD_CREATE_DETACHED); pthread_create(&tt, &ta, slice_timer, 0); }
 	uint64_t entry = 0, mh_addr = 0; int dynamic = 0;
 	if (load_image(file, 0, &entry, &mh_addr, &dynamic)) return 3;
 	if (dynamic) {  // wie der Kernel: dyld des Gastes laden, es lädt Programm und Bibliotheken selbst
