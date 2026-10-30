@@ -23,7 +23,7 @@ git -C "$wt" checkout -q --detach origin/main
 
 ver="${1:-}"
 if [ -z "$ver" ]; then
-  last="$(gh release list -R "$rel_repo" --limit 1 --json tagName -q '.[0].tagName' | sed 's/^v//')"
+  last="$(gh release list -R "$rel_repo" --exclude-pre-releases --limit 1 --json tagName -q '.[0].tagName' | sed 's/^v//')"
   ver="${last%%.*}.$(( ${last#*.} + 1 ))"
 fi
 build="$(grep -o 'CLOKE_BUILD="[^"]*"' "$wt/clokeos-darwin/config.sh" | cut -d'"' -f2)"
