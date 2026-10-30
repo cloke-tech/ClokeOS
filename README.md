@@ -413,7 +413,7 @@ The kernel is the smaller problem, since XNU is open source (Apple Public Source
 6. **Real hardware.** Started: USB installers, SATA detection, PS/2 keyboard and touchpad (ClokePS2), I²C touchpads, several CPU cores. Next: Wi-Fi (Realtek RTL8821CE in development), graphics.
 7. **Windows.** The NT interface and Wine for `.exe` programs on x86_64 exist (Windows tree in `/NT`). Next: a baked prefix so the first start is fast, more programs tested, arm64 through the translation layer.
 8. **Linux.** First version done on arm64 and x86_64 (`tux`, see [Linux programs](#linux-programs-tux)); still to do: graphical Linux programs, `inotify`, programs of the other architecture.
-9. **Other CPU.** A translation layer between arm64 and x86_64 in both directions, like Rosetta 2, for all binaries; feasibility study first.
+9. **Other CPU.** Done: x86_64 programs on arm64 (`ucrun`, Unicorn-based, about 20x slower than Rosetta 2; own block JIT started) and arm64 programs on x86_64 (`a64run`), see [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). Next: JIT for SSE/dynamic programs and threads, Windows programs on arm64 through the translated Wine, x86_64 Linux programs through `tux`.
 10. **iOS apps.** Run iOS apps (arm64 Mach-O) on ClokeOS, on top of the Mac frameworks and the translation layer, with UIKit shims. Not started.
 11. **Android apps.** Run Android apps through a Dalvik/ART layer on top of `tux`. Not started.
 
