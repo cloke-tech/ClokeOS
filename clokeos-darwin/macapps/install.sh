@@ -36,12 +36,18 @@ for r in darling-corefoundation darling-foundation darling-cocotron; do
 done
 "$M/foundation.sh" | tail -1
 "$M/appkit.sh" | tail -1
+# Stub-Frameworks für geschlossene Apple-Bibliotheken (Logic Pro), sobald stubs.sh einmal eine Importliste angelegt hat
+[ -f "$WORK/out/stubgen/imports.json" ] && { "$M/stubs.sh" | tail -1 || true; }
 "$M/coreaudio.sh" | tail -2 | head -1 || echo "CoreAudio-Shim nicht gebaut"
 "$M/accelerate.sh" | tail -2 | head -1 || echo "Accelerate-Teilmenge nicht gebaut"
 
 mkdir -p "$stage/Library/ClokeOS"
 rm -rf "$stage/Library/ClokeOS/MacFrameworks"
 cp -R "$fw" "$stage/Library/ClokeOS/MacFrameworks"   # mit den Symlinks der Bundles
+rootdir="${fw%/Library/ClokeOS/MacFrameworks}"
+if [ -f "$rootdir/usr/lib/libMobileGestalt.dylib" ]; then   # flache Stub-Bibliothek aus stubs.sh
+  mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libMobileGestalt.dylib" "$stage/usr/lib/"
+fi
 
 # Hallo.app, aufgebaut wie ein Programm aus Xcode (Info.plist, PkgInfo, MacOS, Resources)
 app="$stage/Applications/Hallo.app/Contents"
