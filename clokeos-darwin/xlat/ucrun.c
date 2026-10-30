@@ -67,13 +67,14 @@ static uc_err map_all(uint64_t g, uint64_t n) {
 	pthread_mutex_unlock(&big);
 	return e;
 }
+static void on_block(uc_engine *u, uint64_t addr, uint32_t size, void *ud);
 static uc_engine *new_engine(void) {
 	uc_engine *e; if (uc_open(UC_ARCH_X86, UC_MODE_64, &e)) return 0;
 	pthread_mutex_lock(&big);
 	for (int i = 0; i < nregs; i++) uc_mem_map_ptr(e, regs[i].g, regs[i].n, UC_PROT_ALL, regs[i].h);
 	engs[neng++] = e;
 	pthread_mutex_unlock(&big);
-	uc_hook hm, h; uc_hook_add(e, &hm, UC_HOOK_MEM_UNMAPPED, on_unmapped, 0, 1, 0); uc_hook_add(e, &h, UC_HOOK_INSN, do_syscall, 0, 1, 0, UC_X86_INS_SYSCALL);
+	uc_hook hm, h; uc_hook hb; uc_hook_add(e, &hb, UC_HOOK_BLOCK, on_block, 0, 1, 0); uc_hook_add(e, &hm, UC_HOOK_MEM_UNMAPPED, on_unmapped, 0, 1, 0); uc_hook_add(e, &h, UC_HOOK_INSN, do_syscall, 0, 1, 0, UC_X86_INS_SYSCALL);
 	return e;
 }
 static uint32_t *g2h32(uint64_t a) {
@@ -159,7 +160,7 @@ static uc_err run_engine(Th *t) {
 	for (;;) {
 		gil_lock();
 		deliver_pending(t, &pc);
-		e = uc_emu_start(t->u, pc, 0, slice_us, 0);
+		e = uc_emu_start(t->u, pc, 0, 0, 0);
 		uc_reg_read(t->u, UC_X86_REG_RIP, &pc);
 		if (t->resume) { pc = t->resume_rip; t->resume = 0; uc_reg_write(t->u, UC_X86_REG_RIP, &pc); }
 		if (e && !t->done) {  // Fehler im Gast -> Signal, wenn der Gast einen Handler dafür hat
@@ -616,7 +617,14 @@ static int do_execve(uc_engine *u, uint64_t pa, uint64_t av, uint64_t ev) {
 
 
 static Th *th_of(uc_engine *u) { for (int i = 0; i < 64; i++) if (eth[i] && eth[i]->u == u) return eth[i]; return 0; }
-static void wake_engines(void) { for (int i = 0; i < neng; i++) uc_emu_stop(engs[i]); }
+// Unicorn prüft nach jedem Gast-Speicherzugriff auf eine Stopp-Anforderung von außen (Timeout-Argument, uc_emu_stop aus einem anderen Thread) und setzt dann auf den
+// ANFANG des Befehls zurück: ein Befehl wie mov rax,[rax] läuft zweimal, der Zustand ist kaputt. Deshalb nur ein Flag (Zeitgeber-Thread, Signal-Handler) und uc_emu_stop
+// aus dem Block-Hook des laufenden Threads (Hinweis der a64run-Arbeit, studie Abschnitt 15).
+static volatile int stop_flag;
+static void on_block(uc_engine *u, uint64_t addr, uint32_t size, void *ud) { if (stop_flag) { stop_flag = 0; uc_emu_stop(u); } }
+static void *ticker(void *p) { for (;;) { usleep(slice_us > 1000 ? slice_us : 1000); stop_flag = 1; } return 0; }
+static void start_ticker(void) { pthread_t pt; pthread_attr_t pa; pthread_attr_init(&pa); pthread_attr_setdetachstate(&pa, PTHREAD_CREATE_DETACHED); pthread_create(&pt, &pa, ticker, 0); }
+static void wake_engines(void) { stop_flag = 1; }
 static int sig_wake = 1;
 static void hsig(int s) { __atomic_or_fetch(&sig_pending, 1u << s, __ATOMIC_SEQ_CST); if (sig_wake) wake_engines(); }
 
@@ -791,14 +799,14 @@ static void do_syscall(uc_engine *u, void *ud) {
 		uint32_t mo = 0; if (a[3] && a[4] >= 36) uc_mem_read(u, a[3] + 32, &mo, 4); mts_offset = mo; res = 0; goto done;
 	}  // bsdthread_register(threadstart, wqthread, ...)
 	if (nr == 360) {  // bsdthread_create(func, arg, stack, pthread, flags): neue Unicorn-Maschine + Host-Thread
-		uint64_t port = 0x2000 + nsys;
+		uint64_t port = 0x2000 + 4 * nsys;  // Vielfaches von 4: die unteren Bits der ulock-Werte sind Flags (is_dead maskiert sie)
 		Th *t = calloc(1, sizeof *t); t->pc = thread_entry; t->tid = next_tid++;
 		t->rsp = (a[2] - 128) & ~15ULL; t->rdi = a[3]; t->rsi = port; t->rdx = a[0]; t->rcx = a[1]; t->r8 = a[2]; t->r9 = a[4] | 0x10000000; t->gs = a[3] + tsd_offset;
 		{ uint32_t p32 = (uint32_t)port; if (mts_offset) uc_mem_write(u, a[3] + tsd_offset + mts_offset, &p32, 4); }  // der Kernel trägt den Mach-Thread-Port ins pthread ein
 		pthread_t pt; pthread_attr_t pa; pthread_attr_init(&pa); pthread_attr_setdetachstate(&pa, PTHREAD_CREATE_DETACHED);
 		pthread_create(&pt, &pa, thread_main, t); res = a[3]; goto done;
 	}
-	if (nr == 361) { pthread_mutex_lock(&wmx); add_dead((uint32_t)a[2]); pthread_mutex_unlock(&wmx); ulock_wake(); for (int q = 0; q < 64; q++) if (eth[q] && eth[q]->u == u) eth[q]->done = 1; uc_emu_stop(u); res = 0; goto done; }  // bsdthread_terminate: Gast-Thread endet
+	if (nr == 361) { pthread_mutex_lock(&wmx); add_dead((uint32_t)a[2] & ~3u); pthread_mutex_unlock(&wmx); ulock_wake(); for (int q = 0; q < 64; q++) if (eth[q] && eth[q]->u == u) eth[q]->done = 1; uc_emu_stop(u); res = 0; goto done; }  // bsdthread_terminate: Gast-Thread endet
 	if (nr == 334) {  // __semwait_signal(cond_sem, mutex_sem, timeout, relative, sec, nsec): so schläft libc (usleep, nanosleep, sleep)
 		if (!a[2]) { res = 0; goto done; }
 		struct timespec ts; if (a[3]) { ts.tv_sec = (time_t)a[4]; ts.tv_nsec = (long)a[5]; }
@@ -912,7 +920,7 @@ static void do_syscall(uc_engine *u, void *ud) {
 		fflush(0); pid_t pid = fork();
 		if (pid < 0) { err = errno; res = errno; goto done; }
 		res = pid; rdx = pid == 0 ? 1 : 0;
-		if (pid == 0) { nsys = 0; }
+		if (pid == 0) { nsys = 0; start_ticker(); }
 		goto done;
 	}
 	if (nr == 244) {  // posix_spawn: fork + Dateiaktionen + execve (SETEXEC: ohne fork)
@@ -1013,6 +1021,7 @@ int main(int argc, char **argv) {
 	}
 	struct mach_header_64 *mh = (void *)file;
 	if (mh->magic != MH_MAGIC_64 || mh->cputype != 0x01000007) { fprintf(stderr, "ucrun: %s ist kein x86_64-Mach-O\n", argv[1]); return 126; }
+	start_ticker();
 	jit_choose(file, argv[1]);  // JIT: UCRUN_JIT=1 und kein dyld nötig -> JIT-Speichermodell
 	uc_err e = UC_ERR_OK; uc = new_engine(); if (!uc) { fprintf(stderr, "uc_open fehlgeschlagen\n"); return 3; }
 	uint64_t entry = 0, mh_addr = 0; int dynamic = 0;
