@@ -42,6 +42,6 @@ Alt+arrows). `search/build.sh <builddir> <srcdir> <out>` builds it. `cloakserver
 `/opt/webkit/runmb.sh` when `/opt/webkit/bin/clokesearch` exists, otherwise NetSurf as before, so nothing changes for images without the
 package. Verified in the arm64 VM: https://example.com in a Search window (`../docs/browser-study/clokesearch-webkit-https-arm64.png`).
 `runmb.sh` also sets `GIO_USE_PROXY_RESOLVER=dummy GIO_USE_NETWORK_MONITOR=base NO_AT_BRIDGE=1 GTK_USE_PORTAL=0` (without them the first request
-waits minutes for D-Bus portals that do not exist). The package (about 36 MB + clokesearch + `gio-modules/libgiognutls.so`) is not in the repo;
-`install.sh <url>` installs it. Not done: package published as a release asset, x86_64, tab/history/bookmark features of clokeos.html,
+waits minutes for D-Bus portals that do not exist). The package (36 MB incl. clokesearch and `gio-modules/libgiognutls.so`) is the pre-release `webkit-arm64-1` of cloke-tech/ClokeOS (not "latest");
+`sh install.sh` in the VM, as root, installs it. Not done: x86_64, install.sh end to end on a fresh image, tab/history/bookmark features of clokeos.html,
 Search start page links, JIT/WASM (JS runs in the C-loop interpreter), WebGL, video, printing, fonts beyond the image's.

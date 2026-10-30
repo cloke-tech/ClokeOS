@@ -1,9 +1,9 @@
 #!/bin/sh
 # Installiert WebKit (Search auf WebKitGTK) in einer laufenden ClokeOS-arm64-VM, als root:
-#   sh install.sh <URL-des-Pakets.tgz>      Paket = Ausgabe von stage.sh (opt/webkit/{bin,lib}) plus gio-modules/ und runmb.sh
+#   sh install.sh [URL.tgz]                 ohne URL das Release webkit-arm64-1; Paket = Ausgabe von stage.sh (opt/webkit/{bin,lib}) plus gio-modules/ und runmb.sh
 # Danach startet Search (bundles.py) clokesearch statt NetSurf. Rückgängig: rm -rf /opt/webkit
 set -e
-url="$1"
+url="${1:-https://github.com/cloke-tech/ClokeOS/releases/download/webkit-arm64-1/webkit-pd-arm64.tgz}"
 mkdir -p /opt /usr/local/libexec/webkit2gtk-4.1
 curl -fsSL "$url" | tar xzf - -C /
 for p in WebKitNetworkProcess WebKitWebProcess; do ln -sf /opt/webkit/bin/$p /usr/local/libexec/webkit2gtk-4.1/$p; done
