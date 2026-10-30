@@ -128,6 +128,7 @@ tar -czf "$dist/clokeos-$CLOKE_VERSION-source.tar.gz" -C "$srcdir" .
 rm -rf "$srcdir"
 (cd "$dist" && shasum -a 256 -- *.xz *.tar.gz > SHA256SUMS)
 
+bullets="$(cat "$here/recovery/release-bullets.md")"
 cat > "$dist/RELEASE-NOTES.md" <<EOF
 ClokeOS $CLOKE_VERSION "$CLOKE_CODENAME" (build $CLOKE_BUILD) with the CloakServer desktop, installed as on macOS: from a USB stick onto a PC, as a ready-made SSD image, or from the internet in a VM.
 
@@ -157,14 +158,7 @@ Later, "Restart in Recovery…" in the ClokeOS menu starts the recovery on the d
 
 ## New in $CLOKE_VERSION
 
-- Programs of the other CPU, a first version (a translation layer based on Unicorn, GPL-2.0): x86_64 Mac programs run on arm64 (\`ucrun\`) and arm64 Mac programs run on x86_64 (\`a64run\`), started by a double-click or from the Terminal. It is an interpreter, so it is slow; a faster block translator (\`UCRUN_JIT=1\`) is in an early state and only for simple programs
-- Linux programs (\`tux\`) are much further along: threads, \`epoll\`, \`inotify\`, sockets including \`SOCK_SEQPACKET\`, \`/proc\`, name resolution; BusyBox and Debian command line tools run on arm64 and x86_64. Linux.app has a penguin icon
-- Windows: Wine has its own icon; the Wine prefix still needs work, so Windows programs are not reliable yet
-- Sound on x86_64 (Intel HDA, measured in QEMU); first parts of the Mac audio and math frameworks (CoreAudio, AudioToolbox, Accelerate) for Mac programs
-- Files are recognized by their content (ELF, Mach-O, .exe, .dmg) and opened with the right program
-- Optional Darwin 20.6.0 kernel for arm64 (build option, not the default)
-- Everything from 2.6: Disk Utility with partitioning and .dmg, the NT interface, the whole disk after the install, Wine, Linux programs, bash and Homebrew
-- Everything from 2.4 and 2.5 as well: all CPU cores, I²C touchpads, the updater, the new design
+$bullets
 
 ## What is inside
 
@@ -190,7 +184,7 @@ EOF
 ls -l "$dist"
 
 if [ "$upload" = 1 ]; then
-  gh release create "$tag" -R "$CLOKE_RELEASES_REPO" --title "ClokeOS $CLOKE_VERSION \"$CLOKE_CODENAME\"" \
+  gh release create "$tag" -R "$CLOKE_RELEASES_REPO" --target "$commit" --title "ClokeOS $CLOKE_VERSION \"$CLOKE_CODENAME\"" \
     --notes-file "$dist/RELEASE-NOTES.md" --latest "$dist"/*.xz "$dist"/*.txt "$dist"/*.tar.gz "$dist/SHA256SUMS"
   echo "Veröffentlicht: $(gh release view "$tag" -R "$CLOKE_RELEASES_REPO" --json url -q .url)"
 fi

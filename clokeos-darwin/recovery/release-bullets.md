@@ -1,0 +1,9 @@
+- Modern browser: Search now runs on WebKitGTK (tabs, address bar, HTTPS, current HTML5/CSS/JS) on arm64; the x86_64 build is in progress. If WebKit is not installed, Search falls back to NetSurf
+- Programs of the other CPU, a first version (a translation layer based on Unicorn, GPL-2.0): x86_64 Mac programs run on arm64 (`ucrun`) and arm64 Mac programs run on x86_64 (`a64run`), started by a double-click or from the Terminal. It is an interpreter, so it is slow; a faster block translator (`UCRUN_JIT=1`) is in an early state and only for simple programs
+- Linux programs (`tux`) are much further along: threads, `epoll`, `inotify`, sockets including `SOCK_SEQPACKET`, `/proc`, name resolution; BusyBox and Debian command line tools run on arm64 and x86_64. Linux.app has a penguin icon
+- Windows: Wine has its own icon; the Wine prefix still needs work, so Windows programs are not reliable yet
+- Sound on x86_64 (Intel HDA, measured in QEMU); first parts of the Mac audio and math frameworks (CoreAudio, AudioToolbox, Accelerate) for Mac programs
+- Files are recognized by their content (ELF, Mach-O, .exe, .dmg) and opened with the right program
+- Optional Darwin 20.6.0 kernel for arm64 (build option, not the default)
+- Everything from 2.6 and 2.7: Disk Utility with partitioning and .dmg, the NT interface, the whole disk after the install, Wine, Linux programs, bash and Homebrew
+- Everything from 2.4 and 2.5 as well: all CPU cores, I²C touchpads, the updater, the new design
