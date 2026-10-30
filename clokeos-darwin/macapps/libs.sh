@@ -89,7 +89,7 @@ echo "libxml2"
 x="$src/libxml2-2.9.14"
 ( cd "$x" && ./configure --without-python --without-lzma --without-iconv --without-icu --with-zlib --disable-static >/dev/null 2>&1 ) || { echo "libxml2: configure fehlgeschlagen" >&2; exit 1; }
 CF=(-DHAVE_CONFIG_H -I"$x" -I"$x/include" -D_REENTRANT)
-dylib xml2 "$pfx/libxml2.2.dylib" 10.0.0 10.9.0 "$x"/{SAX,entities,encoding,error,parserInternals,parser,tree,hash,list,xmlIO,xmlmemory,uri,valid,xlink,HTMLparser,HTMLtree,debugXML,xpath,xpointer,xinclude,nanohttp,nanoftp,catalog,globals,threads,c14n,xmlstring,buf,xmlregexp,xmlschemas,xmlschemastypes,xmlunicode,xmlreader,relaxng,dict,SAX2,legacy,chvalid,pattern,xmlsave,xmlmodule,xmlwriter,schematron,DOCBparser}.c -- "${libz[@]}"
+dylib xml2 "$pfx/libxml2.2.dylib" 10.0.0 10.9.0 "$x"/{SAX,entities,encoding,error,parserInternals,parser,tree,hash,list,xmlIO,xmlmemory,uri,valid,xlink,HTMLparser,HTMLtree,debugXML,xpath,xpointer,xinclude,nanohttp,nanoftp,catalog,globals,threads,c14n,xmlstring,buf,xmlregexp,xmlschemas,xmlschemastypes,xmlunicode,xmlreader,relaxng,dict,SAX2,legacy,chvalid,pattern,xmlsave,xmlmodule,xmlwriter,schematron,DOCBparser}.c $([ $mode = target ] && echo "$M/libs/compat.c") -- "${libz[@]}"
 rm -rf "$inc/libxml"; cp -R "$x/include/libxml" "$inc/libxml"
 
 echo "libpcre"
@@ -110,16 +110,12 @@ cat > "$src/xarinc/config.h" <<'CFG'
 #define HAVE_SETXATTR 1
 #define HAVE_GETATTRLIST 1
 #define HAVE_SETATTRLIST 1
-#define HAVE_CHFLAGS 1
 #define HAVE_STATFS 1
 #define HAVE_STATVFS 1
-#define HAVE_STRUCT_STAT_ST_FLAGS 1
 #define HAVE_STRUCT_STATFS_F_FSTYPENAME 1
 #define HAVE_ASPRINTF 1
 #define HAVE_LIBBZ2 1
 #define HAVE_LCHOWN 1
-#define HAVE_LCHMOD 1
-#define HAVE_STRMODE 1
 #define UID_STRING "u"
 #define UID_CAST (unsigned)
 #define GID_STRING "u"
