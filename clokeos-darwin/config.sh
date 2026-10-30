@@ -108,7 +108,7 @@ CLOKE_BOOT_ARGS=""
 
 # ClokeOS-Version, passend zur Oberfläche in clokeos.html (OS-Objekt).
 CLOKE_NAME="ClokeOS"
-CLOKE_VERSION="2.7"
+CLOKE_VERSION="2.8"
 # ProductVersion in SystemVersion.plist: die macOS-Version, die Darwin 20.5 entspricht (Big Sur). Homebrew und
 # Mac-Programme lesen sie dort; ClokeOS' eigene Version steht in ProductUserVisibleVersion.
 CLOKE_MACOS_COMPAT="${CLOKEOS_MACOS_COMPAT:-11.7}"
