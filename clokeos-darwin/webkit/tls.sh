@@ -5,14 +5,14 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 source "$here/../config.sh"
-w="$1"; sr="$WORK/sysroot/webkit-arm64"; sdk="$(xcrun --show-sdk-path)"; ver=2.90.1
+w="$1"; sr="$WORK/sysroot/webkit-$CLOKE_ARCH"; sdk="$(xcrun --show-sdk-path)"; ver=2.90.1
 mkdir -p "$w"; cd "$w"
 [ -d glib-networking-$ver ] || { curl -fsSLO https://download.gnome.org/sources/glib-networking/2.90/glib-networking-$ver.tar.xz; tar xf glib-networking-$ver.tar.xz; }
 # gio-2.0.pc nennt gio-querymodules; es muss nur existieren (läuft auf dem Mac nie)
 mkdir -p "$sr/bin"; printf '#!/bin/sh\nexit 0\n' > "$sr/bin/gio-querymodules"; chmod +x "$sr/bin/gio-querymodules"
 cat > cross-pd.ini <<EOT
 [binaries]
-c = ['/usr/bin/clang', '-target', 'arm64-apple-macos11.0', '-isysroot', '$sdk', '-isystem', '$sr/include']
+c = ['/usr/bin/clang', '-target', '${CLOKE_ARCH}-apple-macos11.0', '-isysroot', '$sdk', '-isystem', '$sr/include']
 ar = '/usr/bin/ar'
 strip = '/usr/bin/strip'
 pkg-config = '$(command -v pkg-config)'
@@ -25,8 +25,8 @@ sys_root = '$sr'
 pkg_config_libdir = '$sr/lib/pkgconfig'
 [host_machine]
 system = 'darwin'
-cpu_family = 'aarch64'
-cpu = 'arm64'
+cpu_family = '$([ "$CLOKE_ARCH" = arm64 ] && echo aarch64 || echo x86_64)'
+cpu = '$([ "$CLOKE_ARCH" = arm64 ] && echo aarch64 || echo x86_64)'
 endian = 'little'
 EOT
 export PKG_CONFIG_LIBDIR="$sr/lib/pkgconfig" PKG_CONFIG_SYSROOT_DIR="$sr"

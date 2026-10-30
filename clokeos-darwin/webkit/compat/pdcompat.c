@@ -31,3 +31,18 @@ int timingsafe_bcmp(const void* a, const void* b, size_t n)
     while (n--) r |= *p++ ^ *q++;
     return r != 0;
 }
+
+#if defined(__x86_64__)
+/* PureDarwins x86_64-libSystem exportiert diese libm-Funktionen nicht (arm64 schon). Ohne Builtins schreiben, sonst ruft clang sich selbst. */
+double fmax(double a, double b)
+{
+    if (a != a) return b;
+    if (b != b) return a;
+    return a > b ? a : b;
+}
+
+long long llroundf(float x)
+{
+    return (long long)(x < 0 ? x - 0.5f : x + 0.5f);
+}
+#endif
