@@ -14,7 +14,8 @@ rel_repo="${CLOKEOS_RELEASES_REPO:-cloke-tech/ClokeOS}"
 # Platz: Bau und Pakete brauchen rund 30 GB; die eigenen Altlasten räumen wir zuerst weg.
 rm -rf "$work"/dist/online-* "$work"/tmp
 free_gb=$(df -g "$work" | awk 'NR==2{print $4}')
-[ "$free_gb" -ge 30 ] || { echo "Nur $free_gb GB frei, es werden rund 30 GB gebraucht." >&2; exit 1; }
+min="${CLOKEOS_MIN_GB:-30}"
+[ "$free_gb" -ge "$min" ] || { echo "Nur $free_gb GB frei, es werden rund $min GB gebraucht." >&2; exit 1; }
 
 git -C "$repo" fetch -q origin
 [ -d "$wt" ] || git -C "$repo" worktree add -q --detach "$wt" origin/main
