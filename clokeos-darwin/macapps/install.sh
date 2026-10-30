@@ -40,6 +40,8 @@ done
 [ -f "$WORK/out/stubgen/imports.json" ] && { "$M/stubs.sh" | tail -1 || true; }
 "$M/coreaudio.sh" | tail -2 | head -1 || echo "CoreAudio-Shim nicht gebaut"
 "$M/accelerate.sh" | tail -2 | head -1 || echo "Accelerate-Teilmenge nicht gebaut"
+"$M/libs.sh" | tail -1 || echo "libsqlite3/libxml2/libbz2/libpcre/libxar nicht gebaut"
+"$M/pkginstall.sh" | tail -1 || echo "clokeos-pkginstall nicht gebaut"
 
 mkdir -p "$stage/Library/ClokeOS"
 rm -rf "$stage/Library/ClokeOS/MacFrameworks"
@@ -48,6 +50,11 @@ rootdir="${fw%/Library/ClokeOS/MacFrameworks}"
 if [ -f "$rootdir/usr/lib/libMobileGestalt.dylib" ]; then   # flache Stub-Bibliothek aus stubs.sh
   mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libMobileGestalt.dylib" "$stage/usr/lib/"
 fi
+# Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)
+for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
+  [ -e "$rootdir/usr/lib/$l" ] && { mkdir -p "$stage/usr/lib"; cp -P "$rootdir/usr/lib/$l" "$stage/usr/lib/"; }
+done
+[ -f "$rootdir/usr/sbin/clokeos-pkginstall" ] && { mkdir -p "$stage/usr/sbin"; cp "$rootdir/usr/sbin/clokeos-pkginstall" "$stage/usr/sbin/"; }
 
 # Hallo.app, aufgebaut wie ein Programm aus Xcode (Info.plist, PkgInfo, MacOS, Resources)
 app="$stage/Applications/Hallo.app/Contents"
