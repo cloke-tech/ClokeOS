@@ -97,3 +97,36 @@ __attribute__((constructor)) static void install(void)
     for (unsigned i = 0; i < sizeof sigs / sizeof *sigs; i++)
         sigaction(sigs[i], &sa, NULL);
 }
+
+/* Netzwerk-Diagnose (CLOKEOS_NETLOG=1): getaddrinfo und connect per dyld-Interposing mitschreiben */
+#include <netdb.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <time.h>
+
+static int netlog_on(void) { static int v = -1; if (v < 0) v = getenv("CLOKEOS_NETLOG") != NULL; return v; }
+
+static int my_getaddrinfo(const char* node, const char* service, const struct addrinfo* hints, struct addrinfo** res)
+{
+    char b[300];
+    if (netlog_on()) { int n = snprintf(b, sizeof b, "[net %d] getaddrinfo(%s,%s) ...\n", getpid(), node ? node : "-", service ? service : "-"); write(2, b, n); }
+    int r = getaddrinfo(node, service, hints, res);
+    if (netlog_on()) { int n = snprintf(b, sizeof b, "[net %d] getaddrinfo(%s) = %d (%s)\n", getpid(), node ? node : "-", r, r ? gai_strerror(r) : "ok"); write(2, b, n); }
+    return r;
+}
+
+static int my_connect(int fd, const struct sockaddr* sa, socklen_t len)
+{
+    char b[300], ip[64] = "?";
+    int port = 0;
+    if (sa->sa_family == AF_INET) { inet_ntop(AF_INET, &((struct sockaddr_in*)sa)->sin_addr, ip, sizeof ip); port = ntohs(((struct sockaddr_in*)sa)->sin_port); }
+    else if (sa->sa_family == AF_INET6) { inet_ntop(AF_INET6, &((struct sockaddr_in6*)sa)->sin6_addr, ip, sizeof ip); port = ntohs(((struct sockaddr_in6*)sa)->sin6_port); }
+    int r = connect(fd, sa, len);
+    if (netlog_on() && sa->sa_family != AF_UNIX) { int n = snprintf(b, sizeof b, "[net %d] connect(%s:%d) = %d errno=%d\n", getpid(), ip, port, r, r ? errno : 0); write(2, b, n); }
+    return r;
+}
+
+#define INTERPOSE(rep, orig) __attribute__((used)) static struct { const void* r; const void* o; } _ip_##orig __attribute__((section("__DATA,__interpose"))) = { (const void*)(unsigned long)&rep, (const void*)(unsigned long)&orig }
+INTERPOSE(my_getaddrinfo, getaddrinfo);
+INTERPOSE(my_connect, connect);

@@ -3,8 +3,9 @@
 Status 2026-10-29: **JavaScriptCore (`jsc`) builds and runs in the arm64 VM** (C-loop interpreter, no JIT, no WebAssembly yet).
 The GTK port (`gtk-options.sh`: GTK3, no JIT/WASM, no GStreamer/GBM/WebGL) builds, links and **renders in the arm64 VM**:
 `runmb.sh http://10.0.2.2:8123/testpage.html` (python http.server on the Mac) shows grid/flexbox/CSS variables/canvas/fetch/ES2020+/Intl
-correctly, see `../docs/browser-study/webkit-modern-page-arm64.png`. **HTTPS does not work yet**: "TLS support is not available" (no GIO TLS
-backend; glib-networking with the image's GnuTLS is the next step). JIT/WASM are off (C-loop interpreter), so JS is slow.
+correctly, see `../docs/browser-study/webkit-modern-page-arm64.png`. **HTTPS works** with `tls.sh` (glib-networking + the image's GnuTLS as GIO module in /opt/webkit/gio-modules; HTTP/2 through libsoup):
+`runmb.sh https://example.com/` renders, see `../docs/browser-study/webkit-https-example-arm64.png`. JIT/WASM are off (C-loop interpreter), so JS is slow; pages take
+tens of seconds on first load. Heavy sites (Wikipedia) not yet checked.
 Run: `stage.sh` -> tgz -> unpack to /opt/webkit in the VM, link the two helper processes into /usr/local/libexec/webkit2gtk-4.1/,
 `sysctl -w net.local.dgram.maxdgram=16384`, start with `runmb.sh` from a desktop terminal (it ignores SIGSYS for SysV shm, sets
 `LANG=C LC_ALL=C` because gettext otherwise calls `gethostuuid()` which hangs the PureDarwin kernel, and loads `compat/crashbt.c`
