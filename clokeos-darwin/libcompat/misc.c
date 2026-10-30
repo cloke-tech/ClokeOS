@@ -383,7 +383,7 @@ static kern_return_t mig_call(mach_msg_header_t *h, mach_port_t thread, int id, 
   return KERN_SUCCESS;
 }
 
-kern_return_t thread_policy(mach_port_t thread, int policy, int *base, mach_msg_type_number_t count, int set_limit) {
+kern_return_t thread_policy(thread_act_t thread, policy_t policy, policy_base_t base, mach_msg_type_number_t count, boolean_t set_limit) {
   union {
     struct { mach_msg_header_t head; NDR_record_t ndr; int policy; mach_msg_type_number_t count; int base[5 + 1]; } req;
     struct { mach_msg_header_t head; NDR_record_t ndr; kern_return_t ret; char pad[64]; } rep;

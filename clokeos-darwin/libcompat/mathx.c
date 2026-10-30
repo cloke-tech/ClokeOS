@@ -145,3 +145,133 @@ simd_float4 _simd_pow_f4(simd_float4 x, simd_float4 y) {
 simd_float4 _simd_round_f4(simd_float4 x) {
   return (simd_float4){roundf(x.x), roundf(x.y), roundf(x.z), roundf(x.w)};
 }
+
+#if defined(__x86_64__)
+/* ---- nur x86_64: PureDarwins libm hat diese Funktionen nicht (auf arm64 sind sie da) ---- */
+
+float fmaxf(float a, float b) {
+  if (__builtin_isnan(a)) return b;
+  if (__builtin_isnan(b)) return a;
+  return a < b ? b : a;
+}
+
+float fminf(float a, float b) {
+  if (__builtin_isnan(a)) return b;
+  if (__builtin_isnan(b)) return a;
+  return b < a ? b : a;
+}
+
+/* Rundung "halb weg von null" in double: für float exakt */
+long long llroundf(float x) {
+  double d = x;
+  return (long long)(d >= 0 ? floor(d + 0.5) : ceil(d - 0.5));
+}
+
+long lrintf(float x) {
+  long r;
+  __asm__("cvtss2si %1, %0" : "=r"(r) : "x"(x));   /* aktueller Rundungsmodus */
+  return r;
+}
+
+/* long double: x87-Befehle (64 Bit Mantisse). fsin/fcos/fpatan sind nur im Bereich |x| < 2^63
+ * definiert; darüber wird mit fprem1 durch 2 pi reduziert (die Genauigkeit des x87-pi begrenzt
+ * das Ergebnis bei sehr großen Argumenten wie bei jedem x87-libm). */
+static long double reduce_2pi(long double x) {
+  long double two_pi;
+  __asm__("fldpi; fadd %%st(0), %%st" : "=t"(two_pi));
+  long double r;
+  __asm__("1: fprem1; fnstsw %%ax; testb $4, %%ah; jnz 1b; fstp %%st(1)" : "=t"(r) : "0"(x), "u"(two_pi) : "ax", "cc");
+  return r;
+}
+
+long double sinl(long double x) {
+  long double r;
+  if (isinf(x)) return __builtin_nanl("");
+  if (__builtin_fabsl(x) > 0x1p62L) x = reduce_2pi(x);
+  __asm__("fsin" : "=t"(r) : "0"(x));
+  return r;
+}
+
+long double cosl(long double x) {
+  long double r;
+  if (isinf(x)) return __builtin_nanl("");
+  if (__builtin_fabsl(x) > 0x1p62L) x = reduce_2pi(x);
+  __asm__("fcos" : "=t"(r) : "0"(x));
+  return r;
+}
+
+long double atanl(long double x) {
+  long double r;
+  __asm__("fld1; fpatan" : "=t"(r) : "0"(x));
+  return r;
+}
+
+long double fmodl(long double x, long double y) {
+  long double r;
+  if (y == 0 || isinf(x) || isnan(x) || isnan(y)) return __builtin_nanl("");
+  if (isinf(y)) return x;
+  __asm__("1: fprem; fnstsw %%ax; testb $4, %%ah; jnz 1b; fstp %%st(1)" : "=t"(r) : "0"(x), "u"(y) : "ax", "cc");
+  return r;
+}
+
+long double exp2l(long double x) {
+  long double r;
+  if (isnan(x)) return x;
+  if (x > 16384.0L) return __builtin_infl();
+  if (x < -16446.0L) return 0.0L;
+  /* 2^x = 2^int(x) * 2^frac(x); f2xm1 liefert 2^f - 1 für |f| <= 1 */
+  long double i, f;
+  __asm__("frndint" : "=t"(i) : "0"(x));
+  f = x - i;
+  __asm__("f2xm1; fld1; faddp" : "=t"(f) : "0"(f));
+  __asm__("fscale; fstp %%st(1)" : "=t"(r) : "0"(f), "u"(i));
+  return r;
+}
+
+/* komplexe Division nach C99 Anhang G.5.1 mit Skalierung gegen Über- und Unterlauf */
+double _Complex __divdc3(double a, double b, double c, double d) {
+  int ilogbw = 0;
+  double logbw = logb(fmax(fabs(c), fabs(d)));
+  if (isfinite(logbw)) { ilogbw = (int)logbw; c = scalbn(c, -ilogbw); d = scalbn(d, -ilogbw); }
+  double denom = c * c + d * d;
+  double x = scalbn((a * c + b * d) / denom, -ilogbw);
+  double y = scalbn((b * c - a * d) / denom, -ilogbw);
+  if (isnan(x) && isnan(y)) {
+    if (denom == 0.0 && (!isnan(a) || !isnan(b))) {
+      x = copysign(INFINITY, c) * a; y = copysign(INFINITY, c) * b;
+    } else if ((isinf(a) || isinf(b)) && isfinite(c) && isfinite(d)) {
+      a = copysign(isinf(a) ? 1.0 : 0.0, a); b = copysign(isinf(b) ? 1.0 : 0.0, b);
+      x = INFINITY * (a * c + b * d); y = INFINITY * (b * c - a * d);
+    } else if (isinf(logbw) && logbw > 0.0 && isfinite(a) && isfinite(b)) {
+      c = copysign(isinf(c) ? 1.0 : 0.0, c); d = copysign(isinf(d) ? 1.0 : 0.0, d);
+      x = 0.0 * (a * c + b * d); y = 0.0 * (b * c - a * d);
+    }
+  }
+  double _Complex r;
+  __real__ r = x; __imag__ r = y;
+  return r;
+}
+
+float _Complex __divsc3(float a, float b, float c, float d) {
+  int ilogbw = 0;
+  float logbw = logbf(fmaxf(fabsf(c), fabsf(d)));
+  if (isfinite(logbw)) { ilogbw = (int)logbw; c = scalbnf(c, -ilogbw); d = scalbnf(d, -ilogbw); }
+  float denom = c * c + d * d;
+  float x = scalbnf((a * c + b * d) / denom, -ilogbw);
+  float y = scalbnf((b * c - a * d) / denom, -ilogbw);
+  if (isnan(x) && isnan(y)) {
+    if (denom == 0.0f && (!isnan(a) || !isnan(b))) {
+      x = copysignf(INFINITY, c) * a; y = copysignf(INFINITY, c) * b;
+    } else if ((isinf(a) || isinf(b)) && isfinite(c) && isfinite(d)) {
+      a = copysignf(isinf(a) ? 1.0f : 0.0f, a); b = copysignf(isinf(b) ? 1.0f : 0.0f, b);
+      x = INFINITY * (a * c + b * d); y = INFINITY * (b * c - a * d);
+    } else if (isinf(logbw) && logbw > 0.0f && isfinite(a) && isfinite(b)) {
+      c = copysignf(isinf(c) ? 1.0f : 0.0f, c); d = copysignf(isinf(d) ? 1.0f : 0.0f, d);
+      x = 0.0f * (a * c + b * d); y = 0.0f * (b * c - a * d);
+    }
+  }
+  float _Complex r;
+  __real__ r = x; __imag__ r = y;
+  return r;
+}
+#endif

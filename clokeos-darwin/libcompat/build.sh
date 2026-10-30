@@ -1,7 +1,9 @@
 #!/bin/bash
 # Baut libclokeos_compat (Symbole, die Mac-Programme an libSystem binden und PureDarwins libSystem
-# 20.5 nicht hat: compat.c, chkstk.S, system.c, wide.c; dazu libffi.dylib aus PureDarwins libffi.a) und legt sie samt einer libSystem.B.dylib, die sie
-# zusätzlich re-exportiert, in <stage>. Zweistufig gebundene Programme (Homebrews Ruby, Bottles)
+# 20.5 nicht hat: compat.c, chkstk.S, system.c, wide.c, misc.c, mathx.c, dispatch.c, workgroup.c, version.c;
+# dazu libffi.dylib aus PureDarwins libffi.a) und legt sie samt einer libSystem.B.dylib, die sie
+# zusätzlich re-exportiert (und deren Export-Tabelle die OS_*-Klassen bekommt), und einer libdyld.dylib
+# ohne die zwei Versionsfunktionen in <stage>. Was für ein Programm noch fehlt, zeigt libcompat/missing.py. Zweistufig gebundene Programme (Homebrews Ruby, Bottles)
 # finden die Symbole so über libSystem.
 #
 #   libcompat/build.sh <stage>     Architektur wie überall mit CLOKEOS_ARCH

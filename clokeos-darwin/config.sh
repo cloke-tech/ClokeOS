@@ -111,7 +111,7 @@ CLOKE_NAME="ClokeOS"
 CLOKE_VERSION="2.7"
 # ProductVersion in SystemVersion.plist: die macOS-Version, die Darwin 20.5 entspricht (Big Sur). Homebrew und
 # Mac-Programme lesen sie dort; ClokeOS' eigene Version steht in ProductUserVisibleVersion.
-CLOKE_MACOS_COMPAT="11.7"
+CLOKE_MACOS_COMPAT="${CLOKEOS_MACOS_COMPAT:-11.7}"
 CLOKE_CODENAME="Presidio"
 CLOKE_BUILD="2E3"
 CLOKE_HOST="clokeos"
