@@ -34,3 +34,14 @@ Why it looks like this
 
 Open: JIT (needs `wtf/spi/cocoa/MachVMSPI.h` replacement), WebAssembly, the GTK port itself (libxslt/woff2 absent, `Source/WebKit`
 IPC uses `SOCK_DGRAM` on Darwin), Skia/Cairo rendering choice, X11 window integration.
+
+## Search on WebKit (clokesearch)
+
+`search/clokesearch.c` is a small GTK3 front-end on the WebKit2GTK API (tabs, centered address field, back/forward/reload, Ctrl+L/T/W/R,
+Alt+arrows). `search/build.sh <builddir> <srcdir> <out>` builds it. `cloakserver/bundles.py` makes the Search app start it through
+`/opt/webkit/runmb.sh` when `/opt/webkit/bin/clokesearch` exists, otherwise NetSurf as before, so nothing changes for images without the
+package. Verified in the arm64 VM: https://example.com in a Search window (`../docs/browser-study/clokesearch-webkit-https-arm64.png`).
+`runmb.sh` also sets `GIO_USE_PROXY_RESOLVER=dummy GIO_USE_NETWORK_MONITOR=base NO_AT_BRIDGE=1 GTK_USE_PORTAL=0` (without them the first request
+waits minutes for D-Bus portals that do not exist). The package (about 36 MB + clokesearch + `gio-modules/libgiognutls.so`) is not in the repo;
+`install.sh <url>` installs it. Not done: package published as a release asset, x86_64, tab/history/bookmark features of clokeos.html,
+Search start page links, JIT/WASM (JS runs in the C-loop interpreter), WebGL, video, printing, fonts beyond the image's.

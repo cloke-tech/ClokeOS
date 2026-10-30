@@ -29,7 +29,7 @@ def term(ident, title_en, title_de, size, cmd):
             f"--dynamic-title-mode=none --geometry={size} -x {cmd}")
 
 
-# Search ist NetSurf mit der Startseite aus /share/clokeos (nur beim ersten Start, danach gilt, was NetSurf in
+# Search ist WebKit (clokesearch, webkit/README.md), wenn /opt/webkit installiert ist, sonst NetSurf mit der Startseite aus /share/clokeos (nur beim ersten Start, danach gilt, was NetSurf in
 # Choices speichert; die mitgelieferte Willkommensseite von NetSurf wird ersetzt)
 SEARCH_START = (
     "l=$(cut -c1-2 /etc/clokeos-language 2>/dev/null); case \"$l\" in de|fr|es|it) ;; *) l=en;; esac; t=hell; [ \"$CLOKEOS_DARK\" = 1 ] && t=dunkel\n"
@@ -37,6 +37,7 @@ SEARCH_START = (
     "c=\"$HOME/.netsurf/Choices\"; mkdir -p \"$HOME/.netsurf\"\n"
     "{ grep -v -e '^homepage_url:' -e '^toolbar_items:' -e '^http_proxy' \"$c\" 2>/dev/null; echo \"homepage_url:file://$start\"; "
     "echo 'toolbar_items:back/history/forward/home/url_bar/reloadstop/openmenu'; } > \"$c.new\" && mv \"$c.new\" \"$c\"\n"
+    "if [ -x /opt/webkit/bin/clokesearch ]; then BROWSER_BIN=clokesearch exec /opt/webkit/runmb.sh \"${1:-file://$start}\"; fi\n"
     "exec netsurf-gtk3 \"$@\"")
 
 # Ordner, Name (englisch, deutsch), Kennung, Icon aus clokeos.html (oder None), Startzeile,
@@ -46,7 +47,7 @@ APPS = [
     ('System/Library/CoreServices', 'Fundus', 'Fundus', 'com.clokeos.fundus', 'dateien', 'exec thunar "$@"', 'Thunar', ''),
     ('System/Applications', 'Launchpad', 'Programme', 'com.clokeos.launchpad', 'programme', None, '', 'launchpad'),
     ('System/Applications', 'Search', 'Search', 'com.clokeos.search', 'search', SEARCH_START,
-     'Netsurf-gtk3 Netsurf* NetSurf*', ''),
+     'Netsurf-gtk3 Netsurf* NetSurf* ClokeSearch clokesearch', ''),
     ('System/Applications/Utilities', 'Terminal', 'Terminal', 'com.clokeos.terminal', 'terminal',
      'exec xfce4-terminal "$@"', 'Xfce4-terminal XTerm UXTerm', ''),
     ('System/Applications/Utilities', 'Linux', 'Linux', 'com.clokeos.linux', None, term('com.clokeos.linux', 'Linux', 'Linux', '80x24', 'tux-run'), '', ''),
