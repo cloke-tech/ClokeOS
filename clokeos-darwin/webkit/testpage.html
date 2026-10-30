@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>ClokeOS WebKit test</title>
+<style>
+:root{--a:#7c4dff;--b:#00b894}
+body{margin:0;font:16px system-ui,sans-serif;background:linear-gradient(135deg,#1e1e2e,#2d2b55);color:#fff}
+header{padding:24px 32px;display:flex;align-items:center;gap:16px}
+h1{margin:0;font-size:28px}
+.badge{background:var(--a);border-radius:999px;padding:4px 14px;font-size:13px}
+main{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;padding:0 32px 32px}
+.card{background:rgba(255,255,255,.08);border-radius:16px;padding:18px;backdrop-filter:blur(4px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+.card h2{margin:0 0 8px;font-size:17px}
+.ok{color:var(--b)} .bad{color:#ff7675}
+canvas{width:100%;height:90px;border-radius:8px;background:#111}
+button{background:var(--b);border:0;border-radius:8px;padding:8px 14px;font-weight:600;cursor:pointer}
+</style>
+<header><h1>ClokeOS WebKit</h1><span class="badge" id="ua">…</span></header>
+<main>
+<div class="card"><h2>Flexbox / Grid</h2><div style="display:flex;gap:8px"><div style="flex:1;background:var(--a);height:30px;border-radius:6px"></div><div style="flex:2;background:var(--b);height:30px;border-radius:6px"></div></div></div>
+<div class="card"><h2>JavaScript</h2><div id="js">running…</div></div>
+<div class="card"><h2>Canvas 2D</h2><canvas id="c" width="300" height="90"></canvas></div>
+<div class="card"><h2>Fetch + JSON</h2><div id="net">…</div></div>
+<div class="card"><h2>Intl / Date</h2><div id="intl"></div></div>
+<div class="card"><h2>Interaktion</h2><button id="b">Klicks: 0</button></div>
+</main>
+<script>
+document.getElementById('ua').textContent=navigator.userAgent.match(/AppleWebKit\/[\d.]+/)[0];
+const cls=(ok)=>ok?'ok':'bad';
+const t=[['class fields',(()=>{try{eval('class A{x=1}');return true}catch(e){return false}})()],['async/await',(async()=>{})()instanceof Promise],['Map/Set',new Map([[1,2]]).size===1],['BigInt',2n**64n===18446744073709551616n],['optional chaining',(()=>{try{return eval('({a:{b:1}})?.a?.b')===1}catch(e){return false}})()],['CSS.supports grid',CSS.supports('display','grid')],['IntersectionObserver',typeof IntersectionObserver==='function']];
+document.getElementById('js').innerHTML=t.map(([n,ok])=>`<div class="${cls(ok)}">${ok?'✓':'✗'} ${n}</div>`).join('');
+const g=document.getElementById('c').getContext('2d');const gr=g.createLinearGradient(0,0,300,0);gr.addColorStop(0,'#7c4dff');gr.addColorStop(1,'#00b894');g.fillStyle=gr;g.fillRect(10,10,280,30);g.fillStyle='#fff';g.font='20px sans-serif';g.fillText('canvas ok',14,70);
+document.getElementById('intl').textContent=new Intl.NumberFormat('de-DE',{style:'currency',currency:'EUR'}).format(1234.5)+' · '+new Date(0).toISOString();
+fetch('data.json').then(r=>r.json()).then(j=>{document.getElementById('net').innerHTML='<span class="ok">✓ '+j.msg+'</span>'}).catch(e=>{document.getElementById('net').innerHTML='<span class="bad">✗ '+e+'</span>'});
+let n=0;document.getElementById('b').onclick=()=>{document.getElementById('b').textContent='Klicks: '+(++n)};
+</script></html>

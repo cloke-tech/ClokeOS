@@ -68,8 +68,27 @@ static void handler(int sig, siginfo_t* info, void* uc)
     _exit(128 + sig);
 }
 
+/* Wachhund: CLOKEOS_WATCHDOG=<Sekunden> -> nach dieser Zeit (und dann alle 10 s, dreimal) alle Threads ausgeben, auch wenn der Prozess im Kernel hängt */
+static void* watchdog(void* arg)
+{
+    unsigned secs = (unsigned)(uintptr_t)arg;
+    for (int i = 0; i < 3; i++) {
+        sleep(i ? 10 : secs);
+        const char m[] = "\n*** crashbt watchdog\n";
+        write(2, m, sizeof m - 1);
+        dump_threads();
+    }
+    return NULL;
+}
+
 __attribute__((constructor)) static void install(void)
 {
+    const char* w = getenv("CLOKEOS_WATCHDOG");
+    if (w && atoi(w) > 0) {
+        pthread_t t;
+        pthread_create(&t, NULL, watchdog, (void*)(uintptr_t)atoi(w));
+        pthread_detach(t);
+    }
     struct sigaction sa = { 0 };
     sa.sa_sigaction = handler;
     sa.sa_flags = SA_SIGINFO;
