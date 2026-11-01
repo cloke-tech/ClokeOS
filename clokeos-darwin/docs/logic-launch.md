@@ -135,6 +135,17 @@ Findings, all in the arm64 VM with the image of round 9 (plus `macapps/crashpc.c
   Observation). Best next experiment: build a Swift test with `final class X {}` (no `NSObject`) against our `libswiftCore` and `dlopen` it. The earlier Swift tests only
   covered `NSObject` subclasses and the generic `Box<T>` of `hello2.swift`.
 
+### Round 11: pure Swift classes are fine
+
+A test dylib with a `final class`, a `class` with a `final` subclass (all rooted at `_OBJC_CLASS_$__TtCs12_SwiftObject`, like Logic's
+`MASwiftUtilities`), built with the host Swift 6.4 for `arm64-apple-macos11.0` **and** `macos15.6` against our `libswiftCore`, loads with `dlopen`
+and runs on PureDarwin's `libobjc` (`pure_test=83` = 3*14 + 41, both variants; in a ClokeOS desktop image built with `CLOKE_NO_MACAPPS=1`, driver
+`dlopen` + `dlsym`). So neither plain Swift classes nor the 15.6 deployment target are the cause. What `MASwiftUtilities` has beyond that
+(sections): `__objc_protolist`/`__objc_protorefs` (ObjC protocol list), `__objc_stubs` (selector stubs), `__swift5_*` metadata for protocols and
+associated types, imports of SwiftUI/CoreGraphics/Observation. Next candidates, in order: (1) a Swift `@objc protocol` and a class conforming to it,
+(2) `-fobjc-msgsend-selector-stubs`, (3) a build of PureDarwin's libobjc with `_objc_inform` prints around `read_images` (its source is in the
+PDSRC tarball; no debugger exists in the image).
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
