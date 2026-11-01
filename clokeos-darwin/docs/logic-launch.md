@@ -247,6 +247,22 @@ Messages of the run: `-[NSHelpManager registerBooksInBundle:]` (the only lenient
 
 Not a rendering of anything, not a project: no `Jump.logicx` was opened, no audio engine was started, SwiftUI parts still run on trap stubs.
 
+### Round 16: Logic runs to `didFinishLaunching` and then idles (no delegate, no window)
+
+Findings (arm64 VM, `CLOKE_TRACE=1`, `CLOKE_LENIENT=1`, `CLOKE_NO_UNTITLED=1`):
+
+* `MainMenu.nib` is Apple's **NIBArchive** format (`NIBArchive` header), not a keyed archive: Cocotron cannot load it, which is the real cause of `Unable to load main nib file MainMenu`.
+  `macapps/nibarchive.py` parses it (format read off the file; documented in the script). Content: `NSIBObjectData` with File's Owner = `NSCustomObject` of class `CLgApplication`
+  and a template menu (About/Hide/Quit connected to File's Owner). **No delegate** is in it.
+* At `NSApplicationWillFinishLaunchingNotification` Logic's `NSApp` (`CLgApplication`) has **no delegate**, and no main menu (`[NSApp mainMenu] == nil`) at `DidFinishLaunching`.
+  So Cocotron's `-finishLaunching` falls back to opening an untitled document, Logic's document factory returns nil, and the empty alert (round 15) appears.
+  `macapps/patches/darling-cocotron/AppKit/NSApplication.m.sed`: `CLOKE_NO_UNTITLED=1` skips that fallback.
+* With it: `willFinishLaunching` and `didFinishLaunching` are both posted, and the process then **sits idle in its run loop** (state S, 0 % CPU, 80 MB), with **no window and no error**.
+  Where Logic would normally create its delegate/UI: `Logic.framework` contains `appManager_applicationDidFinishLaunching`, `appManager_applicationWillFinishLaunching`,
+  `applicationShouldOpenUntitledFile:` and the Swift classes `LogicAppFramework.AppFactory`, `ProjectFactory`, `CLgDocumentControllerObserver`; how the delegate gets attached
+  on macOS (probably through `AppFactory` called from the launcher or from the nib's File's Owner machinery) was not found. Next step: disassemble the launcher's `main`
+  and `CLgApplication`'s `+initialize`/`-init` (`otool -tV`, `objdump`), or log `-[NSApplication setDelegate:]` calls with the trace helper.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

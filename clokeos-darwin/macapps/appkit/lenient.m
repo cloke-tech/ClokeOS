@@ -44,3 +44,27 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
 - (id)forwardingTargetForSelector:(SEL)sel { return CKSinkFor(self, sel, NO); }
 + (id)forwardingTargetForSelector:(SEL)sel { return CKSinkFor(self, sel, YES); }
 @end
+
+/* CLOKE_TRACE=1: beim Start von AppKit den Programmdelegaten melden (für die Frage, warum -finishLaunching ein leeres Dokument öffnet) */
+#import <AppKit/NSApplication.h>
+@interface CKTrace : NSObject
+@end
+@implementation CKTrace
++ (void)will:(NSNotification *)n {
+    id d = [NSApp delegate];
+    fprintf(stderr, "[clokeos-trace] willFinishLaunching: NSApp=%s delegate=%s shouldOpenUntitled=%d openUntitledFile=%d\n",
+            class_getName(object_getClass(NSApp)), d ? class_getName(object_getClass(d)) : "(nil)",
+            (int)[d respondsToSelector:@selector(applicationShouldOpenUntitledFile:)],
+            (int)[d respondsToSelector:@selector(applicationOpenUntitledFile:)]);
+}
++ (void)did:(NSNotification *)n {
+    id d = [NSApp delegate];
+    fprintf(stderr, "[clokeos-trace] didFinishLaunching: delegate=%s mainMenu=%p\n",
+            d ? class_getName(object_getClass(d)) : "(nil)", [NSApp mainMenu]);
+}
++ (void)load {
+    if (!getenv("CLOKE_TRACE")) return;
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(will:) name:@"NSApplicationWillFinishLaunchingNotification" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(did:) name:@"NSApplicationDidFinishLaunchingNotification" object:nil];
+}
+@end
