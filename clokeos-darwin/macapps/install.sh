@@ -58,11 +58,18 @@ fi
 # Echte Swift-Laufzeit, wenn swift/build.sh sie gebaut hat ($WORK/swiftsrc/run-<arch>): ersetzt die leeren Stubs von oben;
 # dazu die libdispatch-Datei, die libswift_Concurrency mit festem Pfad lädt (swift/dispatch-shim.c)
 sw="$WORK/swiftsrc/run-$CLOKE_ARCH"
+CLOKE_ARCH_CC=$([ "$CLOKE_ARCH" = arm64 ] && echo arm64 || echo x86_64)
 if [ -f "$sw/libswiftCore.dylib" ]; then
   mkdir -p "$stage/usr/lib/swift" "$stage/usr/lib/system"
   cp "$sw/libswiftCore.dylib" "$sw/libswift_Concurrency.dylib" "$stage/usr/lib/swift/"
-  clang -arch "$([ "$CLOKE_ARCH" = arm64 ] && echo arm64 || echo x86_64)" -dynamiclib "$HERE/swift/dispatch-shim.c" -install_name /usr/lib/system/libdispatch.dylib \
-    -Wl,-reexport_library,"$rootdir/../pdlibs/usr/lib/libSystem.B.dylib" -o "$stage/usr/lib/system/libdispatch.dylib" 2>/dev/null
+  # Mit ld statt clang: das SDK hat keine x86_64-Scheibe der System-Bibliotheken. Die tbd-Attrappe heißt anders, damit ld nicht
+  # das SDK-libSystem nimmt; install_name_tool setzt den Re-Export danach auf die echte libSystem.
+  la="$WORK/tmp/dispatch-shim"; mkdir -p "$la"
+  printf -- "--- !tapi-tbd\ntbd-version: 4\ntargets: [ x86_64-macos, arm64-macos ]\ninstall-name: '/usr/lib/libSystemX.B.dylib'\ncurrent-version: 1292\ncompatibility-version: 1\nexports:\n  - targets: [ x86_64-macos, arm64-macos ]\n    symbols: [ dummy_sym ]\n...\n" > "$la/sysx.tbd"
+  clang -arch "$CLOKE_ARCH_CC" -c "$HERE/swift/dispatch-shim.c" -o "$la/ds.o" &&
+  ld -arch "$CLOKE_ARCH_CC" -dylib -o "$stage/usr/lib/system/libdispatch.dylib" "$la/ds.o" -install_name /usr/lib/system/libdispatch.dylib \
+    -platform_version macos 11.0 11.0 -reexport_library "$la/sysx.tbd" 2>/dev/null &&
+  install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$stage/usr/lib/system/libdispatch.dylib"
 fi
 # Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)
 for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
