@@ -288,6 +288,26 @@ and the notification handlers of `NSApplicationWillFinishLaunchingNotification` 
 `Array`/`Dictionary`↔`NS…`, `URL`, `Data`, `Date`, `CharacterSet`, `Notification`, `JSONEncoder/Decoder`, `NSLocalizedString`. That is package E of `logic-pro-gap.md`: a Swift module named `Foundation`
 built with the host `swiftc` against Darling's Foundation (the bridging functions are small; `String._bridgeToObjectiveC` alone is a `NSString(string:)`).
 
+### Round 18: Foundation Swift overlay from swift-foundation (first measurement)
+
+Approved download: `swift-foundation` (tag swift-6.4.0-RELEASE) plus, through SwiftPM, `swift-collections` 1.1.6, `swift-foundation-icu` and `swift-syntax` (release/6.4.x). **The sources and the
+build cache take about 490 MB on disk** (git history included), more than the 150 to 250 MB I estimated; `swift/foundation.sh` is the recipe.
+
+With `-Xfrontend -module-abi-name Foundation` (and the package's own `DATA_LEGACY_ABI` for Apple platforms) **`FoundationEssentials` builds in about 4 minutes** and its symbols are named
+`$s10Foundation…`: **153 of the 424 Foundation Swift symbols Logic imports are provided** (Data, Date, URL core, UUID, JSONEncoder/Decoder, AttributedString core, `__DataStorage` …).
+
+The other 271 are what Apple's closed ObjC layer of the overlay adds: `IndexSet` (23), `CharacterSet` (18), `URLResourceValues` (10), `Notification` (6), `URLRequest`, `URLError`, `_BridgedNSError`/`CocoaError`
+bridging, `LocalizedError`, `NSFastEnumerationIterator`, KVO (`NSKeyValueObservation`, `_KeyValueCodingAndObserving`), the `_bridgeToObjectiveC` family, the `Locale`/`FormatStyle`
+symbols from `FoundationInternationalization` (not built yet; needs swift-foundation-icu, whose build was resolved but not run), and `NSLog`/`NSLocalizedString`.
+
+Linking `FoundationEssentials.o` and the collections objects into a dylib against our `libswiftCore` leaves **244 undefined symbols**, all from Swift runtime modules we have not built yet:
+`Observation` (`ObservationRegistrar`), `_StringProcessing`/`RegexBuilder` pieces (`Regex…`), `Synchronization` (`Mutex`, `_Cell`). Those come from the same `swift` repository as `libswiftCore`
+(`Runtimes/Supplemental/…`, built like round 3 with `swift/build.sh`, plus `-lswiftSynchronization`-style dylibs in `/usr/lib/swift`).
+
+Order of the next steps: (1) build the supplemental runtimes (Synchronization, Observation, _StringProcessing, _RegexParser) into `/usr/lib/swift`; (2) link `FoundationEssentials` into `/usr/lib/sov/37.dylib` and drop
+the 153 trap labels; (3) write the ObjC bridging layer for the remaining ~270 symbols against Darling's Foundation (old open `stdlib/public/Darwin/Foundation/*.swift` of the swift 5.x repository is the
+natural base, it has `IndexSet`, `CharacterSet`, `Notification`, `URLRequest`, `_BridgedNSError`, KVO; the ABI is the shipping one); (4) `FoundationInternationalization` for Locale/format styles.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
