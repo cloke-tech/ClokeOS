@@ -44,6 +44,20 @@ done
 "$M/libs.sh" | tail -1 || echo "libsqlite3/libxml2/libbz2/libpcre/libxar nicht gebaut"
 "$M/pkginstall.sh" | tail -1 || echo "clokeos-pkginstall nicht gebaut"
 
+# Swift-Symbole, die Mac-Programme importieren und die hier fehlen: Trap-Marken in usr/lib/sov, per Re-Export an den Bibliotheken
+# (macapps/stubgen/swiftov.py; Voraussetzung ist die Importliste von stubs.sh). Vor dem Kopieren in die Stage, die Bibliotheken
+# werden im Ausgabeordner gepatcht.
+CLOKE_ARCH_CC=$([ "$CLOKE_ARCH" = arm64 ] && echo arm64 || echo x86_64)
+# die echte Swift-Laufzeit (swift/build.sh) ersetzt die leeren Stubs, bevor swiftov sie patcht
+if [ -f "$WORK/swiftsrc/run-$CLOKE_ARCH/libswiftCore.dylib" ]; then
+  mkdir -p "${fw%/Library/ClokeOS/MacFrameworks}/usr/lib/swift"
+  cp "$WORK/swiftsrc/run-$CLOKE_ARCH/libswiftCore.dylib" "$WORK/swiftsrc/run-$CLOKE_ARCH/libswift_Concurrency.dylib" "${fw%/Library/ClokeOS/MacFrameworks}/usr/lib/swift/"
+fi
+if [ -f "$WORK/out/stubgen/imports.json" ]; then
+  python3 -I "$M/stubgen/swiftov.py" "$WORK/out/stubgen/imports.json" "${fw%/Library/ClokeOS/MacFrameworks}" "${fw%/Library/ClokeOS/MacFrameworks}" --arch "$CLOKE_ARCH_CC" \
+    --build "${fw%/root/Library/ClokeOS/MacFrameworks}/pdlibs" "${fw%/root/Library/ClokeOS/MacFrameworks}/obj/CoreFoundation" \
+    --pd-image "$DEBUGFS" "$PD_IMG?offset=$(( $(gpt_part "$PD_IMG" "$GUID_LINUX_FS" | cut -d' ' -f1) * 512 ))" | tail -1 || true
+fi
 mkdir -p "$stage/Library/ClokeOS"
 rm -rf "$stage/Library/ClokeOS/MacFrameworks"
 cp -R "$fw" "$stage/Library/ClokeOS/MacFrameworks"   # mit den Symlinks der Bundles
@@ -58,10 +72,8 @@ fi
 # Echte Swift-Laufzeit, wenn swift/build.sh sie gebaut hat ($WORK/swiftsrc/run-<arch>): ersetzt die leeren Stubs von oben;
 # dazu die libdispatch-Datei, die libswift_Concurrency mit festem Pfad lädt (swift/dispatch-shim.c)
 sw="$WORK/swiftsrc/run-$CLOKE_ARCH"
-CLOKE_ARCH_CC=$([ "$CLOKE_ARCH" = arm64 ] && echo arm64 || echo x86_64)
 if [ -f "$sw/libswiftCore.dylib" ]; then
   mkdir -p "$stage/usr/lib/swift" "$stage/usr/lib/system"
-  cp "$sw/libswiftCore.dylib" "$sw/libswift_Concurrency.dylib" "$stage/usr/lib/swift/"
   # Mit ld statt clang: das SDK hat keine x86_64-Scheibe der System-Bibliotheken. Die tbd-Attrappe heißt anders, damit ld nicht
   # das SDK-libSystem nimmt; install_name_tool setzt den Re-Export danach auf die echte libSystem.
   la="$WORK/tmp/dispatch-shim"; mkdir -p "$la"
@@ -71,6 +83,8 @@ if [ -f "$sw/libswiftCore.dylib" ]; then
     -platform_version macos 11.0 11.0 -reexport_library "$la/sysx.tbd" 2>/dev/null &&
   install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$stage/usr/lib/system/libdispatch.dylib"
 fi
+[ -f "$rootdir/usr/lib/libIOKitCF.dylib" ] && { mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libIOKitCF.dylib" "$stage/usr/lib/libIOKitCF.dylib"; }
+[ -d "$rootdir/usr/lib/sov" ] && { mkdir -p "$stage/usr/lib/sov"; cp "$rootdir"/usr/lib/sov/*.dylib "$stage/usr/lib/sov/"; }
 # Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)
 for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
   [ -e "$rootdir/usr/lib/$l" ] && { mkdir -p "$stage/usr/lib"; cp -P "$rootdir/usr/lib/$l" "$stage/usr/lib/"; }

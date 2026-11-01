@@ -19,8 +19,31 @@ fw=System/Library/Frameworks
 target=x86_64-apple-macos11.0
 [ "$CLOKE_ARCH" = arm64 ] && target=arm64-apple-macos11.0
 flags=(-target "$target" -dynamiclib -nostdlib -O2 -Wl,-no_fixup_chains -Wl,-platform_version,macos,11.0,11.5)
+# Was Mac-Programme aus CoreServices und Carbon importieren und weder PureDarwins CoreServices noch carbon.c haben (Importliste von
+# macapps/stubs.sh, falls vorhanden): Marken, die 0 zurückgeben, damit dyld bindet (Logic Pro: Spotlight, Apple Events, HIToolbox …)
+extra=()
+if [ -f "$WORK/out/stubgen/imports.json" ]; then
+  clang -target "$target" -O2 -c "$HERE/macapps/carbon.c" -o "$out/carbon.o" 2>/dev/null || true
+  python3 -I - "$WORK/out/stubgen/imports.json" "$out/CoreServices" "$out/carbon.o" "$out/extra.s" "$CLOKE_ARCH" <<'PYX'
+import json, subprocess, sys
+imp, cs, obj, out, arch = sys.argv[1:6]
+def names(f, *flags):
+    r = subprocess.run(["nm", "-gU", "-arch", "arm64" if arch == "arm64" else "x86_64", f], capture_output=True, text=True)
+    return {l.split()[-1] for l in r.stdout.splitlines() if l.strip()}
+have = names(cs) | names(obj)
+d = json.load(open(imp))
+want = sorted({s for k in ("CoreServices", "Carbon") for s in d.get(k, {}).get("symbols", []) if not s.startswith("_$s")} - have)
+body = "mov x0, #0\n  ret" if arch == "arm64" else "xor %eax, %eax\n  ret"
+with open(out, "w") as f:
+    f.write(".text\n.p2align 2\n")
+    for s in want:
+        f.write(f'.globl "{s}"\n"{s}":\n  {body}\n')
+print(len(want), "Marken in libclokeos_carbon")
+PYX
+  [ -s "$out/extra.s" ] && extra=("$out/extra.s")
+fi
 clang "${flags[@]}" -install_name /usr/lib/libclokeos_carbon.dylib -o "$out/libclokeos_carbon.dylib" \
-  "$HERE/macapps/carbon.c" "$out/libSystem.B.dylib"
+  "$HERE/macapps/carbon.c" ${extra[@]+"${extra[@]}"} "$out/libSystem.B.dylib"
 # Carbon: leere Hülle mit Apples Versionsnummern (OMF verlangt Kompatibilität 2.0.0), die Carbon-Teile re-exportiert
 echo 'static int carbon_stub;' > "$out/stub.c"
 clang "${flags[@]}" -Wl,-headerpad,0x200 -compatibility_version 2.0.0 -current_version 170.0.0 \

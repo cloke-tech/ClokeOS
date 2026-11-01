@@ -72,6 +72,46 @@ overlay**: the module `Foundation` as seen from Swift (`CharacterSet`, `Notifica
 1,366 symbols across the 98 binaries). dyld reports one symbol at a time, so which other overlays follow (CoreGraphics 70, SwiftUI,
 Combine, simd, os, Dispatch) is known only from the static list above.
 
+## Round 4: Swift overlay and C/ObjC supplements, past dyld (arm64)
+
+New tool `macapps/stubgen/swiftov.py` (called by `macapps/install.sh`): for every library Logic imports from, it compares the imported
+symbols with what our build exports. What is missing goes into a supplement dylib `/usr/lib/sov/<n>.dylib`, and the library gets an
+`LC_REEXPORT_DYLIB` to it, added by patching the Mach-O header in the space left by the linker (56 to 112 bytes; hence the short
+file names). Two-level namespaces keep working: dyld finds the symbol "in" Foundation, AppKit, SwiftUI …
+
+* **Swift symbols** (`_$s…`, 424 in Foundation, 2,102 in SwiftUI, 179 Combine, …): a label with a trap instruction (`brk #1`).
+  Loading works; the first real call traps. These are placeholders, not an overlay.
+* **C functions, constants, ObjC classes**: the existing stubgen classifier (`emit`) from the SDK headers; instance variable offsets
+  (`OBJC_IVAR_$_NSBox._bFlags`, `NSCell._cFlags`, `NSButtonCell._bcFlags`, `NSTableView._tableColumns`): placeholder value 16.
+* **IOKit**: PureDarwin's `libIOKitCF.dylib` (IOKit is a symlink to it) gets a plain-assembly supplement (functions return 0). Mixing in
+  ObjC/CoreFoundation there killed launchd ("Symbol not found: _OBJC_CLASS_$_NSObject", kernel panic at boot); that is why
+  `plain_dylib` has no dependency but libSystem.
+* **CoreServices and Carbon**: `macapps/carbon.sh` now also puts the 140 CoreServices/Carbon symbols that Logic imports and nothing provides
+  (Spotlight `MDQuery*`, Apple Events, HIToolbox `TIS*`, `LMGetKbdType` …) into `libclokeos_carbon` as stubs returning 0.
+* **libswiftCore**: 3 symbols are missing from the 6.4 build (`$ss5SIMD2VMn`, `$ss5SIMD3VMn`, `…_ExpressibleByBuiltinFloatLiteralP…`);
+  the real `libswiftCore` is patched the same way. `libswift_Concurrency` lacks nothing.
+
+Rounds (each a full image: `macapps/logicimage.sh`, about 10 minutes):
+
+| Round | First error | Fix |
+|---|---|---|
+| 4 | `Symbol not found: _NSFontDescriptorSystemDesignRounded` (MACore, expected in AppKit) | C/ObjC supplements |
+| 5 | boot panic: launchd, `libIOKitCF` supplement pulls NSObject | plain assembly for IOKit |
+| 6 | `_LMGetKbdType` expected in Carbon | CoreServices/Carbon stubs in `libclokeos_carbon` |
+| 7 | `_OBJC_IVAR_$_NSBox._bFlags` (MAToolKit, expected in AppKit) | ivar placeholders |
+| 8 | `_$ss5SIMD2VMn` expected in libswiftCore | trap labels for the 3 missing symbols |
+| 9 | none from dyld: **the process dies with signal 10 (SIGBUS, exit status 138)** | not fixed |
+
+**State at the end of this session: on arm64 Logic's launcher passes all of dyld** (every library loads, every symbol binds, `DYLD_PRINT_INITIALIZERS=1`
+prints `calling initializer function … in /usr/lib/libSystem.B.dylib` as its last line) **and then crashes with SIGBUS** while running
+initializers. It does not reach `NSApplicationMain`. Cause unknown: no debugger or crash report in the image; candidates are a call into a
+placeholder data symbol (a stubbed constant or ivar used as code or as an offset), a trap in a supplement, or an initializer of a C++/Swift
+library that depends on real overlay code. Not analysed further.
+
+Next step: get a crash location (an in-image debugger or a `SIGBUS` handler that prints `pc` and the image of `pc` via `dladdr`, loaded with
+`DYLD_INSERT_LIBRARIES`), then replace the offending placeholder with real code. x86_64: the same tooling builds the x86_64 supplement, but the
+x86_64 slice was not re-run after round 3.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

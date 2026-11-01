@@ -194,8 +194,10 @@ def classify(h, fw, sym):
         return ("class", n[13:])
     if n.startswith("OBJC_METACLASS_$_"):
         return ("meta", n[17:])
-    if n.startswith("OBJC_EHTYPE_$_") or n.startswith("OBJC_IVAR_$_"):
-        return ("skip", "ObjC-EH/IVAR")
+    if n.startswith("OBJC_IVAR_$_"):
+        return ("ivar", n)
+    if n.startswith("OBJC_EHTYPE_$_"):
+        return ("skip", "ObjC-EH")
     if n.startswith("$s") or n.startswith("$S") or n.startswith("_$s"):
         return ("swift",)
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n):
@@ -303,6 +305,10 @@ def emit(fw, syms, hdr, override):
             elif r[0] == "s": out.append(f"FN_S({n}, {r[1]})")
             else: out.append(f"FN_P({n})")
             cnt["func"] += 1
+        elif k[0] == "ivar":
+            # Offset einer Instanzvariablen eines Apple-Klassen (z. B. NSBox._bFlags): Programme, die davon ableiten, lesen sie
+            # direkt. Platzhalter 16 (hinter isa und einem Zeiger), damit dyld bindet; ein echtes Layout gibt es nur vom echten AppKit.
+            out.append(f'unsigned long clk_ivar_{cnt["data"]}_{len(out)} __asm__("_{n}") = 16;'); cnt["data"] += 1
         elif k[0] == "str":
             out.append(f"STR({n})"); cnt["str"] += 1
         else:
