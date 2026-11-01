@@ -45,3 +45,10 @@ package. Verified in the arm64 VM: https://example.com in a Search window (`../d
 waits minutes for D-Bus portals that do not exist). The package (36 MB incl. clokesearch and `gio-modules/libgiognutls.so`) is the pre-release `webkit-arm64-1` of cloke-tech/ClokeOS (not "latest");
 `sh install.sh` in the VM, as root, installs it. Not done: x86_64, install.sh end to end on a fresh image, tab/history/bookmark features of clokeos.html,
 Search start page links, JIT/WASM (JS runs in the C-loop interpreter), WebGL, video, printing, fonts beyond the image's.
+
+## x86_64
+
+Same sources and patch; `CLOKEOS_ARCH=x86_64` for `sysroot.sh`, `gpgerror.sh`, `tls.sh`, `build-gtk.sh`, `search/build.sh`, `stage.sh`
+(the x86_64 libSystem lacks `fmax`/`llroundf`, `compat/pdcompat.c` provides them; `crashbt` is arm64-only and optional). Package: pre-release
+`webkit-x86_64-1`; `install.sh` picks the package by `uname -m`. Verified in the x86_64 desktop image (QEMU TCG): Search from the dock opens the start page,
+the test page and https://example.com render (`../docs/browser-study/clokesearch-webkit-*-x86_64.png`); a first page takes about two minutes there. Real PCs untested.
