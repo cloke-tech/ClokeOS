@@ -171,6 +171,36 @@ this when it calls `-[NSNumber objCType]` (Logic does so during startup). Next s
 (for example by not loading PureDarwin's `libCoreFoundation` classes in programs that use `DYLD_FRAMEWORK_PATH=/Library/ClokeOS/MacFrameworks`), or
 give Darling's `__NSCFNumber` an `objCType`.
 
+### Round 13: Logic's launcher reaches NSApplicationMain (arm64)
+
+The `__NSCFNumber objCType` exception came from running with two CoreFoundations: PureDarwin's `/usr/lib/libCoreFoundation.dylib` and
+`libFoundation.dylib` (loaded by system libraries) define the same classes as Darling's frameworks, and objc keeps the first one found by name. Fix for
+programs (not system daemons): `DYLD_LIBRARY_PATH=/Library/ClokeOS/MacLibs`, a folder with `libCoreFoundation.dylib` and `libFoundation.dylib` symlinked to Darling's
+frameworks (staged by `macapps/install.sh`). dyld then loads only Darling's CoreFoundation and Foundation (verified with `DYLD_PRINT_LIBRARIES`; the
+PureDarwin ones are gone from the list) and AppKit's X11 backend (glib, gobject) comes up.
+
+With the crash reporter (`DYLD_INSERT_LIBRARIES=/usr/lib/libcrashpc.dylib`) the next stop is readable:
+
+```
+DISPLAY=:0 DYLD_INSERT_LIBRARIES=/usr/lib/libcrashpc.dylib DYLD_LIBRARY_PATH=/Library/ClokeOS/MacLibs DYLD_FRAMEWORK_PATH=/Library/ClokeOS/MacFrameworks "Logic Pro"
+[crashpc] Signal 0xb (SIGSEGV), fault address 0x10
+  pc  libobjc.A.dylib objc_msgSend +0x14
+  lr  AppKit -[NSDocument initWithType:error:] +0x24
+  bt  Logic.framework/Logic +0xb47f9c
+  bt  AppKit -[NSDocumentController makeUntitledDocumentOfType:error:]
+  bt  AppKit -[NSDocumentController openUntitledDocumentAndDisplay:error:]
+  bt  AppKit -[NSApplication finishLaunching]
+  bt  AppKit -[NSApplication run]
+  bt  AppKit NSApplicationMain
+  bt  Logic Pro +0x1070                      (the launcher)
+```
+
+**This is step 9 of the test ladder (`logic-pro-gap.md` section 6): the launcher reaches `NSApplicationMain`** — Logic's `CLgApplication` is running, AppKit's X11 backend is
+initialised on the ClokeOS desktop (the desktop session was logged in, `DISPLAY=:0`), and `finishLaunching` asks the document controller for an untitled
+document, which calls Logic's own document subclass and then Cocotron's `-[NSDocument initWithType:error:]`, where a message goes to nil (fault address 0x10).
+No window appears yet. Next: find which object in `-[NSDocument initWithType:error:]` is nil (probably a class or property the Cocotron AppKit lacks, for
+which Logic's override of `makeUntitledDocumentOfType:` passes through), then continue the same loop (crash location, smallest fix).
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

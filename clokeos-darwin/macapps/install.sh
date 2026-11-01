@@ -95,6 +95,14 @@ for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.
 done
 [ -f "$rootdir/usr/sbin/clokeos-pkginstall" ] && { mkdir -p "$stage/usr/sbin"; cp "$rootdir/usr/sbin/clokeos-pkginstall" "$stage/usr/sbin/"; }
 
+# MacLibs: PureDarwins /usr/lib/libCoreFoundation.dylib und libFoundation.dylib definieren dieselben Klassen wie Darlings Frameworks
+# (__NSCFNumber, __NSCFType, NSNull …); die PureDarwin-Fassung kommt zuerst dran und hat nicht, was ein Mac-Programm braucht
+# (z. B. -[NSNumber objCType]). Ein Programm, das mit DYLD_LIBRARY_PATH=/Library/ClokeOS/MacLibs läuft, bekommt dort statt dessen
+# Darlings Frameworks (dyld ersetzt nach dem Dateinamen). Nur für Programme, nicht für Systemdienste. docs/logic-launch.md, Runde 13.
+mkdir -p "$stage/Library/ClokeOS/MacLibs"
+ln -sf ../MacFrameworks/CoreFoundation.framework/Versions/A/CoreFoundation "$stage/Library/ClokeOS/MacLibs/libCoreFoundation.dylib"
+ln -sf ../MacFrameworks/Foundation.framework/Versions/C/Foundation "$stage/Library/ClokeOS/MacLibs/libFoundation.dylib"
+
 # Hallo.app, aufgebaut wie ein Programm aus Xcode (Info.plist, PkgInfo, MacOS, Resources)
 app="$stage/Applications/Hallo.app/Contents"
 rm -rf "$stage/Applications/Hallo.app"
