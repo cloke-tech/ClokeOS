@@ -7,13 +7,13 @@
 # 2. das Wurzeldateisystem wird als eigene Datei vergrößert (resize2fs auf image?offset=… kürzt sonst die Image-Datei am
 #    falschen Ende und schneidet das neue Dateisystem ab), die GPT samt Sicherungskopie angepasst, zurückgeschrieben
 # 3. Contents/MacOS, Contents/Frameworks und Info.plist des Programms werden mit debugfs ins Image geschrieben
-#    (ohne Resources: ein Startversuch braucht nur den Code; den ganzen Baum installiert clokeos-pkginstall)
+#    und Contents/Resources (1,7 GB: Nibs, Bilder, Inhalte; ohne die ganze Installation von clokeos-pkginstall)
 # Nichts von Logic landet im Repository. Ergebnis: $WORK/out/clokeos-<version>-<arch>-desktop.img
 set -euo pipefail
 export CLOKEOS_ARCH="${CLOKEOS_ARCH:-arm64}" CLOKEOS_FLAVOR=desktop
 source "$(dirname "$0")/../config.sh"
 app="${1:-/Applications/Logic Pro.app}"
-add="${2:-2200}"
+add="${2:-4200}"
 R="$BREW/opt/e2fsprogs/sbin"
 tmp="$WORK/tmp/logicimage"
 rm -rf "$tmp"; mkdir -p "$tmp"
@@ -73,7 +73,7 @@ def mk(d):
     if p and p != "/": mk(p)
     dirs.add(d); c.append("mkdir " + q(d))
 mk(dst)
-for sub in ("Contents/MacOS", "Contents/Frameworks"):
+for sub in ("Contents/MacOS", "Contents/Frameworks", "Contents/Resources"):
     for dp, dn, fn in os.walk(os.path.join(root, sub)):
         rel = os.path.relpath(dp, root); mk(dst + "/" + rel)
         for n in dn + fn:

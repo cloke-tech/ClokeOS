@@ -100,8 +100,8 @@ done
 # (z. B. -[NSNumber objCType]). Ein Programm, das mit DYLD_LIBRARY_PATH=/Library/ClokeOS/MacLibs läuft, bekommt dort statt dessen
 # Darlings Frameworks (dyld ersetzt nach dem Dateinamen). Nur für Programme, nicht für Systemdienste. docs/logic-launch.md, Runde 13.
 mkdir -p "$stage/Library/ClokeOS/MacLibs"
-ln -sf ../MacFrameworks/CoreFoundation.framework/Versions/A/CoreFoundation "$stage/Library/ClokeOS/MacLibs/libCoreFoundation.dylib"
-ln -sf ../MacFrameworks/Foundation.framework/Versions/C/Foundation "$stage/Library/ClokeOS/MacLibs/libFoundation.dylib"
+ln -sf ../MacFrameworks/CoreFoundation.framework/CoreFoundation "$stage/Library/ClokeOS/MacLibs/libCoreFoundation.dylib"
+ln -sf ../MacFrameworks/Foundation.framework/Foundation "$stage/Library/ClokeOS/MacLibs/libFoundation.dylib"
 
 # Hallo.app, aufgebaut wie ein Programm aus Xcode (Info.plist, PkgInfo, MacOS, Resources)
 app="$stage/Applications/Hallo.app/Contents"

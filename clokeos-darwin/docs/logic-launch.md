@@ -201,6 +201,32 @@ document, which calls Logic's own document subclass and then Cocotron's `-[NSDoc
 No window appears yet. Next: find which object in `-[NSDocument initWithType:error:]` is nil (probably a class or property the Cocotron AppKit lacks, for
 which Logic's override of `makeUntitledDocumentOfType:` passes through), then continue the same loop (crash location, smallest fix).
 
+### Round 14: the NSDocument bug, NSBundle image methods, Logic's own startup messages
+
+Register dump of the previous crash (`crashpc` now prints x0..x3 and the selector for `objc_msgSend` faults): receiver of `-setFileType:` was a heap object with isa 0, i.e. freed.
+Cocotron's `-[NSDocument initWithType:error:]` calls `[self init];` and drops the result; Logic's document class returns another object from `-init`. All five such
+places in `AppKit/NSDocument.m` now read `self = [self init];` (`macapps/patches/darling-cocotron/AppKit/NSDocument.m.sed`). Document creation now fails inside Logic itself instead of crashing,
+AppKit shows the error through `-[NSResponder presentError:]` → `runModalForWindow:` and Logic's code runs there (dispatch_once, a worker); this is code of the
+product, executing.
+
+Next crash: `-[NSBundle URLForImageResource:]: unrecognized selector` (Cocotron has no NSBundle image methods). `macapps/appkit/nsbundle_images.m` (X11 backend,
+`URLForImageResource:`, `pathForImageResource:`, `imageForResource:`) adds them. `macapps/logicimage.sh` now also installs `Contents/Resources` (1.7 GB) and grows the
+root by 4.2 GB. With that, the messages printed by Logic's own startup in the arm64 VM are:
+
+```
+Logic Pro: Unable to load main nib file MainMenu
+CALLED: O2ColorSpaceCreateWithName                       (our CoreGraphics/Onyx2D: not implemented)
+Logic Pro: convertFont:toHaveTrait: failed, San Francisco 2
+Terminating app due to uncaught exception 'NSException', reason: '-[NSURLComponents initWithURL:resolvingAgainstBaseURL:]: unrecognized selector'
+```
+
+State at the end: **no window**. The four items are the next wall, each a small-to-medium missing piece:
+1. `NSURLComponents` in Darling's Foundation is an empty 5-line file (`src/NSURLComponents.m`); a real one (scheme, host, port, path, query, queryItems/`NSURLQueryItem`, `-URL`, `-string`) is about 200 lines on top of CFURL.
+2. `MainMenu.nib` is not found/loaded although `Contents/Resources` is installed: Logic's nib is the compiled Apple format (probably in `Base.lproj`/`en.lproj`); Cocotron's NSNib/NSBundle must be checked for the
+   lookup (the `.lproj` search) and for the `keyedobjects` archive version.
+3. `O2ColorSpaceCreateWithName` (Onyx2D) must create the named color spaces (sRGB, generic RGB/gray, display P3).
+4. Fonts: "San Francisco" does not exist; the system font must map to a font on ClokeOS.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
