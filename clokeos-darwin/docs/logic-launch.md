@@ -393,3 +393,8 @@ Logic in the arm64 VM now gets through: dyld (all of `fo.dylib`/`fo2.dylib` and 
 the generic metadata argument (x3) has no sensible value witness table (size read from `*(x3-8)+0x40` is garbage). Not understood yet; either Logic's caller or a bridged value is wrong.
 
 Untested: x86_64, opening `Jump.logicx`, audio engine, rendering.
+
+Detail on the stop in round 22 (`macapps/crashpc.c` now prints x0..x28): the exported `URL.appending(component:directoryHint:)` (a merged-function wrapper in `fo.dylib`) hands the generic
+metadata of `S` (x3 = 0x…30c0 in the image) and its witness table (x4, a *heap* address, so a dynamically instantiated conformance) on to `_URL.appending(…)`, which reads the value-witness size
+from `*(metadata-8)+0x40` for its `alloca` and gets garbage. So `S` is a type whose metadata is not properly initialised in this process (candidates: a Swift generic from Logic that depends on an
+unresolved overlay symbol, or metadata from the bridged `URL`). Next step: find out which type `S` is (print `swift_getTypeName` on x3 from the crash handler).

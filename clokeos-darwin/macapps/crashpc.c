@@ -36,7 +36,7 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
   uint64_t pc = uc->uc_mcontext->__ss.__pc, lr = uc->uc_mcontext->__ss.__lr, fp = uc->uc_mcontext->__ss.__fp;
   frame("pc", pc); frame("lr", lr);
   /* Register x0..x3: bei einem Absturz in objc_msgSend sind x0 = Empfänger, x1 = Selektor */
-  for (int i = 0; i < 4; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(uc->uc_mcontext->__ss.__x[i]); out("\n"); }
+  for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(uc->uc_mcontext->__ss.__x[i]); out("\n"); }
   if (uc->uc_mcontext->__ss.__x[1] > 0x1000) { out("  sel "); out(sel_getName((SEL)(uintptr_t)uc->uc_mcontext->__ss.__x[1])); out("\n"); }
   for (int i = 0; i < 24 && fp && !(fp & 7); i++) {   /* [fp] = voriger fp, [fp+8] = Rücksprung */
     uint64_t *f = (uint64_t *)(uintptr_t)fp;
