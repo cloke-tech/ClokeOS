@@ -398,3 +398,26 @@ Detail on the stop in round 22 (`macapps/crashpc.c` now prints x0..x28): the exp
 metadata of `S` (x3 = 0x…30c0 in the image) and its witness table (x4, a *heap* address, so a dynamically instantiated conformance) on to `_URL.appending(…)`, which reads the value-witness size
 from `*(metadata-8)+0x40` for its `alloca` and gets garbage. So `S` is a type whose metadata is not properly initialised in this process (candidates: a Swift generic from Logic that depends on an
 unresolved overlay symbol, or metadata from the bridged `URL`). Next step: find out which type `S` is (print `swift_getTypeName` on x3 from the crash handler).
+
+### Round 23: ABI fixed (library evolution), Logic runs through `setupAppFactorySharedInstance`
+
+* **Cause of the `URL.appending` crash (round 22):** Apple's Foundation is built with `-enable-library-evolution`; FoundationEssentials from the 6.4 tag via SwiftPM is not. Resilient structs are passed
+  indirectly and `self` goes in x20, so Logic's calls did not match the non-resilient entry points (metadata/witness table arrived in the wrong registers). `swift/foundation.sh` must build with
+  `swift build … -Xswiftc -enable-library-evolution` (done by hand this round: 284 s); `fo.dylib` and `fo2.dylib` have to be relinked against it (`swift/deploy-overlay.sh` does both).
+* **Own members of Apple's types:** Logic imports `URL._bridgeToObjectiveC` etc. under the names of the type's own module; mine are extensions in a second module and mangle as `…10FoundationE…`.
+  `swift/foundation-objc.sh` generates `ld -alias` pairs from the import list (only for symbols `fo.dylib` does not already export: aliasing e.g. `URL`'s type descriptor created a second `URL`
+  and made the runtime lose the `_ObjectiveCBridgeable` conformance). `NSURLResourceKey` is treated like `NSString` (same representation) when matching. New in `swift/overlay/Bridging.swift`:
+  `URL` (`checkResourceIsReachable`, security-scoped access, `desktopDirectory`, `resourceValues`/`setResourceValues`, `bookmarkData`, resolving bookmarks), `URLResourceValues`, `Data` read/write,
+  `Locale` bridging, the `StringProtocol` NSString API subset (`trimmingCharacters`, `replacingOccurrences`, `range(of:)`, `compare`, `contains`, `padding`, `components`, percent encoding),
+  `String(format:)`. The Dispatch, ObjectiveC, Darwin and CoreGraphics Swift stubs now also re-export `fo2.dylib` (`swiftov.py --overlay` for each).
+* **Availability:** PureDarwin answers `_availability_version_check` as macOS 11, so `#available(…6.3)` in `_Concurrency` failed (`ExecutorImpl.swift:90: this should never happen`).
+  `macapps/availfix.c` is an interposer (`/usr/lib/libclokeos-availfix.dylib`, built by `macapps/crashpc.sh`) that lets every check pass; it belongs in the environment of every Mac program (cloakserver/apps.c
+  should set `DYLD_INSERT_LIBRARIES` for it; not done). `macapps/crashpc.c` got: all registers, Swift metadata/witness-table inspection for x2/x3 (safe reads via a pipe), a mirror in `/tmp/crashpc.log`,
+  interposers for `sigaction`/`signal` (crash signals stay ours) and `exit`/`_exit`/`abort` with a backtrace (needs `-not_for_dyld_shared_cache`).
+
+Now (arm64 VM, `macapps/logicrun.sh`): `willFinishLaunching` → `didFinishLaunching` → `setupAppFactorySharedInstance() begin/end` (Logic's factories are built, Swift async tasks run,
+MAUniversalContent's FileSystemEvent sources are created), then `-[NSAppleEventManager suspendCurrentAppleEvent]` (lenient no-op) and the process **dies silently**: shell status 132 (SIGILL), no `[crashpc]`
+report (the handler does not run, `exit`/`abort` are not called), no console message. The faulting thread is probably not the main thread (dispatch worker); next step: install a `sigaltstack` on
+every thread (interpose `pthread_create` and use a Mach exception port for the rest) or log `ILL` addresses from the kernel.
+
+Still untested: x86_64, a window or menu of Logic, opening `Jump.logicx`, audio, rendering.

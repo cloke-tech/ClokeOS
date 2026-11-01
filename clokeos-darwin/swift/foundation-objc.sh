@@ -19,6 +19,7 @@ get() { [ -s "$w/$2" ] || curl -fsSL "$raw/$1" -o "$w/$2"; }
 FILES="Boxing CharacterSet IndexSet NSIndexSet Notification NSArray NSDictionary NSSet NSString NSError NSObject NSNumber NSRange NSFastEnumeration ReferenceConvertible String NSURL Foundation"
 for f in $FILES; do get "Darwin/Foundation/$f.swift" "src/$f.swift"; done
 for h in CoreFoundationOverlayShims CoreFoundationShims FoundationOverlayShims FoundationShimSupport FoundationShims CFCharacterSetShims CFHashingShims NSCalendarShims NSCharacterSetShims NSCoderShims NSDataShims NSDictionaryShims NSErrorShims NSFileManagerShims NSIndexPathShims NSIndexSetShims NSKeyedArchiverShims NSLocaleShims NSTimeZoneShims NSUndoManagerShims ObjectiveCOverlayShims DispatchOverlayShims; do get "SwiftShims/$h.h" "shims/$h.h"; done
+grep -q ClkComparisonResult "$w/shims/FoundationOverlayShims.h" || printf '\n#import <Foundation/Foundation.h>\ntypedef NSComparisonResult ClkComparisonResult;\nNSDictionary * _Nullable clk_url_resource_values(NSURL *url, NSArray *keys, NSError **err);\nBOOL clk_url_set_resource_values(NSURL *url, NSDictionary *values, NSError **err);\nNSData * _Nullable clk_url_bookmark(NSURL *url, NSUInteger options, NSArray * _Nullable keys, NSURL * _Nullable relative, NSError **err);\n' >> "$w/shims/FoundationOverlayShims.h"   # eindeutige Namen für SDK-Typen, die FoundationEssentials gleichnamig hat
 cp "$here/overlay/shims.modulemap" "$w/shims/module.modulemap"
 get Darwin/Foundation/NSValue.swift.gyb src/NSValue.swift.gyb
 get Darwin/ObjectiveC/ObjectiveC.swift src/ObjectiveC.swift
@@ -53,6 +54,7 @@ fileprivate func _clkCFData(_ d: Data) -> CFData {
     return d.withUnsafeBytes { unsafeBitCast(NSData(bytes: $0.baseAddress, length: $0.count), to: CFData.self) }
 }
 """)
+sub("CharacterSet.swift", "options: .mappedIfSafe)", "options: NSData.ReadingOptions.mappedIfSafe)")
 sub("IndexSet.swift", "__NSIndexSetIndexOfRangeContainingIndex($0, integer)", "__NSIndexSetIndexOfRangeContainingIndex($0, UInt(integer))")
 sub("IndexSet.swift", "__NSIndexSetRangeAtIndex($0, index,", "__NSIndexSetRangeAtIndex($0, UInt(index),")
 for a in ("__NSDictionaryGetObjects(d, objectVals, objectKeys, numElems)", "__NSDictionaryGetObjects(x, objectVals, objectKeys, numElems)",
@@ -86,8 +88,34 @@ ovc ObjectiveC "$w/src/ObjectiveC.swift"
 ovc CoreGraphics "$w/src/CGFloat.swift"
 ovc Dispatch "$w"/src/Disp*.swift
 ovc Darwin "$w/src/MachError.swift"
+# Logics Code importiert z. B. URL._bridgeToObjectiveC unter dem Namen der Typ-eigenen Methode; meine Fassung steht als Erweiterung ("10FoundationE")
+# in einem anderen Modul und heißt deshalb anders. Aliase (ld -alias, gilt auch für Deskriptoren und Metadaten): dieselben Namen zeigen auf meine Fassung.
+imports="${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}"
+if [ -f "$imports" ]; then
+python3 -I - "$imports" "$w/out/fnov.o" "$w/out/alias.s" "$run/fo.dylib" <<'PY'
+import json, subprocess, sys
+imp, obj, out, fo = sys.argv[1:5]
+def demangle(names):
+    r = subprocess.run(["xcrun", "swift-demangle", "--simplified"][:2] if False else ["xcrun", "swift-demangle"], input="\n".join(names), capture_output=True, text=True).stdout.splitlines()
+    return [l.replace("__shared ", "").replace("static ", "").split(" for ")[0] for l in r]
+norm = lambda s: s.replace("(extension in Foundation):", "").replace("NSURLResourceKey", "NSString")   # NSURLResourceKey ist eine Hülle um NSString (gleiche Darstellung)
+mine = [l.split()[-1] for l in subprocess.run(["nm", "-gU", obj], capture_output=True, text=True).stdout.splitlines()]
+mine = [m for m in mine if m.startswith("_$s")]
+dm = dict(zip((norm(d) for d in demangle(mine)), mine))
+have = set(mine) | {l.split()[-1] for l in subprocess.run(["nm", "-gU", fo], capture_output=True, text=True).stdout.splitlines()}   # was fo.dylib schon liefert, nicht doppeln
+want = [s for s in json.load(open(imp)).get("Foundation", {}).get("symbols", []) if s.startswith("_$s") and s not in have]
+n = 0
+with open(out, "w") as f:
+    for s, d in zip(want, demangle(want)):
+        m = dm.get(norm(d))
+        if m and m != s and "(extension in Foundation)" not in d:
+            f.write("%s %s\n" % (m, s)); n += 1
+print("Aliase:", n, file=sys.stderr)
+PY
+else : > "$w/out/alias.s"; fi
+aliasargs=(); while read -r a b; do aliasargs+=(-alias "$a" "$b"); done < "$w/out/alias.s"
 clang -arch arm64 -c "$here/overlay/dstub.c" -o "$w/out/dstub.o"
-clang -arch arm64 -fno-objc-arc -c -x objective-c "$here/overlay/dstub.m" -o "$w/out/dstub2.o"
+clang -arch arm64 -fno-objc-arc -c -x objective-c -isysroot "$sdk" "$here/overlay/dstub.m" -o "$w/out/dstub2.o"
 cat > "$w/out/sys.tbd" <<'T'
 --- !tapi-tbd
 tbd-version: 4
@@ -101,7 +129,7 @@ exports:
 ...
 T
 ld -arch arm64 -dylib -o "$run/fo2.dylib" "$w"/out/fnov.o "$w"/out/ovObjectiveC.o "$w"/out/ovCoreGraphics.o "$w"/out/ovDispatch.o "$w"/out/ovDarwin.o \
-  "$w"/out/dstub.o "$w"/out/dstub2.o "$run/fo.dylib" "$run/libswiftCore.dylib" "$run/libswift_Concurrency.dylib" "$run/libswiftDarwin.dylib" "$w/out/sys.tbd" \
+  "$w"/out/dstub.o "$w"/out/dstub2.o "${aliasargs[@]}" "$run/fo.dylib" "$run/libswiftCore.dylib" "$run/libswift_Concurrency.dylib" "$run/libswiftDarwin.dylib" "$w/out/sys.tbd" \
   -platform_version macos 11.0 11.0 -install_name /usr/lib/sov/fo2.dylib -rpath /usr/lib/swift -not_for_dyld_shared_cache -undefined dynamic_lookup \
   -L"$sdk/usr/lib" -lobjc 2>&1 | grep -v warning || true
 install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$run/fo2.dylib"

@@ -14,7 +14,7 @@ fw="$WORK/out/macapps-arm64/root/Library/ClokeOS/MacFrameworks"; R="${fw%/Librar
 rm -f "$R"/usr/lib/sov/*.dylib   # sonst zählen die alten Trap-Marken als vorhanden
 python3 -I "$HERE/macapps/stubgen/swiftov.py" "$WORK/out/stubgen/imports.json" "$R" "$R" --arch arm64 \
   --build "${fw%/root/Library/ClokeOS/MacFrameworks}/pdlibs" "${fw%/root/Library/ClokeOS/MacFrameworks}/obj/CoreFoundation" \
-  --overlay "Foundation=$WORK/swiftsrc/run-arm64/fo.dylib" --overlay "Foundation=$WORK/swiftsrc/run-arm64/fo2.dylib" --pd-image "$DEBUGFS" "$PD_IMG?offset=$(( $(gpt_part "$PD_IMG" "$GUID_LINUX_FS" | cut -d' ' -f1) * 512 ))" | grep -c "Re-Export" || true
+  --overlay "Foundation=$WORK/swiftsrc/run-arm64/fo.dylib" --overlay "Foundation=$WORK/swiftsrc/run-arm64/fo2.dylib" --overlay "libswiftDispatch=$WORK/swiftsrc/run-arm64/fo2.dylib" --overlay "libswiftObjectiveC=$WORK/swiftsrc/run-arm64/fo2.dylib" --overlay "libswiftDarwin=$WORK/swiftsrc/run-arm64/fo2.dylib" --overlay "CoreGraphics=$WORK/swiftsrc/run-arm64/fo2.dylib" --overlay "libswiftos=$WORK/swiftsrc/run-arm64/fo.dylib" --pd-image "$DEBUGFS" "$PD_IMG?offset=$(( $(gpt_part "$PD_IMG" "$GUID_LINUX_FS" | cut -d' ' -f1) * 512 ))" | grep -c "Re-Export" || true
 cmds="$WORK/tmp/deploy.cmds"; : > "$cmds"
 for f in "$R"/usr/lib/sov/*.dylib "$WORK/swiftsrc/run-arm64/fo.dylib" "$WORK/swiftsrc/run-arm64/fo2.dylib"; do
   n="/usr/lib/sov/$(basename "$f")"

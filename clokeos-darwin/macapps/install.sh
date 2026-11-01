@@ -56,7 +56,9 @@ fi
 if [ -f "$WORK/out/stubgen/imports.json" ]; then
   python3 -I "$M/stubgen/swiftov.py" "$WORK/out/stubgen/imports.json" "${fw%/Library/ClokeOS/MacFrameworks}" "${fw%/Library/ClokeOS/MacFrameworks}" --arch "$CLOKE_ARCH_CC" \
     --build "${fw%/root/Library/ClokeOS/MacFrameworks}/pdlibs" "${fw%/root/Library/ClokeOS/MacFrameworks}/obj/CoreFoundation" \
-    --overlay "Foundation=$WORK/swiftsrc/run-$CLOKE_ARCH/fo.dylib" \
+    --overlay "Foundation=$WORK/swiftsrc/run-$CLOKE_ARCH/fo.dylib" --overlay "Foundation=$WORK/swiftsrc/run-$CLOKE_ARCH/fo2.dylib" \
+    --overlay "libswiftDispatch=$WORK/swiftsrc/run-$CLOKE_ARCH/fo2.dylib" --overlay "libswiftObjectiveC=$WORK/swiftsrc/run-$CLOKE_ARCH/fo2.dylib" \
+    --overlay "libswiftDarwin=$WORK/swiftsrc/run-$CLOKE_ARCH/fo2.dylib" --overlay "CoreGraphics=$WORK/swiftsrc/run-$CLOKE_ARCH/fo2.dylib" --overlay "libswiftos=$WORK/swiftsrc/run-$CLOKE_ARCH/fo.dylib" \
     --pd-image "$DEBUGFS" "$PD_IMG?offset=$(( $(gpt_part "$PD_IMG" "$GUID_LINUX_FS" | cut -d' ' -f1) * 512 ))" | tail -1 || true
 fi
 mkdir -p "$stage/Library/ClokeOS"
@@ -91,7 +93,7 @@ if [ -f "$sw/fo.dylib" ]; then
   for l in Synchronization Observation _StringProcessing _RegexParser RegexBuilder Darwin CompatibilitySpan; do
     [ -f "$sw/libswift$l.dylib" ] && cp "$sw/libswift$l.dylib" "$stage/usr/lib/swift/"
   done
-  cp "$sw/fo.dylib" "$stage/usr/lib/sov/fo.dylib"
+  cp "$sw/fo.dylib" "$sw/fo2.dylib" "$stage/usr/lib/sov/"
 fi
 # Neu gebautes libobjc (libobjc/build.sh): nur auf Wunsch (CLOKE_LIBOBJC=1, macapps/logicimage.sh setzt es), arm64
 if [ "${CLOKE_LIBOBJC:-}" = 1 ]; then
