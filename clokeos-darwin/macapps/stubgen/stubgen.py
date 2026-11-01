@@ -24,7 +24,7 @@ FRAMEWORKS = """Metal MetalKit MetalPerformanceShaders ScreenCaptureKit StoreKit
 UserNotifications GameController MultipeerConnectivity QuickLookUI PDFKit GameplayKit CoreMotion
 iTunesLibrary DiscRecording UniformTypeIdentifiers CoreML WebKit JavaScriptCore Security PackageKit
 AssetCacheServices libMobileGestalt Cinematic AVFoundation AVFAudio CoreMedia CoreVideo VideoToolbox
-MediaToolbox AVKit CoreMIDI""".split()
+MediaToolbox AVKit CoreMIDI""".split() + ["libswiftCore", "libswift_Concurrency", "libswift_StringProcessing", "libswift_errno"] + ['DeveloperToolsSupport', 'ExceptionHandling', 'ServiceManagement', 'Quartz', 'AudioUnit', 'CoreAudioKit', 'CoreTransferable', 'Charts', 'RealityKit', 'RealityFoundation', '_RealityKit_SwiftUI', 'Combine', 'SwiftUI', 'libAppleArchive'] + ['libswiftDispatch', 'libswiftObjectiveC', 'libswiftCoreFoundation', 'libswiftDarwin', 'libswiftObservation', 'libswiftos', 'libswiftUniformTypeIdentifiers', 'libswiftAVFoundation', 'libswiftAccelerate']
 
 # Symbole, die die Programme nicht importieren, die es aber geben soll
 EXTRAS = {
@@ -41,6 +41,15 @@ FALLBACK = {
     "libMobileGestalt": ("/usr/lib/libMobileGestalt.dylib", "1.0.0", "1.0.0"),
     "Cinematic": ("/System/Library/Frameworks/Cinematic.framework/Versions/A/Cinematic", "1.0.0", "1.0.0"),
 }
+
+# Nur geladen, nichts (oder nur Swift) importiert: leere Stubs, damit dyld weiterkommt (Swift-Symbole bleiben offen)
+for _n in ['DeveloperToolsSupport', 'ExceptionHandling', 'ServiceManagement', 'Quartz', 'AudioUnit', 'CoreAudioKit', 'CoreTransferable', 'Charts', 'RealityKit', 'RealityFoundation', '_RealityKit_SwiftUI', 'Combine', 'SwiftUI']:
+    FALLBACK[_n] = ("/System/Library/Frameworks/%s.framework/Versions/A/%s" % (_n, _n), "1.0.0", "1000.0.0")
+FALLBACK["libAppleArchive"] = ("/usr/lib/libAppleArchive.dylib", "1.0.0", "1000.0.0")
+for _n in ['Dispatch', 'ObjectiveC', 'CoreFoundation', 'Darwin', 'Observation', 'os', 'UniformTypeIdentifiers', 'AVFoundation', 'Accelerate']:
+    FALLBACK["libswift" + _n] = ("/usr/lib/swift/libswift%s.dylib" % _n, "1.0.0", "1000.0.0")
+for _n in ("libswiftCore", "libswift_Concurrency", "libswift_StringProcessing", "libswift_errno"):
+    FALLBACK[_n] = ("/usr/lib/swift/%s.dylib" % _n, "1.0.0", "1000.0.0")   # leer; das echte libswiftCore baut swift/build.sh
 NOTES = {"CoreMIDI": "nur Stub; durch eine echte Implementierung (über /dev/umidi o. ä.) zu ersetzen"}
 
 # Rückgabewert je Typname: p = Zeiger/Ganzzahl 0, d = double, f = float, v = void, e = Fehlerstatus

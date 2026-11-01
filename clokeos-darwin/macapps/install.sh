@@ -39,6 +39,7 @@ done
 # Stub-Frameworks für geschlossene Apple-Bibliotheken (Logic Pro), sobald stubs.sh einmal eine Importliste angelegt hat
 [ -f "$WORK/out/stubgen/imports.json" ] && { "$M/stubs.sh" | tail -1 || true; }
 "$M/coreaudio.sh" | tail -2 | head -1 || echo "CoreAudio-Shim nicht gebaut"
+"$M/audiotoolbox.sh" | tail -2 | head -1 || echo "AudioToolbox-Teilmenge nicht gebaut"
 "$M/accelerate.sh" | tail -2 | head -1 || echo "Accelerate-Teilmenge nicht gebaut"
 "$M/libs.sh" | tail -1 || echo "libsqlite3/libxml2/libbz2/libpcre/libxar nicht gebaut"
 "$M/pkginstall.sh" | tail -1 || echo "clokeos-pkginstall nicht gebaut"
@@ -50,6 +51,10 @@ rootdir="${fw%/Library/ClokeOS/MacFrameworks}"
 if [ -f "$rootdir/usr/lib/libMobileGestalt.dylib" ]; then   # flache Stub-Bibliothek aus stubs.sh
   mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libMobileGestalt.dylib" "$stage/usr/lib/"
 fi
+if [ -d "$rootdir/usr/lib/swift" ]; then   # leere Swift-Stubs aus stubs.sh (echte: swift/build.sh)
+  mkdir -p "$stage/usr/lib/swift"; cp "$rootdir"/usr/lib/swift/*.dylib "$stage/usr/lib/swift/"
+fi
+[ -f "$rootdir/usr/lib/libAppleArchive.dylib" ] && { mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libAppleArchive.dylib" "$stage/usr/lib/"; }
 # Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)
 for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
   [ -e "$rootdir/usr/lib/$l" ] && { mkdir -p "$stage/usr/lib"; cp -P "$rootdir/usr/lib/$l" "$stage/usr/lib/"; }

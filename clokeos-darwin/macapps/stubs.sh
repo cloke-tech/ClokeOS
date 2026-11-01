@@ -36,4 +36,5 @@ for f in "$gen"/root/Library/ClokeOS/MacFrameworks/*.framework; do
 done
 # flache Bibliothek (libMobileGestalt): gehört nach /usr/lib
 if [ -d "$gen/root/usr/lib" ]; then mkdir -p "$out/root/usr/lib"; cp "$gen"/root/usr/lib/*.dylib "$out/root/usr/lib/"; fi
+if [ -d "$gen/root/usr/lib/swift" ]; then mkdir -p "$out/root/usr/lib/swift"; cp "$gen"/root/usr/lib/swift/*.dylib "$out/root/usr/lib/swift/"; fi
 echo "Fertig: $gen (Frameworks nach $out/root)"
