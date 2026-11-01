@@ -152,7 +152,8 @@ def main():
     for o in a.overlay:
         k, v = o.split("=", 1)
         if os.path.isfile(v):
-            overlays[k] = (v, exports(v, a.arch))
+            paths, syms = overlays.get(k, ([], set()))
+            overlays[k] = (paths + [v], syms | set(exports(v, a.arch)))
     if a.pd_image:
         for rel in ("usr/lib/libIOKitCF.dylib",):   # IOKit ist dort ein Symlink auf libIOKitCF (CoreServices/Carbon: macapps/carbon.sh)
             dst = os.path.join(a.root, rel)
@@ -206,7 +207,7 @@ def main():
         src = os.path.join(tmp, f"{idx}.c")
         open(src, "w").write(code + "\n" + "".join(asm))
         dst = stubgen.build(ns, name, dict(install=f"/usr/lib/sov/{idx}.dylib", compat="1.0.0", current="1.0.0"),
-                            src, a.out, pd, cfobj, [overlays[name][0]] if name in overlays else [])
+                            src, a.out, pd, cfobj, overlays[name][0] if name in overlays else [])
         if not dst:
             report.append(f"{name}: Übersetzen fehlgeschlagen"); continue
         res = add_reexport(lib, f"/usr/lib/sov/{idx}.dylib", a.arch)

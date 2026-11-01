@@ -48,3 +48,12 @@ const char *const kOSThermalNotificationPressureLevelName = "com.apple.system.th
 __attribute__((objc_root_class)) @interface OS_os_log { void *isa; } @end
 @implementation OS_os_log @end
 void *os_log_create(const char *subsystem, const char *category) { return [OS_os_log alloc]; }
+
+// Brücke für overlay/bridge.swift: NSString aus UTF-8 (Klasse zur Laufzeit gesucht, damit hier kein Foundation-Header nötig ist)
+#include <objc/message.h>
+#include <objc/runtime.h>
+id clk_nsstring_utf8(const char *bytes, long length) {
+  Class c = objc_getClass("NSString");
+  id s = ((id (*)(id, SEL))objc_msgSend)((id)c, sel_registerName("alloc"));
+  return ((id (*)(id, SEL, const void *, unsigned long, unsigned long))objc_msgSend)(s, sel_registerName("initWithBytes:length:encoding:"), bytes ? bytes : "", (unsigned long)length, 4UL);
+}

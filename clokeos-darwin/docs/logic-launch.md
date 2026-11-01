@@ -370,3 +370,26 @@ The way I see: a Swift module whose ABI name is `Foundation`, compiled against D
 
 Untested: x86_64 since round 3, `Jump.logicx` (nothing opened), audio engine, any rendering on ClokeOS.
 Trap when rebuilding the image: `macapps/stubs.sh` must have run once (imports.json) and `CLOKE_EXTRA_STAGE` must hold `libcrashpc`/`libclogictrace` (`macapps/crashpc.sh <dir>`), otherwise Logic fails in dyld.
+
+### Round 22: the ObjC layer of the Foundation overlay (`fo2.dylib`) from Apple's old open overlay
+
+Apple's Foundation overlay (Swift 5.3, `stdlib/public/Darwin/Foundation`) is open source there, ABI-stable on Darwin, and was removed from later trees. `swift/foundation-objc.sh` fetches the 74-file
+directory's relevant parts (about 2 MB from raw.githubusercontent.com, tag swift-5.3-RELEASE; Apache-2.0), patches them for Swift 6.4 / SDK 27 and compiles them as module `Foundation`
+(`-import-underlying-module`, i.e. against the SDK's Foundation headers; classes bind to Darling's at run time) on top of FoundationEssentials:
+NSArray/NSDictionary/NSSet/NSString bridging, IndexSet, CharacterSet, Notification, NSError, NSNumber, KVO, plus the ObjectiveC, CoreGraphics (`CGFloat`), Dispatch and Darwin (`MachErrorCode`)
+overlays from the same tag, and `swift/overlay/Bridging.swift` (URL/Data/Date/UUID `_ObjectiveCBridgeable`, which FoundationEssentials does not have). Result `fo2.dylib`, re-exported after `fo.dylib` by the Foundation supplement
+(`swiftov.py --overlay` can be repeated). **134 of the 271 missing Foundation symbols** come from it; still traps: `URLRequest`, `URLResourceValues`, `NSStringAPI` (the `String` NSString methods),
+`NSCoder`, `FormatStyle`/`AttributedString` markdown, Combine publishers, most `URL` ObjC members.
+
+Things that did not work out of the box (all handled in the script): the compiler crashes (`AArch64ABIInfo::computeInfo`) on ObjC method signatures with `Dictionary<AnyHashable, Any>` unless the
+module contains `Foundation.swift` (the `AnyHashable: _ObjectiveCBridgeable` conformance); `NSNotification.userInfo` still crashes it (read through `perform(_:)`); `import CoreGraphics` in the overlay is a
+module cycle (now `CoreFoundation`); `Array/Dictionary/Set/String: CVarArg` clash with the SDK interface; `String(_cocoaString:)` is gone (uses `utf8String`).
+
+`swift/deploy-overlay.sh` rebuilds `fo.dylib`/`fo2.dylib`, re-runs `swiftov.py` and writes the supplements straight into an existing image (12 s instead of a 10-minute image build; the VM must be off);
+`macapps/logicrun.sh` boots the VM and starts Logic with the trace helpers. Trap: a VM still running on the image keeps stale pages and shows the old behaviour, so `logicrun.sh` stops only the QEMU of that image.
+
+Logic in the arm64 VM now gets through: dyld (all of `fo.dylib`/`fo2.dylib` and the runtimes load), `String`, `Array`, `Dictionary` and `NSURL`→`URL` bridging, then stops (SIGSEGV) in
+`___chkstk_darwin` called from `FoundationEssentials`' `_URL.appending(path:directoryHint:encodingSlashes:)` (called through `URL.appending(path:directoryHint:)` from Logic.framework +0x88728):
+the generic metadata argument (x3) has no sensible value witness table (size read from `*(x3-8)+0x40` is garbage). Not understood yet; either Logic's caller or a bridged value is wrong.
+
+Untested: x86_64, opening `Jump.logicx`, audio engine, rendering.

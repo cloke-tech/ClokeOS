@@ -1,0 +1,4 @@
+module _SwiftCoreFoundationOverlayShims { header "CoreFoundationOverlayShims.h" export * }
+module _SwiftFoundationOverlayShims { header "FoundationOverlayShims.h" export * }
+module _SwiftObjectiveCOverlayShims { header "ObjectiveCOverlayShims.h" export * }
+module _SwiftDispatchOverlayShims { header "DispatchOverlayShims.h" export * }

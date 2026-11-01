@@ -17,6 +17,8 @@ flags=(-target arm64-apple-macos11.0 -parse-as-library -O -enable-library-evolut
 # os und Combine: Modulnamen wie bei Apple (ABI-Name), damit die Symbole $s2os… und $s7Combine… heißen
 swiftc -c -module-name ClokeOsOverlay -Xfrontend -module-abi-name -Xfrontend os "${flags[@]}" "$here/overlay/os.swift" -o "$t/os.o"
 swiftc -c -module-name Combine "${flags[@]}" "$here/overlay/Combine.swift" -o "$t/Combine.o"
+# Brücke zu Darlings Foundation-Klassen (String._bridgeToObjectiveC usw.): ABI-Name Foundation
+swiftc -c -module-name FoundationBridge -Xfrontend -module-abi-name -Xfrontend Foundation -import-objc-header "$here/overlay/bridge.h" "${flags[@]}" "$here/overlay/bridge.swift" -o "$t/bridge.o"
 # Autolink-Marker, die Apples Overlays sonst liefern (nur der Name zählt)
 cat > "$t/markers.c" <<'C'
 char m1 __asm__("__swift_FORCE_LOAD_$_swiftos");
@@ -49,7 +51,7 @@ ld -arch arm64 -dylib -o "$run/libswiftCompatibilitySpan.dylib" -install_name @r
   -platform_version macos 11.0 11.0 -reexport_library "$run/libswiftCore.dylib" -not_for_dyld_shared_cache
 ld -arch arm64 -dylib -o "$run/fo.dylib" \
   "$fb/FoundationEssentials.o" "$fb/DequeModule.o" "$fb/InternalCollectionsUtilities.o" "$fb/OrderedCollections.o" "$fb/_RopeModule.o" "$fb/_FoundationCShims.o" \
-  "$t/os.o" "$t/Combine.o" "$t/markers.o" "$t/compat.o" "${libs[@]}" "$t/sys.tbd" \
+  "$t/os.o" "$t/Combine.o" "$t/markers.o" "$t/compat.o" "$t/bridge.o" "${libs[@]}" "$t/sys.tbd" \
   -platform_version macos 11.0 11.0 -install_name /usr/lib/sov/fo.dylib -rpath /usr/lib/swift -not_for_dyld_shared_cache -undefined dynamic_lookup -L"$(xcrun --show-sdk-path)/usr/lib" -lobjc
 install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$run/fo.dylib"
 echo "$run/fo.dylib"
