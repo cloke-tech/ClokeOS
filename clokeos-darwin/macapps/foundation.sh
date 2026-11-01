@@ -178,7 +178,7 @@ bundle CoreFoundation A "$obj/CoreFoundation" "$CF/Info.plist"
 echo "Baue Foundation"
 { sed -n '/^set(foundation_sources/,/^)/p' "$FND/CMakeLists.txt" |
     grep -oE '^[[:space:]]+[A-Za-z0-9_/+.-]+\.(c|m)' | sed -E 's/^[[:space:]]+//' | grep -v NSNetServices | sort -u
-  echo "$M/fndcompat.m"; echo "$M/syscompat.c"; } > "$obj/fnd.list"
+  echo "$M/fndcompat.m"; echo "$M/fndurlcomponents.m"; echo "$M/syscompat.c"; } > "$obj/fnd.list"
 patch_list darling-foundation "$obj/fnd.list"
 compile_all "$obj/fnd" "$FND" "$obj/fnd.list" -include "$M/include/cloke_fnd_compat.h" \
   -I"$FND/include/Foundation" -DNSBUILDINGFOUNDATION=1

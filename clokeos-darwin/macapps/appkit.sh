@@ -314,7 +314,7 @@ framework Cocoa A 1 22 "$obj/cc" -Wl,-reexport_library,"$(fwlib AppKit)" -Wl,-re
 # --- X11-Backends ------------------------------------------------------------------------------
 echo "Baue X11-Backends"
 sed -n '/^add_backend(X11/,/INFO_PLIST/p' "$src/AppKit/CMakeLists.txt" | grep -oE 'X11\.backend/[A-Za-z0-9_]+\.m' > "$obj/akx.list"
-printf '%s\n' "$M/appkit/x11present.m" "$M/appkit/clokemenu.m" "$M/appkit/nsbundle_images.m" "$M/appkit/xkbrules.c" "$M/appkit/sysstubs.c" >> "$obj/akx.list"
+printf '%s\n' "$M/appkit/x11present.m" "$M/appkit/clokemenu.m" "$M/appkit/nsbundle_images.m" "$M/appkit/lenient.m" "$M/appkit/xkbrules.c" "$M/appkit/sysstubs.c" >> "$obj/akx.list"
 compile_all "$obj/akx" "$src/AppKit" "$obj/akx.list" "${ak[@]}"
 backend AppKit C "$obj/akx" "$(fwlib AppKit)" "$(fwlib Onyx2D)" "$(fwlib CoreGraphics)" "$(fwlib QuartzCore)" \
   "$fnd" "$cf" "${sys[@]}" "${x11[@]}"

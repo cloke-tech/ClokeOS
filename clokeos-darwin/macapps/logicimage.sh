@@ -83,6 +83,9 @@ for sub in ("Contents/MacOS", "Contents/Frameworks", "Contents/Resources"):
                 c.append("write %s %s" % (q(sp), q(d2)))
                 if st.st_mode & 0o111: c.append("sif %s mode 0100755" % q(d2))
 c.append("write %s %s" % (q(root + "/Contents/Info.plist"), q(dst + "/Contents/Info.plist")))
+# Info.plist verlangt NSMainNibFile = MainMenu im Hauptbundle, die Nib liegt aber in Logic.framework: Verweis für den Versuch
+if os.path.isfile(root + "/Contents/Frameworks/Logic.framework/Versions/A/Resources/MainMenu.nib") and not os.path.exists(root + "/Contents/Resources/MainMenu.nib"):
+    c.append("symlink %s %s" % (q(dst + "/Contents/Resources/MainMenu.nib"), q("../Frameworks/Logic.framework/Versions/A/Resources/MainMenu.nib")))
 open(out, "w").write("\n".join(c) + "\n")
 PY
 read -r s c < <(gpt_part "$I" "$GUID_LINUX_FS")

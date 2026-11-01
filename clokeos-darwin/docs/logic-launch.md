@@ -227,6 +227,26 @@ State at the end: **no window**. The four items are the next wall, each a small-
 3. `O2ColorSpaceCreateWithName` (Onyx2D) must create the named color spaces (sRGB, generic RGB/gray, display P3).
 4. Fonts: "San Francisco" does not exist; the system font must map to a font on ClokeOS.
 
+### Round 15: a Logic Pro window on the ClokeOS desktop (arm64)
+
+Added: a real `NSURLComponents` (+ `NSString -stringByAddingPercentEncodingWithAllowedCharacters:`, the six `NSCharacterSet URL…AllowedCharacterSet`
+class methods; none of them existed in Darling's Foundation): `macapps/fndurlcomponents.m`, the empty Darling implementation is cut out by
+`patches/darling-foundation/src/NSURLComponents.m.sed`. And `macapps/appkit/lenient.m` (X11 backend): with `CLOKE_LENIENT=1` a message nobody implements goes to a
+shared sink object that returns nil/0 and logs `[clokeos-lenient] -[Class selector]` once, so Logic keeps running and reports its missing methods instead of aborting
+at the first. For the test image `macapps/logicimage.sh` also links `Contents/Resources/MainMenu.nib` to the nib inside `Logic.framework` (Info.plist asks for
+`NSMainNibFile = MainMenu` in the main bundle, the file lives in the framework).
+
+Result: **Logic Pro is running as a process on ClokeOS** (`ps`: `./Logic Pro`, 80 % CPU in AppKit's modal loop, up for minutes) and has a **window on the desktop**: its menu bar
+shows "Logic Pro / File / Window", the Dock shows the running app, and an alert panel (warning icon, OK button, empty message) titled "Logic Pro" is on screen, presented through
+`-[NSResponder presentError:]` because creating the untitled document failed. This is the product's own error path, with its strings missing (the localized nib/strings are not loaded).
+A click on OK did not close it in the one attempt (the modal loop was busy). Screenshot: `~/Desktop/ClokeOS-audio-proof/logic-on-clokeos-alert.png` (not in the repository).
+
+Messages of the run: `-[NSHelpManager registerBooksInBundle:]` (the only lenient selector logged), `TIFF unsupported, compression 8` (ImageIO: Deflate-compressed TIFFs),
+`-[NSTextView setGrammarCheckingEnabled:] unimplemented`, `-[NSTextView setEnabledTextCheckingTypes:] unimplemented`, `convertFont:toHaveTrait: failed, San Francisco 2`,
+`Unable to load main nib file MainMenu` (also with the link; not yet understood: compiled Apple nib format, or the lookup).
+
+Not a rendering of anything, not a project: no `Jump.logicx` was opened, no audio engine was started, SwiftUI parts still run on trap stubs.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
