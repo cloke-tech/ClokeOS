@@ -263,6 +263,31 @@ Findings (arm64 VM, `CLOKE_TRACE=1`, `CLOKE_LENIENT=1`, `CLOKE_NO_UNTITLED=1`):
   on macOS (probably through `AppFactory` called from the launcher or from the nib's File's Owner machinery) was not found. Next step: disassemble the launcher's `main`
   and `CLgApplication`'s `+initialize`/`-init` (`otool -tV`, `objdump`), or log `-[NSApplication setDelegate:]` calls with the trace helper.
 
+### Round 17: Logic's startup chain runs, the first Swift overlay trap fires
+
+Found with `macapps/logictrace.c` (interposes `SetSetupAppFactoryCB`/`setupAppFactorySharedInstance` and logs `-[NSApplication setDelegate:]`) and a disassembly of the launcher
+(`otool -tV`): the launcher calls `SetSetupAppFactoryCB(cb)` (Logic.framework), then `NSApplicationMain`. Logic attaches its delegate (`CLgAppManager`) and builds its factories in
+**`-[CLgApplication awakeFromNib]`**, which only runs after the main nib has loaded. Our AppKit cannot load the NIBArchive nib, so it never ran. `macapps/patches/darling-cocotron/AppKit/NSApplication.m.sed`:
+`CLOKE_AWAKE_APP=1` sends `-awakeFromNib` to `NSApp` after the failed load. With it (arm64 VM, `CLOKE_AWAKE_APP=1 CLOKE_NO_UNTITLED=1 CLOKE_LENIENT=1 CLOKE_TRACE=1`):
+
+```
+[clogic] -[CLgApplication setDelegate:] CLgAppManager
+[clokeos-trace] willFinishLaunching: NSApp=CLgApplication delegate=CLgAppManager shouldOpenUntitled=1
+[clokeos-lenient] -[CLgApplication setAppearance:]        (missing in Cocotron; no-op)
+[clokeos-lenient] -[NSHelpManager registerBooksInBundle:]
+```
+
+and the notification handlers of `NSApplicationWillFinishLaunchingNotification` run Logic's code. Four bugs of mine/ours were found on the way and fixed:
+* `NSAllocateCollectable`/`NSReallocateCollectable` (GC-era Foundation, used by `MAGFFoundation`) were stubs returning NULL: `-[CGenGFNodeManager initWithNamespace:]: Memory allocation failed`. Now `calloc`/`realloc` (`macapps/fndurlcomponents.m`).
+* Constants such as `kTISPropertyInputSourceID`/`kMD…` in my CoreServices/Carbon and IOKit supplements were emitted as code (`mov x0,#0; ret`), so Logic read instruction bytes as pointers (`CFRelease(0xd65f03c0d2800000)`). Now 8 zero bytes of data (`carbon.sh`, `swiftov.py`).
+* `TISCopyCurrentKeyboardInputSource()` returned NULL and Logic calls `CFRelease` on the result without a check (never NULL on macOS): now an empty CFDictionary (`macapps/carbon.c`); `TISGetInputSourceProperty` still returns NULL, which Logic handles.
+* `macapps/logicimage.sh` links the nib and installs `Resources` (earlier rounds).
+
+**First Swift overlay trap** (`brk #1`, by design, in `/usr/lib/sov/<n>.dylib`): `$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` = `String._bridgeToObjectiveC() -> NSString`, called from
+`MACore` (+0x17d70) in a nested `dispatch_once`. Logic's Swift code now needs the real Foundation overlay; 424 Foundation symbols are imported by the arm64 slices, `String`↔`NSString`,
+`Array`/`Dictionary`↔`NS…`, `URL`, `Data`, `Date`, `CharacterSet`, `Notification`, `JSONEncoder/Decoder`, `NSLocalizedString`. That is package E of `logic-pro-gap.md`: a Swift module named `Foundation`
+built with the host `swiftc` against Darling's Foundation (the bridging functions are small; `String._bridgeToObjectiveC` alone is a `NSString(string:)`).
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

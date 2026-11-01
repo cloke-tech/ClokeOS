@@ -30,3 +30,17 @@ int32_t UCConvertCFAbsoluteTimeToSeconds(double abs, uint32_t *secs) {
 }
 
 int16_t PBGetVolumeInfoSync(void *pb) { (void)pb; return -35; }
+
+/* Text Input Services (HIToolbox): Logic Pro fragt beim Start die aktuelle Tastaturbelegung ab und gibt das Ergebnis ohne Prüfung mit CFRelease frei
+ * (bei Apple nie NULL). Hier: ein leeres CFDictionary als Eingabequelle (CoreFoundation wird erst zur Laufzeit gesucht, die Bibliothek bindet sie nicht),
+ * Eigenschaften gibt es keine (NULL; Logic hat dafür einen Ersatzwert). */
+#include <dlfcn.h>
+static void *ck_empty_dict(void) {
+  typedef void *(*Create)(void *alloc, const void **keys, const void **vals, long n, const void *kcb, const void *vcb);
+  Create f = (Create)dlsym(RTLD_DEFAULT, "CFDictionaryCreate");
+  return f ? f(0, 0, 0, 0, 0, 0) : 0;
+}
+void *TISCopyCurrentKeyboardInputSource(void) { return ck_empty_dict(); }
+void *TISCopyCurrentKeyboardLayoutInputSource(void) { return ck_empty_dict(); }
+void *TISCopyCurrentASCIICapableKeyboardInputSource(void) { return ck_empty_dict(); }
+void *TISGetInputSourceProperty(void *source, void *key) { (void)source; (void)key; return 0; }

@@ -117,7 +117,10 @@ def plain_dylib(syms, dst, tmp, arch, idx):
     with open(asm, "w") as f:
         f.write(".text\n.p2align 2\n")
         for s in syms:
-            f.write(f'.globl "{s}"\n"{s}":\n  {body}\n')
+            if s.startswith("_k") and s[2:3].isupper():   # Konstanten: Nullbytes statt Code
+                f.write('.data\n.p2align 3\n.globl "%s"\n"%s":\n  .quad 0\n.text\n.p2align 2\n' % (s, s))
+            else:
+                f.write(f'.globl "{s}"\n"{s}":\n  {body}\n')
     obj = os.path.join(tmp, f"{idx}.o")
     tbd = os.path.join(tmp, "libSystemX.tbd")
     open(tbd, "w").write("--- !tapi-tbd\ntbd-version: 4\ntargets: [ x86_64-macos, arm64-macos ]\ninstall-name: '/usr/lib/libSystemX.B.dylib'\n"

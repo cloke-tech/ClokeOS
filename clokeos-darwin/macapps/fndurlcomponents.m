@@ -227,3 +227,9 @@ static NSString *CKQEnc(NSString *s) { return CKEnc(s, CKSet(@"/?:@")); }
 }
 
 @end
+
+/* Foundation-Funktionen aus der Zeit der Speicherbereinigung (macOS 10.5, ohne GC heute nur noch malloc): Logic Pros MAGFFoundation ruft sie auf
+ * (CGenGFNodeManager); der Stub hat NULL geliefert und "Memory allocation failed" ausgelöst. Wie bei Apple ohne GC: genullter Speicher. */
+#include <stdlib.h>
+void *NSAllocateCollectable(NSUInteger size, NSUInteger options) { return calloc(1, size ? size : 1); }
+void *NSReallocateCollectable(void *ptr, NSUInteger size, NSUInteger options) { return realloc(ptr, size ? size : 1); }

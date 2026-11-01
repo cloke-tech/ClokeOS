@@ -56,6 +56,8 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
             class_getName(object_getClass(NSApp)), d ? class_getName(object_getClass(d)) : "(nil)",
             (int)[d respondsToSelector:@selector(applicationShouldOpenUntitledFile:)],
             (int)[d respondsToSelector:@selector(applicationOpenUntitledFile:)]);
+    fprintf(stderr, "[clokeos-trace] NSApp overrides awakeFromNib: %d\n",
+            (int)([NSApp methodForSelector:@selector(awakeFromNib)] != [NSObject instanceMethodForSelector:@selector(awakeFromNib)]));
 }
 + (void)did:(NSNotification *)n {
     id d = [NSApp delegate];

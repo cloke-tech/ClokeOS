@@ -37,7 +37,10 @@ body = "mov x0, #0\n  ret" if arch == "arm64" else "xor %eax, %eax\n  ret"
 with open(out, "w") as f:
     f.write(".text\n.p2align 2\n")
     for s in want:
-        f.write(f'.globl "{s}"\n"{s}":\n  {body}\n')
+        if s.startswith("_k") and s[2:3].isupper():   # Konstanten (kTISProperty…, kMD…): 8 Nullbytes, kein Code, sonst liest das Programm Befehle als Zeiger
+            f.write('.data\n.p2align 3\n.globl "%s"\n"%s":\n  .quad 0\n.text\n.p2align 2\n' % (s, s))
+        else:
+            f.write(f'.globl "{s}"\n"{s}":\n  {body}\n')
 print(len(want), "Marken in libclokeos_carbon")
 PYX
   [ -s "$out/extra.s" ] && extra=("$out/extra.s")
