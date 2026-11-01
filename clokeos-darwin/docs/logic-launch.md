@@ -112,6 +112,29 @@ Next step: get a crash location (an in-image debugger or a `SIGBUS` handler that
 `DYLD_INSERT_LIBRARIES`), then replace the offending placeholder with real code. x86_64: the same tooling builds the x86_64 supplement, but the
 x86_64 slice was not re-run after round 3.
 
+## Round 10: where the SIGBUS is (not found yet)
+
+Findings, all in the arm64 VM with the image of round 9 (plus `macapps/crashpc.c`, a crash reporter loaded with `DYLD_INSERT_LIBRARIES`):
+
+* The crash is **before any `+load` and before `libcrashpc`'s constructor**: with `OBJC_PRINT_CLASS_SETUP=YES` the last line is
+  `CLASS: found 7549 classes during launch`, then the duplicate-class warnings for `__NSCFType`, `__NSCFNumber`, `__NSCFBoolean`
+  (PureDarwin's `libCoreFoundation` against Darling's CoreFoundation, the same as in every Mac program here), then SIGBUS. So it
+  happens inside `libobjc`'s `read_images` (called from libSystem's initializer through `_objc_init`), while classes are read.
+  A handler cannot be installed earlier than libSystem's initializer; `crashpc` therefore stays silent.
+* Duplicate classes from my own supplements were a real bug and are fixed: `swiftov.py` now follows `LC_REEXPORT_DYLIB` chains when it decides what a
+  library lacks (Foundation re-exports CoreFoundation, which has `NSError`, `NSCharacterSet`, …), and the stub root classes get unique names
+  (`ClokeStubRoot_<lib>_sov`). The crash did not go away.
+* **Not the cause:** the Logic binaries (identical SHA-1 in the image and on the host for Logic, MACore, LogicAppFramework); relative
+  method lists (a test program built with `-objc_relative_method_lists` runs on PureDarwin's libobjc exactly like one without: both print `answer=42`).
+* **Per-framework `dlopen`** (`dlp`, one process each, `DYLD_FRAMEWORK_PATH` set): these load fine: `ChordsKit`, `EmbeddedRemoteConfiguration`,
+  `InternalCollectionsUtilities`, `MAAccessibility`, `MAContentDownloading`, `MAGenerativeInstrumentsCore`, `MALogicLegacySong`, `OMF`
+  (so Swift frameworks load at least in part). These **crash silently** (no output, process gone): `MASwiftUtilities`, `MAToolKit`, `MAToolKitHighLevel`,
+  `MAGUI`, `MALoopBrowser`, `MASearchKit`, `MAVectorUIKit`, `MAResources*`. The others answer `image not loaded`, which is only the missing `@rpath` of a
+  program without `LC_RPATH` (not a Logic problem).
+* `MASwiftUtilities` is the smallest crasher (5 pure Swift classes whose superclass is `_OBJC_CLASS_$__TtCs12_SwiftObject`, imports SwiftUI/CoreGraphics/Dispatch/
+  Observation). Best next experiment: build a Swift test with `final class X {}` (no `NSObject`) against our `libswiftCore` and `dlopen` it. The earlier Swift tests only
+  covered `NSObject` subclasses and the generic `Box<T>` of `hello2.swift`.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

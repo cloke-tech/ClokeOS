@@ -30,6 +30,40 @@ def exports(path, arch):
     return {l.split()[-1] for l in r.stdout.splitlines() if l.strip()}
 
 
+def reexport_paths(path, arch):
+    """Pfade der LC_REEXPORT_DYLIB-Einträge (otool -L: '… (… , reexport)' gibt es nicht überall; deshalb otool -l)."""
+    r = run("otool", "-arch", arch, "-l", path).stdout.splitlines()
+    out, cmd = [], None
+    for l in r:
+        l = l.strip()
+        if l.startswith("cmd "):
+            cmd = l.split()[1]
+        elif l.startswith("name ") and cmd == "LC_REEXPORT_DYLIB":
+            out.append(l.split()[1])
+    return out
+
+
+def exports_deep(path, arch, root, seen=None):
+    """Exporte der Bibliothek und aller ihrer Re-Exporte, soweit sie unter ROOT (MacFrameworks, usr/lib) liegen."""
+    seen = seen if seen is not None else set()
+    if path in seen:
+        return set()
+    seen.add(path)
+    have = exports(path, arch)
+    for rp in reexport_paths(path, arch):
+        cand = []
+        m = rp.split("/")
+        if ".framework/" in rp:
+            fw = [x for x in m if x.endswith(".framework")][0][:-10]
+            cand = glob.glob(os.path.join(root, "Library/ClokeOS/MacFrameworks", fw + ".framework/Versions/*/" + fw))
+        else:
+            cand = [os.path.join(root, rp.lstrip("/"))]
+        for c in cand:
+            if os.path.isfile(c) and not os.path.islink(c):
+                have |= exports_deep(c, arch, root, seen)
+    return have
+
+
 def thin_offset(f):
     """Offset der Scheibe (fat -> arm64/x86_64 gesucht, hier nur dünne Dateien und fat mit passender Arch)."""
     return 0
@@ -134,7 +168,7 @@ def main():
         if not cand:
             continue
         lib = cand[0]
-        have = exports(lib, a.arch)
+        have = exports_deep(lib, a.arch, a.root)
         syms = [s for s in info["symbols"] if s not in have]
         if syms:
             work.append((idx, name, lib, syms))
@@ -152,6 +186,7 @@ def main():
         code, cnt, _, skipped = stubgen.emit(name, set(csyms), hdr, None) if csyms else ("", dict(func=0, str=0, data=0, cls=0, skip=0), [], [])
         if not csyms:
             code = stubgen.PRELUDE.format(fw=name)
+        code = code.replace("ClokeStubRoot_" + name, "ClokeStubRoot_" + name + "_sov")   # sonst doppelt, wenn die Bibliothek selbst ein Stub ist
         asm = ["__asm__(\".text\\n.p2align 2\\n\"\n"]
         for s in swift:
             asm.append(f'  ".globl {s}\\n{s}:\\n  {asmtrap}\\n"\n')
