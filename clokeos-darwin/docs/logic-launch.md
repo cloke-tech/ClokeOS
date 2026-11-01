@@ -435,3 +435,12 @@ Current stop (arm64 VM, MAUniversalContent's async task): `EXC_BAD_ACCESS` in `o
 `object_dispose → objc_destructInstance → object_cxxDestructFromClass` coming from `Logic.framework` +0xa75ac. The object passed to release has `isa == 0` (freed or zeroed memory: an over-release, a double
 `object_dispose`, or a Swift object that was never registered with the ObjC runtime). Next step: find which object (print the argument of `object_dispose` through an interposer, plus `swift_getObjCClassFromMetadata`
 for the metadata involved) and whether it is one of my overlay classes (`OSSignpostIntervalState`).
+
+### Round 25: `os_log_create` objects, next stop: Combine
+
+* The `objc_release` crash of round 24 was `-[MAUCContentPackageImporter .cxx_destruct]` releasing its `_logger` ivar (`NSObject<OS_os_log>`): Logic's ObjC code calls libSystem's `os_log_create`, and PureDarwin's returns a
+  plain struct whose first word (the `isa`) is 0, so ARC's `objc_release` dereferenced a null class. `macapps/availfix.c` now also interposes `os_log_create` and gives the object the class `OS_os_log` (an NSObject subclass from `fo.dylib`).
+  `macapps/crashpc.c` prints the instance variables of an object passed through `x19` (name, type, value) in the exception report, which is how this was found.
+* New stop (arm64 VM): `EXC_BAD_INSTRUCTION` in `/usr/lib/sov/17.dylib` `$s7Combine9PublishedVMa` = `Combine.Published` metadata accessor, i.e. the Combine stub (trap labels). Logic's SwiftUI/Combine code
+  (`@Published`, `ObservableObject`, subjects, `AnyCancellable`) needs a real Combine. Combine is resilient, Logic's classes embed `Published<T>` through metadata at run time, so a reimplementation with the same
+  public API (OpenCombine, MIT) built as module `Combine` with `-module-abi-name Combine -enable-library-evolution` is a candidate; not started.

@@ -104,6 +104,18 @@ static void *exc_thread(void *arg) {
       for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
       out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n");
       out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n");
+      for (int r = 19; r <= 22; r++) {   /* Register mit Objekten der aufrufenden Funktion: Klasse, wenn sie lesbar sind */
+        uint64_t isa;
+        if (st.__x[r] > 0x100000000ULL && !(st.__x[r] & 7) && rd64(st.__x[r], &isa) && isa) { out("  x"); hex((uint64_t)r); out(" ist Objekt der Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[r])); out("\n");
+          if (r == 19) {   /* Ivars der Klasse mit Versatz, Typ und Wert */
+            unsigned cnt = 0; Ivar *iv = class_copyIvarList(object_getClass((id)(uintptr_t)st.__x[r]), &cnt);
+            for (unsigned k = 0; k < cnt; k++) {
+              uint64_t val = 0; rd64(st.__x[r] + (uint64_t)ivar_getOffset(iv[k]), &val);
+              out("    ivar +"); hex((uint64_t)ivar_getOffset(iv[k])); out(" "); out(ivar_getName(iv[k]) ? ivar_getName(iv[k]) : "?");
+              out(" "); out(ivar_getTypeEncoding(iv[k]) ? ivar_getTypeEncoding(iv[k]) : "?"); out(" = "); hex(val); out("\n");
+            }
+          } }
+      }
       uint64_t fp = st.__fp;
       for (int i = 0; i < 400 && fp && !(fp & 7) && fp > 0x1000; i++) {
         uint64_t ret, next;

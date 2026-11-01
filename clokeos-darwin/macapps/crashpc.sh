@@ -10,5 +10,5 @@ echo "$1/usr/lib/libcrashpc.dylib"
 clang -arch arm64 -mmacosx-version-min=11.0 -dynamiclib -O1 -install_name /usr/lib/libclogictrace.dylib -lobjc -Wl,-not_for_dyld_shared_cache -Wl,-undefined,dynamic_lookup -o "$1/usr/lib/libclogictrace.dylib" "$here/logictrace.c" 2>&1 | grep -v warning || true
 echo "$1/usr/lib/libclogictrace.dylib"
 # libclokeos-availfix: macapps/availfix.c
-clang -arch arm64 -mmacosx-version-min=11.0 -dynamiclib -O1 -install_name /usr/lib/libclokeos-availfix.dylib -Wl,-not_for_dyld_shared_cache -Wl,-undefined,dynamic_lookup -o "$1/usr/lib/libclokeos-availfix.dylib" "$here/availfix.c" 2>&1 | grep -v warning || true
+clang -arch arm64 -mmacosx-version-min=11.0 -dynamiclib -O1 -install_name /usr/lib/libclokeos-availfix.dylib -lobjc -Wl,-not_for_dyld_shared_cache -Wl,-undefined,dynamic_lookup -o "$1/usr/lib/libclokeos-availfix.dylib" "$here/availfix.c" 2>&1 | grep -v warning || true
 echo "$1/usr/lib/libclokeos-availfix.dylib"
