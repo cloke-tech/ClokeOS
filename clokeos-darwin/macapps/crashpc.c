@@ -8,6 +8,9 @@
 #define _DARWIN_C_SOURCE 1
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <mach/mach.h>
+#include <pthread.h>
+#include <pthread.h>
 #include <objc/runtime.h>
 #include <signal.h>
 #include <stdint.h>
@@ -16,11 +19,15 @@
 #include <unistd.h>
 
 static int logfd = -1;   /* Spiegel in /tmp/crashpc.log: manche Programme (Logic Pro) schließen oder ersetzen stderr */
-static void out(const char *s) { write(2, s, strlen(s)); if (logfd >= 0) write(logfd, s, strlen(s)); }
+static void out(const char *s) {
+  write(2, s, strlen(s));
+  int fd = open("/tmp/crashpc.log", O_WRONLY | O_CREAT | O_APPEND, 0644);   /* jedes Mal neu: Logic schließt fremde Dateikennungen */
+  if (fd >= 0) { write(fd, s, strlen(s)); close(fd); }
+}
 static void hex(uint64_t v) {
   char b[19] = "0x0000000000000000";
   for (int i = 0; i < 16; i++) b[17 - i] = "0123456789abcdef"[(v >> (4 * i)) & 15];
-  write(2, b, 18); if (logfd >= 0) write(logfd, b, 18);
+  out(b);
 }
 static int rd64(uint64_t a, uint64_t *v) {
   int p[2]; if (pipe(p)) return 0;
@@ -76,7 +83,50 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
   }
   _exit(128 + sig);
 }
+
+/* Mach-Ausnahmeport für die ganze Aufgabe, bedient von einem eigenen Faden mit gutem Stapel: fängt auch Abstürze, bei denen der Kernel den
+ * Signalrahmen nicht mehr auf den kaputten Stapel legen kann (er beendet den Prozess dann mit SIGILL, ohne dass ein Signalhandler läuft). */
+typedef struct {
+  mach_msg_header_t head; mach_msg_body_t body; mach_msg_port_descriptor_t thread, task;
+  char ndr[8]; int exception; int codeCnt; int64_t code[2];
+  char pad[256];
+} exc_msg_t;
+static void *exc_thread(void *arg) {
+  mach_port_t port = (mach_port_t)(uintptr_t)arg;
+  for (;;) {
+    exc_msg_t m; memset(&m, 0, sizeof m);
+    if (mach_msg(&m.head, MACH_RCV_MSG, 0, sizeof m, port, MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL) != KERN_SUCCESS) continue;
+    out("\n[crashpc] Mach-Ausnahme "); hex((uint64_t)m.exception); out(" Code "); hex((uint64_t)m.code[0]); out(" "); hex((uint64_t)m.code[1]); out("\n");
+    arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
+    if (thread_get_state(m.thread.name, ARM_THREAD_STATE64, (thread_state_t)&st, &n) == KERN_SUCCESS) {
+      frame("pc", st.__pc); frame("lr", st.__lr);
+      out("  sp "); hex(st.__sp); out("  fp "); hex(st.__fp); out("\n");
+      for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
+      out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n");
+      out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n");
+      uint64_t fp = st.__fp;
+      for (int i = 0; i < 400 && fp && !(fp & 7) && fp > 0x1000; i++) {
+        uint64_t ret, next;
+        if (!rd64(fp + 8, &ret) || !rd64(fp, &next) || !ret) break;
+        frame("bt", ret);
+        if (next <= fp) break;
+        fp = next;
+      }
+    }
+    _exit(139);
+  }
+  return 0;
+}
+static void install_exception_port(void) {
+  mach_port_t port;
+  if (mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port) != KERN_SUCCESS) return;
+  mach_port_insert_right(mach_task_self(), port, port, MACH_MSG_TYPE_MAKE_SEND);
+  if (task_set_exception_ports(mach_task_self(), EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC | EXC_MASK_BREAKPOINT,
+                               port, EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES, ARM_THREAD_STATE64) != KERN_SUCCESS) return;
+  pthread_t th; pthread_create(&th, 0, exc_thread, (void *)(uintptr_t)port);
+}
 __attribute__((constructor)) static void init(void) {
+  install_exception_port();
   logfd = open("/tmp/crashpc.log", 0x0001 | 0x0200 | 0x0008, 0644);   /* O_WRONLY|O_CREAT|O_APPEND */
   if (logfd >= 0 && logfd < 100) { int hi = fcntl(logfd, 0 /*F_DUPFD*/, 100); if (hi >= 0) { close(logfd); logfd = hi; } }
   static char stk[1 << 16];
@@ -118,6 +168,17 @@ static void (*mysignal(int sig, void (*h)(int)))(int) {
 static void myexit(int c) { bt_here("exit", c); exit(c); }
 static void my_exit(int c) { bt_here("_exit", c); _exit(c); }
 static void myabort(void) { bt_here("abort", 0); abort(); }
+
+/* Beendigung mit Begründung (Kernel-"Corpse"): abort_with_reason/payload, terminate_with_reason/payload, exit_with_reason (libsystem_kernel) */
+extern void abort_with_reason(uint32_t ns, uint64_t code, const char *reason, uint64_t flags);
+static void rsn(const char *what, uint32_t ns, uint64_t code, const char *reason) {
+  bt_here(what, (int)ns); out("  code "); hex(code); out("  Begründung: "); out(reason ? reason : "(keine)"); out("\n");
+}
+static void my_abort_reason(uint32_t ns, uint64_t code, const char *reason, uint64_t flags) { rsn("abort_with_reason ns", ns, code, reason); abort_with_reason(ns, code, reason, flags); }
+static int mykill(int pid, int sig) { if (pid == getpid() || pid == 0) bt_here("kill(self) sig", sig); return kill(pid, sig); }
+static int myraise(int sig) { bt_here("raise sig", sig); return raise(sig); }
+static int mypthread_kill(pthread_t th, int sig) { bt_here("pthread_kill sig", sig); return pthread_kill(th, sig); }
 #define INTERPOSE(r, o) { (const void *)(r), (const void *)(o) }
 __attribute__((used)) static const struct { const void *r, *o; } crashpc_interpose[] __attribute__((section("__DATA,__interpose"))) = {
-  INTERPOSE(mysigaction, sigaction), INTERPOSE(mysignal, signal), INTERPOSE(myexit, exit), INTERPOSE(my_exit, _exit), INTERPOSE(myabort, abort) };
+  INTERPOSE(mysigaction, sigaction), INTERPOSE(mysignal, signal), INTERPOSE(myexit, exit), INTERPOSE(my_exit, _exit), INTERPOSE(myabort, abort),
+  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill) };

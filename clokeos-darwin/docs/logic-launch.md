@@ -421,3 +421,17 @@ report (the handler does not run, `exit`/`abort` are not called), no console mes
 every thread (interpose `pthread_create` and use a Mach exception port for the rest) or log `ILL` addresses from the kernel.
 
 Still untested: x86_64, a window or menu of Logic, opening `Jump.logicx`, audio, rendering.
+
+### Round 24: the silent death was a stack overflow; Logic now gets into its async startup tasks
+
+* **Silent SIGILL kill** (round 23): the kernel could not deliver `SIGSEGV` on the overflowed thread stack and killed the process with SIGILL, so no signal handler ever ran. `macapps/crashpc.c` now also sets a
+  **Mach exception port** for the task and serves it from its own thread (registers, selector and receiver class, a 400-frame walk with safe reads), and keeps its signal handlers against Logic replacing them.
+* **Cause:** my placeholder classes `OS_os_log` (`swift/overlay/compat.m`, what `os_log_create` returns) and `OS_dispatch_*` (`dstub.m`) were root classes without any method; the first message to such an object
+  (`methodSignatureForSelector:`) ran the forwarding path `__CFArm64Forwarding` ↔ `_CF_forwarding_prep_0` forever. They are `NSObject` subclasses now.
+* `swift/overlay/os.swift`: `OSLogType.info/debug/default`, `OSSignpostType`, `OSSignpostID`, `OSSignposter`, `OSSignpostIntervalState` (a class), `OSSignpostError`, `OSLog.signpostsEnabled/disabled`, no-op `os_log(_:dso:log:_:_:)`.
+  Still trap: `OSLog(subsystem:category:)` (init is unavailable in Swift, needs a different route) and `OSAllocatedUnfairLock`.
+
+Current stop (arm64 VM, MAUniversalContent's async task): `EXC_BAD_ACCESS` in `objc_release`, called from `MAUniversalContentAppIntegration` +0x136e4 with a stack
+`object_dispose → objc_destructInstance → object_cxxDestructFromClass` coming from `Logic.framework` +0xa75ac. The object passed to release has `isa == 0` (freed or zeroed memory: an over-release, a double
+`object_dispose`, or a Swift object that was never registered with the ObjC runtime). Next step: find which object (print the argument of `object_dispose` through an interposer, plus `swift_getObjCClassFromMetadata`
+for the metadata involved) and whether it is one of my overlay classes (`OSSignpostIntervalState`).

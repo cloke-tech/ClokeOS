@@ -45,9 +45,12 @@ int uuid_parse(const char *in, unsigned char out[16]) {
 
 const char *const kOSThermalNotificationPressureLevelName = "com.apple.system.thermalpressurelevel";
 
-__attribute__((objc_root_class)) @interface OS_os_log { void *isa; } @end
+/* NSObject nur als Deklaration: die Klasse liegt in Darlings Foundation (zur Laufzeit gebunden). Ein Wurzelklassen-Platzhalter ohne Methoden führte zu
+ * endloser Weiterleitung (methodSignatureForSelector: unbekannt -> Weiterleitung -> ...) und Stapelüberlauf, sobald jemand eine Nachricht schickte. */
+__attribute__((objc_root_class)) @interface NSObject { Class isa; } + (id)alloc; - (id)init; @end
+@interface OS_os_log : NSObject @end
 @implementation OS_os_log @end
-void *os_log_create(const char *subsystem, const char *category) { return [OS_os_log alloc]; }
+void *os_log_create(const char *subsystem, const char *category) { return [[OS_os_log alloc] init]; }
 
 // Brücke für overlay/bridge.swift: NSString aus UTF-8 (Klasse zur Laufzeit gesucht, damit hier kein Foundation-Header nötig ist)
 #include <objc/message.h>
