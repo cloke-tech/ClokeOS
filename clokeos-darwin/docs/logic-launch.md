@@ -353,3 +353,20 @@ at the first Swift-only framework. Reaching a window needs 2 and 3, which are no
 x86_64 (not run); the full Logic resources (only code and frameworks were installed); no launch with the missing
 frameworks stubbed (round 2 would immediately hit the Swift libraries). The 1,869 figure comes from `machcheck.py`
 (static, symbol names only), not from a run.
+
+### Round 21: the Foundation overlay is in the image; the trap that remains is the ObjC bridging layer
+
+Built and staged (arm64, VM `CLOKEOS_ARCH=arm64`):
+* `swift/foundation-overlay.sh` links `fo.dylib` (10 MB): FoundationEssentials + swift-collections + `_FoundationCShims` + minimal `os` (Logger via `os_log_create`, `OSLogType`) and protocol-only `Combine`
+  (`swift/overlay/`) + `compat.m` (typed malloc, fts/removefile/chflags/quotactl stubs, `uuid_parse`, `OS_os_log`). Install name `/usr/lib/sov/fo.dylib`; `libswiftCompatibilitySpan.dylib` is a re-export of `libswiftCore`
+  (the 6.4 core already contains `Span`).
+* `macapps/stubgen/swiftov.py --overlay Foundation=<fo.dylib>`: symbols that `fo.dylib` provides get no trap label, and the Foundation supplement (`sov/37.dylib`) re-exports it.
+  `macapps/install.sh` stages `fo.dylib` and the extra Swift runtimes (Synchronization, Observation, _StringProcessing, _RegexParser, RegexBuilder, Darwin, CompatibilitySpan).
+
+Result in the VM: Logic loads `fo.dylib` and its runtimes (no dyld error any more), reaches `willFinishLaunching` as in round 17, and stops at the **same** trap:
+`$sSS10FoundationE19_bridgeToObjectiveCSo8NSStringCyF` (`String._bridgeToObjectiveC() -> NSString`), called from `MACore` +0x17d70. So the 153 symbols from FoundationEssentials do not cover it,
+as predicted in round 18: the ObjC layer (`String`/`Array`/`Dictionary` bridging, `IndexSet`, `CharacterSet`, `Notification`, `URLRequest`, `URLError`, KVO, …) still has to be written.
+The way I see: a Swift module whose ABI name is `Foundation`, compiled against Darling's Foundation headers so that `NSString` etc. mangle as `So8NSStringC`; not started. Package E of `logic-pro-gap.md`.
+
+Untested: x86_64 since round 3, `Jump.logicx` (nothing opened), audio engine, any rendering on ClokeOS.
+Trap when rebuilding the image: `macapps/stubs.sh` must have run once (imports.json) and `CLOKE_EXTRA_STAGE` must hold `libcrashpc`/`libclogictrace` (`macapps/crashpc.sh <dir>`), otherwise Logic fails in dyld.

@@ -140,11 +140,19 @@ def main():
     ap.add_argument("imports"); ap.add_argument("root"); ap.add_argument("out")
     ap.add_argument("--arch", default="arm64", choices=["arm64", "x86_64"])
     ap.add_argument("--build", nargs=2, metavar=("PDLIBS", "CFOBJ"), required=True)
+    ap.add_argument("--overlay", action="append", default=[], metavar="NAME=DYLIB",
+                    help="echte Implementierung statt Trap-Marken: Symbole, die DYLIB liefert, werden nicht mehr gestubbt, "
+                         "das Supplement re-exportiert DYLIB (z. B. Foundation=…/fo.dylib aus swift/foundation-overlay.sh)")
     ap.add_argument("--pd-image", nargs=2, metavar=("DEBUGFS", "IMAGE?offset=N"),
                     help="Bibliotheken des PureDarwin-Images (CoreServices, IOKit) herausholen und mit patchen")
     a = ap.parse_args()
     pd, cfobj = a.build
     imp = json.load(open(a.imports))
+    overlays = {}
+    for o in a.overlay:
+        k, v = o.split("=", 1)
+        if os.path.isfile(v):
+            overlays[k] = (v, exports(v, a.arch))
     if a.pd_image:
         for rel in ("usr/lib/libIOKitCF.dylib",):   # IOKit ist dort ein Symlink auf libIOKitCF (CoreServices/Carbon: macapps/carbon.sh)
             dst = os.path.join(a.root, rel)
@@ -172,7 +180,8 @@ def main():
             continue
         lib = cand[0]
         have = exports_deep(lib, a.arch, a.root)
-        syms = [s for s in info["symbols"] if s not in have]
+        ovr = overlays.get(name)
+        syms = [s for s in info["symbols"] if s not in have and not (ovr and s in ovr[1])]
         if syms:
             work.append((idx, name, lib, syms))
     hdr.prefetch(sorted({s[1:] for _, _, _, syms in work for s in syms
@@ -197,7 +206,7 @@ def main():
         src = os.path.join(tmp, f"{idx}.c")
         open(src, "w").write(code + "\n" + "".join(asm))
         dst = stubgen.build(ns, name, dict(install=f"/usr/lib/sov/{idx}.dylib", compat="1.0.0", current="1.0.0"),
-                            src, a.out, pd, cfobj, [])
+                            src, a.out, pd, cfobj, [overlays[name][0]] if name in overlays else [])
         if not dst:
             report.append(f"{name}: Übersetzen fehlgeschlagen"); continue
         res = add_reexport(lib, f"/usr/lib/sov/{idx}.dylib", a.arch)

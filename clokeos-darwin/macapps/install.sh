@@ -56,6 +56,7 @@ fi
 if [ -f "$WORK/out/stubgen/imports.json" ]; then
   python3 -I "$M/stubgen/swiftov.py" "$WORK/out/stubgen/imports.json" "${fw%/Library/ClokeOS/MacFrameworks}" "${fw%/Library/ClokeOS/MacFrameworks}" --arch "$CLOKE_ARCH_CC" \
     --build "${fw%/root/Library/ClokeOS/MacFrameworks}/pdlibs" "${fw%/root/Library/ClokeOS/MacFrameworks}/obj/CoreFoundation" \
+    --overlay "Foundation=$WORK/swiftsrc/run-$CLOKE_ARCH/fo.dylib" \
     --pd-image "$DEBUGFS" "$PD_IMG?offset=$(( $(gpt_part "$PD_IMG" "$GUID_LINUX_FS" | cut -d' ' -f1) * 512 ))" | tail -1 || true
 fi
 mkdir -p "$stage/Library/ClokeOS"
@@ -82,6 +83,15 @@ if [ -f "$sw/libswiftCore.dylib" ]; then
   ld -arch "$CLOKE_ARCH_CC" -dylib -o "$stage/usr/lib/system/libdispatch.dylib" "$la/ds.o" -install_name /usr/lib/system/libdispatch.dylib \
     -platform_version macos 11.0 11.0 -reexport_library "$la/sysx.tbd" 2>/dev/null &&
   install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$stage/usr/lib/system/libdispatch.dylib"
+fi
+# Zusätzliche Swift-Laufzeiten und das Foundation-Overlay (swift/supplemental.sh, swift/darwin.sh, swift/foundation-overlay.sh):
+# ersetzen die leeren Stubs; fo.dylib wird vom Foundation-Supplement (sov) re-exportiert
+if [ -f "$sw/fo.dylib" ]; then
+  mkdir -p "$stage/usr/lib/swift" "$stage/usr/lib/sov"
+  for l in Synchronization Observation _StringProcessing _RegexParser RegexBuilder Darwin CompatibilitySpan; do
+    [ -f "$sw/libswift$l.dylib" ] && cp "$sw/libswift$l.dylib" "$stage/usr/lib/swift/"
+  done
+  cp "$sw/fo.dylib" "$stage/usr/lib/sov/fo.dylib"
 fi
 # Neu gebautes libobjc (libobjc/build.sh): nur auf Wunsch (CLOKE_LIBOBJC=1, macapps/logicimage.sh setzt es), arm64
 if [ "${CLOKE_LIBOBJC:-}" = 1 ]; then
