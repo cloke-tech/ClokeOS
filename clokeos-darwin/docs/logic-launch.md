@@ -308,6 +308,23 @@ Order of the next steps: (1) build the supplemental runtimes (Synchronization, O
 the 153 trap labels; (3) write the ObjC bridging layer for the remaining ~270 symbols against Darling's Foundation (old open `stdlib/public/Darwin/Foundation/*.swift` of the swift 5.x repository is the
 natural base, it has `IndexSet`, `CharacterSet`, `Notification`, `URLRequest`, `_BridgedNSError`, KVO; the ABI is the shipping one); (4) `FoundationInternationalization` for Locale/format styles.
 
+### Round 19: the supplemental Swift runtimes build; FoundationEssentials still needs the Darwin and os overlays
+
+`swift/supplemental.sh` builds, for arm64, **Synchronization, Observation, _StringProcessing, _RegexParser and RegexBuilder** (`libswiftSynchronization.dylib`, `libswiftObservation.dylib`, `libswift_StringProcessing.dylib`,
+`libswift_RegexParser.dylib`, `libswiftRegexBuilder.dylib`, 0.2 to 1.3 MB each) into `run-arm64` next to `libswiftCore`/`libswift_Concurrency`. Details found: the Supplemental CMake files require the Core build tree's
+`cmake/SwiftCore` package and an optional `SwiftOverlay` (not available on Darwin: `find_package(SwiftOverlay REQUIRED)` is sed-ed to optional); Observation needs `b-arm64/include` (`CMakeConfig.h`); the string-processing
+sources live in a separate repository, `swift-experimental-string-processing` (tag swift-6.4.0-RELEASE, 17 MB), which `Runtimes/Resync.cmake -DStringProcessing_ROOT_DIR=…` copies into the tree.
+The new libraries are **not staged into the image yet**: Observation and the rest import the `Darwin`/`os` overlays, which are still empty trap stubs, and dyld binds eagerly.
+
+Linking `FoundationEssentials.o` (+ collections, `_FoundationCShims`) against the full set leaves **163 undefined symbols**, down from 244. They are now, apart from libSystem/ObjC runtime
+names that resolve at load (`___maskrune`, `__NSGetEnviron`, `__os_log_impl`, `___stack_chk_guard`…):
+* the **`Darwin` overlay** (`errno`, `open`, `fcntl`, `S_IF*`, `MAP_FAILED`, `POSIXErrorCode` …): the open source of this overlay is `stdlib/public/Platform` in the swift repository (gyb-generated, in the sparse clone);
+* the **`os` overlay** (`Logger`, `os_log_type_t` … , 5 symbols);
+* **`Combine`** (`TopLevelEncoder`/`TopLevelDecoder` protocol requirements, 6 symbols): closed.
+
+Next steps in order: (1) build the `Darwin` overlay from `stdlib/public/Platform` (module `Darwin`, install `libswiftDarwin.dylib`); (2) a minimal `os` (Logger writing to stderr) and a `Combine` protocol-only stub module;
+(3) link `FoundationEssentials` into `sov/37.dylib` and drop the 153 trap labels; (4) stage all of it (`install.sh`), then the ObjC bridging layer and `FoundationInternationalization` as in round 18.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
