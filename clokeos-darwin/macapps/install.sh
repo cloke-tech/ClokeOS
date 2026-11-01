@@ -55,6 +55,15 @@ if [ -d "$rootdir/usr/lib/swift" ]; then   # leere Swift-Stubs aus stubs.sh (ech
   mkdir -p "$stage/usr/lib/swift"; cp "$rootdir"/usr/lib/swift/*.dylib "$stage/usr/lib/swift/"
 fi
 [ -f "$rootdir/usr/lib/libAppleArchive.dylib" ] && { mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libAppleArchive.dylib" "$stage/usr/lib/"; }
+# Echte Swift-Laufzeit, wenn swift/build.sh sie gebaut hat ($WORK/swiftsrc/run-<arch>): ersetzt die leeren Stubs von oben;
+# dazu die libdispatch-Datei, die libswift_Concurrency mit festem Pfad lädt (swift/dispatch-shim.c)
+sw="$WORK/swiftsrc/run-$CLOKE_ARCH"
+if [ -f "$sw/libswiftCore.dylib" ]; then
+  mkdir -p "$stage/usr/lib/swift" "$stage/usr/lib/system"
+  cp "$sw/libswiftCore.dylib" "$sw/libswift_Concurrency.dylib" "$stage/usr/lib/swift/"
+  clang -arch "$([ "$CLOKE_ARCH" = arm64 ] && echo arm64 || echo x86_64)" -dynamiclib "$HERE/swift/dispatch-shim.c" -install_name /usr/lib/system/libdispatch.dylib \
+    -Wl,-reexport_library,"$rootdir/../pdlibs/usr/lib/libSystem.B.dylib" -o "$stage/usr/lib/system/libdispatch.dylib" 2>/dev/null
+fi
 # Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)
 for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
   [ -e "$rootdir/usr/lib/$l" ] && { mkdir -p "$stage/usr/lib"; cp -P "$rootdir/usr/lib/$l" "$stage/usr/lib/"; }
