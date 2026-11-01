@@ -325,6 +325,16 @@ names that resolve at load (`___maskrune`, `__NSGetEnviron`, `__os_log_impl`, `_
 Next steps in order: (1) build the `Darwin` overlay from `stdlib/public/Platform` (module `Darwin`, install `libswiftDarwin.dylib`); (2) a minimal `os` (Logger writing to stderr) and a `Combine` protocol-only stub module;
 (3) link `FoundationEssentials` into `sov/37.dylib` and drop the 153 trap labels; (4) stage all of it (`install.sh`), then the ObjC bridging layer and `FoundationInternationalization` as in round 18.
 
+### Round 20: the Darwin overlay (arm64)
+
+`swift/darwin.sh` builds `libswiftDarwin.dylib` (module `Darwin`) from the open `stdlib/public/Platform` sources. Apple's own Darwin overlay is not open source, so: `Platform.swift` without the `semaphore.h`
+block, `POSIXErrorCode` generated from the SDK's `<sys/errno.h>` (107 cases with Darwin's own numbers: the open sources only have Linux/BSD/Windows/WASI tables), and `swift/darwin/extras.swift`
+(`MAP_FAILED`, `noErr`, `POSIXErrorCode.EWOULDBLOCK`). The tgmath wrappers are left out (they do not compile here). Result: 48 `$s6Darwin…` symbols, **covering both Logic's own imports from `libswiftDarwin`
+(2) and everything `FoundationEssentials` needs from `Darwin`** (errno get/set, `open`, `fcntl`, `S_IF*`, `S_ISVTX`, `S_IWUSR`, `MAP_FAILED`, `POSIXErrorCode` with its metadata and raw-value accessors).
+
+Not tested in the VM yet (build and symbol coverage only). Remaining for the overlay chain: a minimal `os` (`Logger`, `os_log_type_t`) and a protocol-only `Combine`, then the link of
+`FoundationEssentials` into `sov/37.dylib` and staging (`install.sh`), then the ObjC bridging layer and `FoundationInternationalization`.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and
