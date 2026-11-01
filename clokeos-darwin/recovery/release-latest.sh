@@ -30,6 +30,6 @@ build="$(grep -o 'CLOKE_BUILD="[^"]*"' "$wt/clokeos-darwin/config.sh" | cut -d'"
 sed -i '' "s/^CLOKE_VERSION=.*/CLOKE_VERSION=\"$ver\"/" "$wt/clokeos-darwin/config.sh"
 echo "Release $ver (Build $build) aus $(git -C "$wt" rev-parse --short HEAD)"
 
-git -C "$wt" commit -qam "ClokeOS $ver: Version, Release-Notizen"
-git -C "$wt" push -q origin HEAD:main
+git -C "$wt" commit -qam "ClokeOS $ver: Version, Release-Notizen" || true
+git -C "$wt" push -q origin HEAD:main || true
 CLOKEOS_RELEASE_PRUNE=1 CLOKEOS_WORK="$work" "$wt/clokeos-darwin/recovery/release.sh" --upload
