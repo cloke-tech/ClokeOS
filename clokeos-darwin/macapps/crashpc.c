@@ -178,7 +178,14 @@ static void my_abort_reason(uint32_t ns, uint64_t code, const char *reason, uint
 static int mykill(int pid, int sig) { if (pid == getpid() || pid == 0) bt_here("kill(self) sig", sig); return kill(pid, sig); }
 static int myraise(int sig) { bt_here("raise sig", sig); return raise(sig); }
 static int mypthread_kill(pthread_t th, int sig) { bt_here("pthread_kill sig", sig); return pthread_kill(th, sig); }
+static id mydispose(id obj) {
+  uint64_t isa = 0;
+  out("[crashpc] object_dispose "); hex((uint64_t)(uintptr_t)obj);
+  if (obj && rd64((uint64_t)(uintptr_t)obj, &isa)) { out(" isa "); hex(isa); if (isa) { out(" Klasse "); out(object_getClassName(obj)); } }
+  out("\n"); frame("  von", (uint64_t)(uintptr_t)__builtin_return_address(0));
+  return object_dispose(obj);
+}
 #define INTERPOSE(r, o) { (const void *)(r), (const void *)(o) }
 __attribute__((used)) static const struct { const void *r, *o; } crashpc_interpose[] __attribute__((section("__DATA,__interpose"))) = {
   INTERPOSE(mysigaction, sigaction), INTERPOSE(mysignal, signal), INTERPOSE(myexit, exit), INTERPOSE(my_exit, _exit), INTERPOSE(myabort, abort),
-  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill) };
+  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill), INTERPOSE(mydispose, object_dispose) };
