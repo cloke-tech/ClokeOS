@@ -83,6 +83,10 @@ if [ -f "$sw/libswiftCore.dylib" ]; then
     -platform_version macos 11.0 11.0 -reexport_library "$la/sysx.tbd" 2>/dev/null &&
   install_name_tool -change /usr/lib/libSystemX.B.dylib /usr/lib/libSystem.B.dylib "$stage/usr/lib/system/libdispatch.dylib"
 fi
+# Neu gebautes libobjc (libobjc/build.sh): nur auf Wunsch (CLOKE_LIBOBJC=1, macapps/logicimage.sh setzt es), arm64
+if [ "${CLOKE_LIBOBJC:-}" = 1 ]; then
+  "$HERE/libobjc/build.sh" > /dev/null && { mkdir -p "$stage/usr/lib"; cp "$WORK/out/libobjc-$CLOKE_ARCH/libobjc.A.dylib" "$stage/usr/lib/libobjc.A.dylib"; } || echo "libobjc nicht gebaut"
+fi
 [ -f "$rootdir/usr/lib/libIOKitCF.dylib" ] && { mkdir -p "$stage/usr/lib"; cp "$rootdir/usr/lib/libIOKitCF.dylib" "$stage/usr/lib/libIOKitCF.dylib"; }
 [ -d "$rootdir/usr/lib/sov" ] && { mkdir -p "$stage/usr/lib/sov"; cp "$rootdir"/usr/lib/sov/*.dylib "$stage/usr/lib/sov/"; }
 # Kleine C-Bibliotheken mit Apples Installnamen (libs.sh) und der Paketinstaller (pkginstall.sh, docs/logic-installer.md)

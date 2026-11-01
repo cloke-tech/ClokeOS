@@ -1,0 +1,47 @@
+--- a/src/Libraries/objc4/runtime/objc-runtime-new.h	2026-08-25 12:33:49
++++ b/src/Libraries/objc4/runtime/objc-runtime-new.h	2026-11-01 13:24:45
+@@ -842,9 +842,7 @@
+         return isSmall() ? getSmallDescription() : (struct objc_method_description *)this;
+     }
+ 
+-    struct SortBySELAddress :
+-    public std::binary_function<const struct method_t::big&,
+-                                const struct method_t::big&, bool>
++    struct SortBySELAddress
+     {
+         bool operator() (const struct method_t::big& lhs,
+                          const struct method_t::big& rhs)
+--- a/src/Libraries/objc4/runtime/objc-runtime-new.mm	2026-08-25 12:33:49
++++ b/src/Libraries/objc4/runtime/objc-runtime-new.mm	2026-11-01 13:24:45
+@@ -30,6 +30,14 @@
+ 
+ #include "DenseMapExtras.h"
+ #include "objc-private.h"
++#include <sys/mman.h>
++// ClokeOS: __DATA_CONST ist nach dem Binden schreibgeschützt (Programme, die mit einem neueren Xcode gebaut sind, legen __objc_protorefs
++// und __objc_classrefs dorthin); dieses libobjc schreibt die Verweise aber um, sobald dasselbe Protokoll/dieselbe Klasse in mehreren Images
++// steckt. Das gab SIGBUS in _read_images (Logic Pro). Die Seite wird vorher beschreibbar gemacht.
++static void clk_writable(void *p) {
++    uintptr_t pg = (uintptr_t)getpagesize(), a = (uintptr_t)p & ~(pg - 1);
++    mprotect((void *)a, pg, PROT_READ | PROT_WRITE);
++}
+ #include "objc-runtime-new.h"
+ #include "objc-file.h"
+ #include "objc-zalloc.h"
+@@ -2000,7 +2008,7 @@
+     runtimeLock.assertLocked();
+ 
+     Class newcls = remapClass(*clsref);    
+-    if (*clsref != newcls) *clsref = newcls;
++    if (*clsref != newcls) { clk_writable(clsref); *clsref = newcls; }
+ }
+ 
+ 
+@@ -2426,6 +2434,7 @@
+ 
+     protocol_t *newproto = remapProtocol((protocol_ref_t)*protoref);
+     if (*protoref != newproto) {
++        clk_writable(protoref);
+         *protoref = newproto;
+         UnfixedProtocolReferences++;
+     }

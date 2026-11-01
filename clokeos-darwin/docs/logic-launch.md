@@ -146,6 +146,31 @@ associated types, imports of SwiftUI/CoreGraphics/Observation. Next candidates, 
 (2) `-fobjc-msgsend-selector-stubs`, (3) a build of PureDarwin's libobjc with `_objc_inform` prints around `read_images` (its source is in the
 PDSRC tarball; no debugger exists in the image).
 
+### Round 12: the SIGBUS is found and fixed (libobjc and `__DATA_CONST`)
+
+Method: PureDarwin's libobjc (objc4-781, `src/Libraries/objc4` in the PDSRC tarball) was built from source with the host clang
+(`libobjc/build.sh`, recipe from `nix/pkgs/apple/libobjc.nix`; one source change for the newer libc++: `std::binary_function` removed) and
+`write(2)` trace prints around the stages of `_read_images`. The last line before the crash: `stage done discover protocols`, so the fault was in
+the next stage, **fix up @protocol references** (`remapProtocolRef`).
+
+Cause: binaries built with a newer Xcode (Logic Pro: SDK 26) put `__objc_protorefs` (and class refs) in `__DATA_CONST`. dyld makes that segment read-only after
+binding; this old libobjc rewrites the references when the same protocol exists in several images (`*protoref = newproto`) — a write to a read-only page, which is
+SIGBUS on arm64 Darwin. Fix (`libobjc/dataconst.patch`): `mprotect` the page read-write before writing (`remapProtocolRef`, `remapClassRef`).
+`macapps/logicimage.sh` builds the image with `CLOKE_LIBOBJC=1`, which makes `macapps/install.sh` stage the patched `/usr/lib/libobjc.A.dylib`.
+
+Result (arm64): **`_read_images` completes for all 7,549 classes and Logic's launcher runs its own code.** It now ends with an Objective-C exception from our Foundation:
+
+```
+libc++abi: terminating due to uncaught exception of type NSException
+Logic Pro[…]: Terminating app due to uncaught exception 'NSException', reason: '__NSCFNumber objCType requires a subclass implementation'
+```
+
+That is the duplicate `__NSCFNumber` (also `__NSCFType`, `__NSCFBoolean`): PureDarwin's `libCoreFoundation` and Darling's CoreFoundation both define the
+class, objc picks one ("One of the two will be used"), and `NSNumber` ends up on the bridged class whose Darling `objCType` is abstract. A Mac program sees
+this when it calls `-[NSNumber objCType]` (Logic does so during startup). Next step: make the two CoreFoundations agree on one `__NSCFNumber`
+(for example by not loading PureDarwin's `libCoreFoundation` classes in programs that use `DYLD_FRAMEWORK_PATH=/Library/ClokeOS/MacFrameworks`), or
+give Darling's `__NSCFNumber` an `objCType`.
+
 ## What blocks, in order
 
 1. ~~Cheap fixes~~ done in round 2 (empty stubs, AudioToolbox staged). Left from this step: the real `libswiftCore` and

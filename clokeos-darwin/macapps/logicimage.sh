@@ -18,7 +18,7 @@ R="$BREW/opt/e2fsprogs/sbin"
 tmp="$WORK/tmp/logicimage"
 rm -rf "$tmp"; mkdir -p "$tmp"
 
-"$HERE/brand.sh" > "$tmp/brand.log" 2>&1 || { tail -5 "$tmp/brand.log" >&2; exit 1; }
+CLOKE_LIBOBJC=1 "$HERE/brand.sh" > "$tmp/brand.log" 2>&1 || { tail -5 "$tmp/brand.log" >&2; exit 1; }
 I="$CLOKE_IMG"
 read -r s c < <(gpt_part "$I" "$GUID_LINUX_FS")
 mib=$((c * 512 / 1048576 + add))
