@@ -14,7 +14,15 @@ s|^        XDestroyWindow\(_display, _window\);$|        ClokeX11PresentFree(\&_
         XDestroyWindow(_display, _window);|
 # ClokeOS: Ausblenden und Umstapeln sofort an den X-Server schicken. Danach wartet die Ereignisschleife in poll(), und Xlibs Ausgabepuffer
 # blieb liegen: ein mit orderOut: geschlossenes Fenster (Logic Pros Hinweisdialog) blieb auf dem Bildschirm und verdeckte die nächsten.
-s/^(    XUnmapWindow\(_display, _window\);)$/\1\n    XFlush(_display);/
+# Ausblenden nach ICCCM mit XWithdrawWindow: zusätzlich zum echten UnmapNotify ein synthetisches an das Wurzelfenster. CloakServer übergeht
+# ein UnmapNotify, wenn es ein schon sichtbares Fenster umgehängt hat (ignore_unmaps); dann blieb das Fenster stehen.
+s/^    XUnmapWindow\(_display, _window\);$/    XWithdrawWindow(_display, _window, DefaultScreen(_display));\n    XFlush(_display);/
 s/^(        XRaiseWindow\(_display, _window\);)$/\1\n        XFlush(_display);/
 s/^(        XLowerWindow\(_display, _window\);)$/\1\n        XFlush(_display);/
 s/^(        XRestackWindows\(_display, w, 1\);)$/\1\n        XFlush(_display);/
+# ClokeOS: makeKey zeigt ein ausgeblendetes Fenster nicht wieder an (wie bei Apple). Nach orderOut: machte AppKit dasselbe Fenster wieder zum
+# Schlüsselfenster, und ensureMapped holte Logic Pros geschlossenen Hinweisdialog sofort zurück.
+/^- \(void\) makeKey \{$/{
+n
+s/^    \[self ensureMapped\];$/    if (!_mapped)\n        return;/
+}

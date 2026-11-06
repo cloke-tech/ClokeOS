@@ -626,6 +626,9 @@ Untested: clicking through the alert, the project chooser, x86_64, `Jump.logicx`
 * **Views draw without layers:** Cocotron renders layer-backed views through OpenGL, which ClokeOS does not have, so they stayed black. `NSViewLayersEnabled` is now off unless `CLOKE_VIEW_LAYERS=1`; every view draws through `drawRect:` into the window.
 * `X11Window` flushes the X connection after unmapping, raising, lowering and restacking; before, an ordered-out window stayed on screen because the event loop then blocks in `poll()` with the request still in Xlib's buffer.
 * **Result:** Logic sits in its normal `-[NSApplication run]` loop. Its startup alert dialog (`LgAlertCollector`, "Continue") draws, clicking Continue runs `closeDialog:` → `stopModal` → order-out. Behind it Logic has an untitled 578×302 window and the Settings panel visible.
-  The dialog's list (a view-based `NSTableView`) stays empty grey. Clicks are not delivered in every run (timing of the first click vs. window activation, not yet understood).
+  The dialog's list (a view-based `NSTableView`) stays empty grey.
+* The dialog then stayed on screen: after order-out AppKit made the same panel key again and `-[X11Window makeKey]` mapped it back (`ensureMapped`). `makeKey` no longer maps a hidden window (as on macOS);
+  `hideWindow` withdraws with `XWithdrawWindow` (ICCCM synthetic UnmapNotify, which CloakServer needs when it had reparented an already-mapped window). Now Continue closes the dialog,
+  and Logic's splash window ("Searching for Audio Unit plug-ins") and the Settings panel remain.
 
 Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`, audio, rendering.

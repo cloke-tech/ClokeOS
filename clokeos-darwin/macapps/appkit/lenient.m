@@ -85,7 +85,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -144,7 +144,12 @@ static void h_mdown(id s, SEL c, NSEvent *e) {
     ((void (*)(id, SEL, id))o_mdown)(s, c, e);
     fprintf(stderr, "[clokeos-trace] mouseDown: <- %s\n", class_getName(object_getClass(s)));
 }
+static void h_hide(id s, SEL c) {
+    fprintf(stderr, "[clokeos-trace] X11Window hideWindow %p windowNumber=%ld\n", s, (long)[s windowNumber]);
+    ((void (*)(id, SEL))o_hide)(s, c);
+}
 + (void)hooks {
+    o_hide = ck_hook(NSClassFromString(@"X11Window"), @selector(hideWindow), (IMP)h_hide);
     o_action = ck_hook([NSApplication class], @selector(sendAction:to:from:), (IMP)h_action);
     o_stop = ck_hook([NSApplication class], @selector(stopModal), (IMP)h_stop);
     o_stopc = ck_hook([NSApplication class], @selector(stopModalWithCode:), (IMP)h_stopc);
