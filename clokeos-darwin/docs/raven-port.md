@@ -107,9 +107,8 @@ a Windows title bar with its caption and `TextOutA` text on the ClokeOS desktop.
 * A 64-bit installer-like program (MinGW, plain Win32: `CreateDirectory` in `%ProgramFiles%`, `CopyFile`, `CreateFile`/`WriteFile`,
   `RegCreateKeyEx`/`RegSetValueEx` under `Software\Microsoft\Windows\CurrentVersion\Uninstall`, temp file) runs: the files appear in
   `~/Library/Raven/drive_c/Program Files/RavenTest` and the registry in `registry.dat`.
-* A real NSIS installer does not run: NSIS only makes 32-bit (PE32) stubs, and XNU 20.5 has no 32-bit user mode (Raven's x86 mode needs
-  a compatibility-mode segment through the LDT as Wine's WoW64 does; not ported). Inno Setup is 32-bit as well. MSI needs Raven's installer
-  components (ReactOS sources, `scripts/provision-installer.py`), not fetched.
+* (superseded below: 32-bit programs and the NSIS installer run now.) MSI still needs Raven's installer components (ReactOS sources,
+  `scripts/provision-installer.py`), not fetched.
 * PureDarwin's libSystem has no `swapcontext`: `native/platform/context_darwin.{h,cpp}` is a small x86-64 replacement (guest threads are
   coroutines).
 * **Notepad++** (the fixture's portable build) runs with its full window: menus, toolbar icons, the editor, and typed text arrives
@@ -125,3 +124,22 @@ Through the menus (clicks and typing by `vmctl` through X): **File > Save As** o
 typed text); **File > Open** listed `Z:\tmp\docs` with sizes and dates and loaded `unix.txt` (detected as Unix LF). Not tested: keyboard
 shortcuts with modifiers (`vmctl xkey` has no Ctrl), clipboard, drag and drop, printing. The log shows `thread N waits for window ... to answer
 message 430` lines while a dialog is open; they are Raven's own trace of a cross-thread message and did not hurt.
+
+## Status (2026-11-06, night 2): 32-bit programs
+
+XNU 20.5 cannot start 32-bit processes, but a 64-bit process can run 32-bit code in compatibility mode through an LDT entry (spike:
+`raven/` history, `i386_set_ldt` is machine-dependent call 5, `0x3000005`; `LDT_AUTO_ALLOC` = 0xffffffff gives the first free index, 3).
+Raven's x86 mode now works on top of that (`native/platform/mach_guest.cpp`):
+
+* the guest thread allocates three LDT entries by running the call itself at the bootstrap gate: a flat 32-bit code segment, a flat data
+  segment and the entry for the TEB (FS); Raven's `modify_ldt(1, user_desc)` rewrites the FS entry;
+* `thread_set_state` always resets the CPU to 64-bit mode (the kernel forces CS), so every resume of 32-bit code goes through a small stub at
+  `0x10000`: `mov m16,%ds / %es / %fs` from memory (no register is touched) and `ljmp *far(%rip)` with the target in the far pointer, written for
+  each resume. The ptrace-style `GETREGS` reports `cs=0x23`, `fs=7` and, while the stub is armed, the logical `eip`;
+* 32-bit allocations (`MAP_32BIT`) come from a gap search below 4 GiB (`mach_vm_region`); breakpoints (`int3`) in compatibility mode arrive as
+  ordinary Mach exceptions with the 32-bit state in the 64-bit registers.
+
+Tested in the x86_64 VM: `hallo32.exe` (MinGW i686) prints `Zeiger 32 Bit` and returns its exit code; a 32-bit GDI window with text is shown on the
+desktop; a real NSIS installer (`makensis` 3.13: `File`, `WriteUninstaller`, `WriteRegStr`, `CreateShortCut`) ran and installed `payload.exe` and
+`uninst.exe` under `Program Files\RavenTest` (no `.lnk` seen). `raven/build.sh` builds the 32-bit components (`provision-controls.py --arch x86`,
+`ucrtbase32.dll`) and installs `x86/` and `ucrtbase32.dll` beside `raven`.

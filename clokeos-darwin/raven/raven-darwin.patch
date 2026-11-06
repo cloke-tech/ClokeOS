@@ -83,7 +83,7 @@ index ea39cb0..a7d1add 100644
  .section .note.GNU-stack,"",@progbits
 +#endif
 diff --git a/native/cpu/native_cpu.cpp b/native/cpu/native_cpu.cpp
-index d3abdc2..9c69f74 100644
+index d3abdc2..da2c67f 100644
 --- a/native/cpu/native_cpu.cpp
 +++ b/native/cpu/native_cpu.cpp
 @@ -12,7 +12,9 @@
@@ -166,7 +166,26 @@ index d3abdc2..9c69f74 100644
  		try {
  			user_regs_struct where{};
  			if (child.pid != -1)
-@@ -1415,7 +1438,7 @@ void NativeProcess::watch_write(uint64_t address)
+@@ -970,6 +993,9 @@ static void memory_range(uint64_t address, size_t size, int protection, uint64_t
+ 
+ // MAP_32BIT only reaches the 1 GiB window that also holds the images, so 32-bit allocations take the lowest free 64 KiB aligned gap
+ // of the child's own address space and are then mapped there without replacing anything.
++#ifdef __APPLE__
++static uint64_t low_gap(pid_t pid, uint64_t size, uint64_t limit) { return raven_low_gap(pid, size, limit); }
++#else
+ static uint64_t low_gap(pid_t pid, uint64_t size, uint64_t limit)
+ {
+ 	std::ifstream maps("/proc/" + std::to_string(pid) + "/maps");
+@@ -989,6 +1015,8 @@ static uint64_t low_gap(pid_t pid, uint64_t size, uint64_t limit)
+ 	return candidate < limit && limit - candidate >= size ? candidate : 0;
+ }
+ 
++#endif
++
+ uint64_t NativeProcess::map_memory(size_t size, int protection, uint64_t address)
+ {
+ 	state->trap_page.clear();
+@@ -1415,7 +1443,7 @@ void NativeProcess::watch_write(uint64_t address)
  	state->require_stopped();
  	const pid_t pid = state->child->pid;
  	const auto poke = [&](size_t index, uint64_t value) {
@@ -175,7 +194,7 @@ index d3abdc2..9c69f74 100644
  		if (ptrace(PTRACE_POKEUSER, pid, reinterpret_cast<void *>(offset), reinterpret_cast<void *>(value)) == -1)
  			throw std::runtime_error("cannot program the debug registers");
  	};
-@@ -1754,6 +1777,11 @@ NativeResult NativeProcess::begin_call(uint64_t address, std::span<const uint64_
+@@ -1754,6 +1782,11 @@ NativeResult NativeProcess::begin_call(uint64_t address, std::span<const uint64_
  		throw std::runtime_error("native call exceeds initial argument limit");
  	if (!state->covers(address, 1, PROT_EXEC))
  		throw std::runtime_error("native entry is outside executable image memory");
@@ -187,7 +206,7 @@ index d3abdc2..9c69f74 100644
  	state->child->set_timeout(timeout);
  	if (state->mode == NativeMode::x86)
  		return begin_x86_call(address, arguments, stack_ceiling, timeout);
-@@ -2032,7 +2060,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
+@@ -2032,7 +2065,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
  	state->debug_print_fault=signal==SIGSEGV && info.si_code==SI_KERNEL && registers.rax==1;
  	if (signal == SIGTRAP && info.si_code == TRAP_HWBKPT) {
  		// Reading the stop reason is enough; DR6 must be cleared or the next trap reports a stale cause.
@@ -1284,10 +1303,10 @@ index 0000000..dc34388
 +}
 diff --git a/native/platform/mach_guest.cpp b/native/platform/mach_guest.cpp
 new file mode 100644
-index 0000000..74e9c23
+index 0000000..46ced21
 --- /dev/null
 +++ b/native/platform/mach_guest.cpp
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,834 @@
 +// ClokeOS: guest-process control on XNU, see mach_guest.h
 +#ifdef __APPLE__
 +#include "platform/mach_guest.h"
@@ -1387,6 +1406,18 @@ index 0000000..74e9c23
 +{
 +	std::lock_guard lock(images_lock);
 +	images.erase(descriptor);
++}
++
++uint64_t raven_low_gap(pid_t pid, uint64_t size, uint64_t limit)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	return child ? child->low_gap(size, limit) : 0;
 +}
 +
 +long raven_ptrace(enum __ptrace_request request, pid_t pid, void *address, void *data)
@@ -1567,6 +1598,15 @@ index 0000000..74e9c23
 +					mach_vm_address_t probe = uint64_t(code1);
 +					mach_vm_size_t probed = 0;
 +					const auto found = mach_vm_region(task, &probe, &probed, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
++					x86_thread_state64_t seg{};
++					mach_msg_type_number_t seg_count = x86_THREAD_STATE64_COUNT;
++					thread_get_state(message.thread.name, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&seg), &seg_count);
++					uint8_t stubdata[16] = {};
++					if (compat_ready)
++						read_memory(stub + 0x40, stubdata, sizeof stubdata);
++					std::fprintf(stderr, "raven: segments cs=%llx fs=%llx gs=%llx rip=%llx rsp=%llx; ldt code=%x data=%x fs=%x; stub data: %02x%02x %02x%02x far %02x%02x%02x%02x %02x%02x\n",
++						(unsigned long long)seg.__cs, (unsigned long long)seg.__fs, (unsigned long long)seg.__gs, (unsigned long long)seg.__rip, (unsigned long long)seg.__rsp,
++						ldt_code, ldt_data, ldt_fs, stubdata[1], stubdata[0], stubdata[3], stubdata[2], stubdata[7], stubdata[6], stubdata[5], stubdata[4], stubdata[9], stubdata[8]);
 +					std::fprintf(stderr, "raven: access fault code=%lld addr=%llx; region %llx+%llx found=%d prot=%d max=%d\n", (long long)code0, (unsigned long long)code1,
 +						(unsigned long long)probe, (unsigned long long)probed, int(found), int(info.protection), int(info.max_protection));
 +				}
@@ -1639,6 +1679,7 @@ index 0000000..74e9c23
 +	if (!pending)
 +		return;
 +	pending = false;
++	armed = false;
 +	mach_msg_header_t request;
 +	std::memcpy(&request, pending_message.data(), sizeof request);
 +	ExceptionReply answer{};
@@ -1705,6 +1746,97 @@ index 0000000..74e9c23
 +	gs_base = base;
 +}
 +
++uint64_t NativeChild::low_gap(uint64_t size, uint64_t limit)
++{
++	constexpr uint64_t granularity = 0x10000;
++	uint64_t candidate = 0x20000;
++	for (;;) {
++		mach_vm_address_t probe = candidate;
++		mach_vm_size_t probed = 0;
++		vm_region_basic_info_data_64_t info;
++		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++		mach_port_t object;
++		if (mach_vm_region(task, &probe, &probed, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS)
++			return candidate < limit && limit - candidate >= size ? candidate : 0;
++		if (probe >= limit)
++			return candidate < limit && limit - candidate >= size ? candidate : 0;
++		if (probe >= candidate && probe - candidate >= size)
++			return candidate;
++		candidate = std::max(candidate, (probe + probed + granularity - 1) & ~(granularity - 1));
++	}
++}
++
++// Runs one system call of the guest's own thread at the bootstrap gate (the thread stops at the next trap there) and restores its registers.
++uint64_t NativeChild::inject_syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t *flags)
++{
++	x86_thread_state64_t saved;
++	mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
++	if (thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&saved), &count) != KERN_SUCCESS)
++		throw std::runtime_error("cannot read guest registers");
++	x86_thread_state64_t call = saved;
++	call.__rip = gate + 1;
++	call.__rax = number;
++	call.__rdi = a1;
++	call.__rsi = a2;
++	call.__rdx = a3;
++	thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&call), count);
++	reply(KERN_SUCCESS);
++	const auto previous = deadline;
++	deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
++	const int status = wait();
++	deadline = previous;
++	if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP)
++		throw std::runtime_error("native guest system call did not reach its trap");
++	x86_thread_state64_t after;
++	count = x86_THREAD_STATE64_COUNT;
++	thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&after), &count);
++	if (after.__rip != gate + 4)
++		throw std::runtime_error("native guest system call stopped outside its gate");
++	if (flags)
++		*flags = after.__rflags;
++	thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&saved), x86_THREAD_STATE64_COUNT);
++	return after.__rax;
++}
++
++// i386_set_ldt of the machine-dependent calls (class 3, number 5); index 0xffffffff lets the kernel choose
++uint64_t NativeChild::install_ldt_entry(uint32_t index, uint64_t descriptor)
++{
++	write_memory(stub_address + 0x800, &descriptor, sizeof descriptor);
++	uint64_t flags = 0;
++	const uint64_t result = inject_syscall(0x3000005, index, stub_address + 0x800, 1, &flags);
++	if (flags & 1)
++		throw std::runtime_error("i386_set_ldt failed: " + std::to_string(result));
++	return result;
++}
++
++void NativeChild::ensure_compat()
++{
++	if (compat_ready)
++		return;
++	// The entry stub: loads DS, ES and FS from its data and jumps far into the 32-bit code; no general register is touched.
++	mach_vm_address_t where = stub_address;
++	if (mach_vm_map(task, &where, 4096, 0, VM_FLAGS_FIXED, MACH_PORT_NULL, 0, FALSE, VM_PROT_ALL, VM_PROT_ALL, VM_INHERIT_NONE) != KERN_SUCCESS)
++		throw std::runtime_error("cannot map the 32-bit entry stub");
++	stub = stub_address;
++	ldt_code = uint16_t((install_ldt_entry(0xffffffffu, 0x00CFFA000000FFFFULL) << 3) | 7);
++	ldt_data = uint16_t((install_ldt_entry(0xffffffffu, 0x00CFF2000000FFFFULL) << 3) | 7);
++	// the FS descriptor is rewritten for every TEB; its index is chosen now
++	ldt_fs_index = uint32_t(install_ldt_entry(0xffffffffu, 0x00CFF2000000FFFFULL));
++	ldt_fs = uint16_t((ldt_fs_index << 3) | 7);
++	uint8_t code[128] = {};
++	size_t at = 0;
++	auto rel = [&](size_t instruction_end, size_t target) { return int32_t(int64_t(target) - int64_t(instruction_end)); };
++	const size_t data = 0x40;                       // ds_sel at 0x40, fs_sel at 0x42, far pointer at 0x44 (eip, cs)
++	code[at++] = 0x8e; code[at++] = 0x1d; { const int32_t r = rel(at + 4, data); std::memcpy(code + at, &r, 4); at += 4; }       // mov ds_sel(%rip),%ds
++	code[at++] = 0x8e; code[at++] = 0x05; { const int32_t r = rel(at + 4, data); std::memcpy(code + at, &r, 4); at += 4; }       // mov ds_sel(%rip),%es
++	code[at++] = 0x8e; code[at++] = 0x25; { const int32_t r = rel(at + 4, data + 2); std::memcpy(code + at, &r, 4); at += 4; }   // mov fs_sel(%rip),%fs
++	code[at++] = 0xff; code[at++] = 0x2d; { const int32_t r = rel(at + 4, data + 4); std::memcpy(code + at, &r, 4); at += 4; }   // ljmp *far(%rip)
++	std::memcpy(code + data, &ldt_data, 2);
++	std::memcpy(code + data + 2, &ldt_fs, 2);
++	write_memory(stub, code, sizeof code);
++	compat_ready = true;
++}
++
 +long NativeChild::request(enum __ptrace_request operation, void *address, void *data)
 +{
 +	switch (operation) {
@@ -1742,11 +1874,22 @@ index 0000000..74e9c23
 +		r.rdx = state.__rdx; r.rsi = state.__rsi; r.rdi = state.__rdi; r.orig_rax = last_signal == (SIGTRAP | 0x80) ? last_address : uint64_t(-1); r.rip = state.__rip;
 +		r.cs = state.__cs; r.eflags = state.__rflags; r.rsp = state.__rsp; r.ss = 0x2b; r.fs_base = 0; r.gs_base = gs_base;
 +		r.fs = state.__fs; r.gs = state.__gs;
++		if (compat_ready && (state.__cs == ldt_code || armed)) {
++			if (armed)
++				r.rip = armed_eip;
++			// the guest stopped in compatibility mode: the registers read as under Linux (selectors 0x23 and 0x2b, FS entry 0)
++			r.cs = 0x23;
++			r.ss = r.ds = r.es = 0x2b;
++			r.fs = 7;
++			r.gs = 0;
++		}
 +		return 0;
 +	}
 +	case PTRACE_SETREGS: {
 +		if (!pending) { errno = ESRCH; return -1; }
 +		const auto &r = *static_cast<const user_regs_struct *>(data);
++		if (std::getenv("RAVEN_TRACE_STOPS"))
++			std::fprintf(stderr, "raven: setregs rip=%llx rsp=%llx cs=%llx rax=%llx\n", (unsigned long long)r.rip, (unsigned long long)r.rsp, (unsigned long long)r.cs, (unsigned long long)r.rax);
 +		x86_thread_state64_t state;
 +		mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
 +		if (thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), &count) != KERN_SUCCESS) {
@@ -1756,11 +1899,25 @@ index 0000000..74e9c23
 +		state.__r15 = r.r15; state.__r14 = r.r14; state.__r13 = r.r13; state.__r12 = r.r12; state.__rbp = r.rbp; state.__rbx = r.rbx;
 +		state.__r11 = r.r11; state.__r10 = r.r10; state.__r9 = r.r9; state.__r8 = r.r8; state.__rax = r.rax; state.__rcx = r.rcx;
 +		state.__rdx = r.rdx; state.__rsi = r.rsi; state.__rdi = r.rdi; state.__rip = r.rip; state.__rflags = r.eflags; state.__rsp = r.rsp;
++		if (r.cs == 0x23) {
++			// 32-bit code: the thread re-enters compatibility mode through the stub, whose far pointer holds the target
++			ensure_compat();
++			const uint32_t eip = uint32_t(r.rip);
++			uint8_t far[6];
++			std::memcpy(far, &eip, 4);
++			std::memcpy(far + 4, &ldt_code, 2);
++			write_memory(stub + 0x44, far, 6);
++			state.__rip = stub;
++			state.__rsp = uint32_t(r.rsp);
++			armed = true;
++			armed_eip = eip;
++		} else
++			armed = false;
 +		if (thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), count) != KERN_SUCCESS) {
 +			errno = EIO;
 +			return -1;
 +		}
-+		if (r.gs_base != gs_base)
++		if (r.cs != 0x23 && r.gs_base != gs_base)
 +			set_gs_base(r.gs_base);
 +		return 0;
 +	}
@@ -1861,7 +2018,13 @@ index 0000000..74e9c23
 +			if (flags & MAP_FIXED)
 +				mach_vm_deallocate(task, address, size);
 +			mach_vm_address_t where = address;
-+			result = allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
++			if ((flags & MAP_32BIT) && !address) {
++				where = low_gap(size, 0x100000000ULL);
++				if (!where)
++					throw std::runtime_error("native mmap: no 32-bit address space left");
++				result = allocate(task, &where, size, VM_FLAGS_FIXED);
++			} else
++				result = allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
 +			if (result != KERN_SUCCESS)
 +				fail("mmap", result);
 +			if (protection != (PROT_READ | PROT_WRITE))
@@ -1955,6 +2118,20 @@ index 0000000..74e9c23
 +			throw std::runtime_error("native openat: unsupported path");
 +		return uint64_t(std::atoi(marker + 4));
 +	}
++	case SYS_modify_ldt: {
++		// func 1: write one entry (struct user_desc: entry, base, limit, flags); the guest's TEB descriptor, always entry 0 under Linux
++		if (a1 != 1)
++			throw std::runtime_error("native modify_ldt: only writing an entry is supported");
++		uint32_t fields[4] = {};
++		if (read_memory(a2, fields, sizeof fields) < 0)
++			throw std::runtime_error("native modify_ldt: cannot read the descriptor");
++		ensure_compat();
++		const uint64_t base = fields[1], limit = fields[2];
++		const uint64_t descriptor = (limit & 0xffff) | ((base & 0xffffff) << 16) | (uint64_t(0xF2) << 40) | (((limit >> 16) & 0xf) << 48) |
++			(uint64_t((fields[3] & 0x10) ? 0xc : 0x4) << 52) | ((base >> 24) << 56);
++		install_ldt_entry(ldt_fs_index, descriptor);
++		return 0;
++	}
 +	case SYS_close:
 +		return 0;
 +	default:
@@ -1966,10 +2143,10 @@ index 0000000..74e9c23
 +#endif
 diff --git a/native/platform/mach_guest.h b/native/platform/mach_guest.h
 new file mode 100644
-index 0000000..f1c1d1a
+index 0000000..b602bcf
 --- /dev/null
 +++ b/native/platform/mach_guest.h
-@@ -0,0 +1,153 @@
+@@ -0,0 +1,167 @@
 +// ClokeOS: the guest-process control of cpu/native_cpu.cpp on XNU. Raven drives its x86-64 guest with ptrace (stops, registers,
 +// memory, injected system calls); here the same operations are made from a Mach task port and exception messages, and
 +// ptrace() and the wait statuses are emulated on top of them so that native_cpu.cpp stays as it is.
@@ -2057,6 +2234,8 @@ index 0000000..f1c1d1a
 +#define process_vm_readv raven_process_vm_readv
 +#define process_vm_writev raven_process_vm_writev
 +
++uint64_t raven_low_gap(pid_t pid, uint64_t size, uint64_t limit);
++
 +// A PE image is backed by a shared memory object that cannot be mapped executable; mapping it into the guest copies it into guest memory
 +// and re-points the host's view at those pages.
 +void raven_register_image(int descriptor, void *storage, size_t size);
@@ -2093,6 +2272,8 @@ index 0000000..f1c1d1a
 +	long request(enum __ptrace_request request, void *address, void *data);
 +	ssize_t read_memory(uint64_t address, void *buffer, size_t size);
 +	ssize_t write_memory(uint64_t address, const void *buffer, size_t size);
++	// the lowest free 64 KiB aligned gap below `limit` for a 32-bit guest's allocation
++	uint64_t low_gap(uint64_t size, uint64_t limit);
 +
 +private:
 +	struct Event {
@@ -2106,6 +2287,16 @@ index 0000000..f1c1d1a
 +	void listen();
 +	void reply(kern_return_t result);
 +	void set_gs_base(uint64_t base);
++	// 32-bit (compatibility mode) guests: the LDT, the entry stub and the translation of the ptrace registers
++	uint64_t inject_syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t *flags = nullptr);
++	void ensure_compat();
++	uint64_t install_ldt_entry(uint32_t index, uint64_t descriptor);
++	bool compat_ready = false, armed = false;
++	uint32_t armed_eip = 0;
++	uint16_t ldt_code = 0, ldt_data = 0, ldt_fs = 0;
++	uint32_t ldt_fs_index = 0;
++	uint64_t stub = 0;
++	static constexpr uint64_t stub_address = 0x10000;
 +	uint32_t task = 0, exception_port = 0, thread = 0;
 +	std::chrono::steady_clock::time_point deadline;
 +	std::thread listener;

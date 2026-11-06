@@ -8,7 +8,7 @@
 # xkbcommon, pixman); mit Skia (nur CPU) und Liberation-Schriften auch Text. Getestet: ein Konsolenprogramm, ein GDI-Fenster mit Text. Nur x86_64: Raven führt x86-64-Code nativ aus.
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
-need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gcc pkg-config
+need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc pkg-config
 [ "$CLOKE_ARCH" = x86_64 ] || { echo "Raven gibt es nur für x86_64" >&2; exit 0; }
 
 stage="$1"
@@ -126,6 +126,13 @@ fi
 # die Gast-Komponenten (RTL, ucrtbase, Controls) baut Raven mit MinGW aus den eigenen Quellen
 [ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
 [ -f "$WORK/raven/components/controls/ucrtbase.dll" ] || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
+# 32-Bit-Komponenten (MinGW i686): Controls und ucrtbase32 (die CMake-Regel dafür hängt an Bedingungen, die hier nicht gelten)
+[ -f "$WORK/raven/components/controls32/comctl32.dll" ] || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$WORK/raven/components/controls32" >/dev/null
+crt="$src/native/upstream/raven-crt"
+i686-w64-mingw32-gcc -c -O2 -w -ffreestanding -fno-builtin "$crt/ucrtbase.c" -o "$WORK/raven/ucrtbase32.o"
+i686-w64-mingw32-gcc -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp -o "$WORK/raven/ucrtbase32.dll" \
+  "$WORK/raven/ucrtbase32.o" "$crt/ucrtbase32.def" -lkernel32 -lgcc
+rm -f "$build/CMakeCache.txt"
 cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON \
   -DFREETYPE_INCLUDE_DIR_freetype2="$sys/include/freetype2" -DFREETYPE_INCLUDE_DIR_ft2build="$sys/include/freetype2" \
@@ -133,7 +140,7 @@ cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolcha
   -DRAVEN_FONT_DIRECTORY="$text/fonts" -DOPENSSL_INCLUDE_DIR="$sys/ssl/include" -DOPENSSL_CRYPTO_LIBRARY="$sys/lib/libcrypto.a" -DOPENSSL_SSL_LIBRARY="$sys/lib/libssl.a" \
   -DPNG_LIBRARY_RELEASE="$sys/png/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$sys/png/include" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
   -DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0 -DRAVEN_RTL_COMPONENT_PATH="$WORK/raven/components/rtl/raven-rtl.dll" \
-  -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" >/dev/null
+  -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$WORK/raven/components/controls32" >/dev/null
 ninja -C "$build" raven raven-bootstrap >/dev/null
 
 # PureDarwins libc++ bricht bei std::uncaught_exceptions ab: die Bibliothek wird im Image ersetzt
@@ -147,6 +154,8 @@ python3 -I "$src/native/platform/patch_libcxx.py" "$WORK/tmp/raven/libc++.1.dyli
 mkdir -p "$stage/usr/libexec/raven" "$stage/usr/lib"
 cp "$build/native/raven" "$build/native/raven-bootstrap" "$stage/usr/libexec/raven/"
 cp -R "$text/fonts" "$stage/usr/libexec/raven/fonts"
+cp "$WORK/raven/ucrtbase32.dll" "$stage/usr/libexec/raven/"
+[ ! -d "$build/native/x86" ] || cp -R "$build/native/x86" "$stage/usr/libexec/raven/x86"
 # die Komponenten liegen neben dem Programm: Raven sucht sie dort
 for f in "$build"/native/*.dll "$build"/native/*.exe; do [ -f "$f" ] && cp "$f" "$stage/usr/libexec/raven/"; done
 cp "$WORK/tmp/raven/libc++.1.dylib.patched" "$stage/usr/lib/libc++.1.dylib"
