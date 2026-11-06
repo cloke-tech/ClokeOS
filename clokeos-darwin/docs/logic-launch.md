@@ -577,3 +577,20 @@ Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
 * Next step: a NIBArchive reader in AppKit (an NSCoder that decodes NIBArchive's object/key/value tables into the objects Cocotron's nib loader expects; `macapps/nibarchive.py` documents the format), plus a re-entrancy guard in `-[NSWindowController window]`.
 
 Untested: x86_64, `Jump.logicx`, audio, rendering; no window is visible yet.
+
+### Round 36: NIBArchive reader; Logic's nibs load, Logic idles in its event loop
+
+* `macapps/appkit/nibarchive.m` (in AppKit): `ClkNibArchiveToKeyed()` converts a NIBArchive nib in memory into an NSKeyedArchiver archive (binary plist with CF UIDs) that Darling's `NSKeyedUnarchiver` reads as usual;
+  `patches/darling-cocotron/AppKit/nib.subproj/NSNib.m.sed` calls it before unarchiving, other nibs pass unchanged. Mapping: object *i* → `$objects[i+1]`, object 0 (the `NSObject` holding `IB.objectdata`) → `$top`;
+  `NSString`/`NSLocalizableString` → string, `NSMutableString` → `{NS.string}`, `NSNumber` → number/bool, `NSData` → data, runs of `UINibEncoderEmptyKey` → `NS.objects` (dictionaries: keys and values alternate → `NS.keys`/`NS.objects`),
+  `NSDecimalNumberPlaceholder` → `NSDecimalNumber`. Geometry stays a reference to a string (`{{x, y}, {w, h}}`), which `decodeRectForKey:` reads through `decodeObjectForKey:`.
+  Classes missing in the process get a stand-in by name (`…View` → `NSView`, `…Cell` → `NSCell`, …, otherwise `ClkNibUnknownObject`); `CLOKE_NIB_LOG=1` lists them.
+* Checked on the host against Apple's own `NSKeyedUnarchiver` + AppKit: 1156 of 1169 nibs in the Logic bundle convert and decode; the 13 others are storyboard pieces that need their storyboard's placeholders, plus one old pre-NIBArchive nib.
+* `patches/darling-cocotron/AppKit/NSWindowController.m.sed`: `-window` is not re-entered while the window loads (per-object flag), so a failing nib can no longer recurse into a stack overflow.
+* `macapps/deploy-files.sh` writes single files from the arm64 build root into the image; it and `swift/deploy-overlay.sh` now refuse to write while the VM on that image runs (a write during a run damaged the file system once; repaired with e2fsck on a copy of the partition).
+  After `macapps/appkit.sh`, run `swift/deploy-overlay.sh` too: swiftov re-adds the supplement re-export to the new AppKit (otherwise `_NSFontDescriptorSystemDesignRounded` is missing at launch).
+* Result: MainMenu and Logic's window nibs load (only `IBClassReference` needs the stand-in; `NSLayoutConstraint` decoding is a Cocotron stub that logs and returns), `didFinishLaunching` runs, and Logic sits idle in its event loop with no crash.
+  No Logic window is visible and the menu bar still shows the previous app. `CLOKE_NO_UNTITLED=1` suppresses the untitled document; the project chooser Logic shows instead is a storyboard (`MANewProjectDialogBoard.storyboardc`), which Cocotron does not support.
+* Next step: find out which window Logic wants to show at this point (and why it does not appear), then storyboard loading (`NSStoryboard` with the placeholders) or opening `Jump.logicx` directly.
+
+Untested: x86_64, `Jump.logicx`, audio, rendering; no Logic window visible yet.

@@ -5,6 +5,7 @@
 set -euo pipefail
 export CLOKEOS_ARCH=arm64 CLOKEOS_FLAVOR=desktop
 source "$(dirname "$0")/../config.sh"
+if pgrep -f "qemu.*$CLOKE_IMG" > /dev/null; then echo "VM auf $CLOKE_IMG läuft noch" >&2; exit 1; fi
 sw="${1:-$HOME/ClokeOS-work-swiftb/swiftsrc}"
 fb="${2:-$HOME/ClokeOS-work-sf/swift-foundation/.build/out/Products/Release}"
 "$HERE/swift/foundation-overlay.sh" "$sw" "$fb" > /dev/null 2>&1
