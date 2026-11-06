@@ -272,7 +272,7 @@ The x86_64 desktop image runs Windows programs with [Raven](https://github.com/m
 - **Mach instead of ptrace:** the guest is a task whose exception port the runtime owns (`task_for_pid`); API traps (`int3`), faults and the NT service calls (`EXC_SYSCALL`, because the stubs of Raven's ntdll use a Mach trap number XNU does not have) arrive as Mach exceptions; registers and XSTATE through `thread_get_state`, memory through `mach_vm_*`. No sandbox yet (a raw `syscall` of the guest would reach XNU).
 - **`raven`** (`overlay-desktop/usr/bin/raven`) starts a program: `raven setup.exe`, `raven --inspect program.exe`. The Windows prefix of each user is `~/Library/Raven`. Fundus opens `.exe` with it by double-click (`/share/applications/raven.desktop`, `mimeapps.list`), and "Raven" is an app in `/Applications`.
 - **PureDarwin workarounds:** PE images are copied into guest pages (shared memory cannot be mapped executable) and the host's view is re-pointed with `vm_remap`; `/usr/lib/libc++.1.dylib` is replaced by a copy with a working `std::uncaught_exceptions()`.
-- **Works:** 64-bit console programs (MinGW/ucrt: `printf`, system information, exit codes) and plain GDI windows on the desktop (Raven's X11 presentation through xcb, xkbcommon and pixman; the libraries come from the PureDarwin image and pixman is built by `raven/build.sh`), tested in the x86_64 VM. **Not yet:** text in windows (needs Skia and fonts), Direct3D, installers, 32-bit programs, `.msi`, arm64 (needs the translation layer).
+- **Works:** 64-bit console programs (MinGW/ucrt: `printf`, system information, exit codes) and plain GDI windows on the desktop (Raven's X11 presentation through xcb, xkbcommon and pixman; the libraries come from the PureDarwin image and pixman is built by `raven/build.sh`), tested in the x86_64 VM. Text in windows works through Skia (CPU build, no CoreText) and the Liberation fonts (`raven/build.sh` fetches Skia and only its FreeType dependency). **Not yet:** Direct3D, installers, 32-bit programs, `.msi`, arm64 (needs the translation layer).
 
 ### cloke: one package manager for everything
 
@@ -300,7 +300,7 @@ Backends used when present: **brew** (macOS and ClokeOS), **dnf / apt / pacman /
 | Target | State | Base |
 |---|---|---|
 | x86_64 (QEMU q35, UEFI) | built, booted, released | PureDarwin 20.5, `puredarwin-minimal.img` |
-| x86_64 desktop | built, booted, released (installer, USB sticks, SSD image), runs Windows console programs and simple windows with Raven | PureDarwin's preview image `puredarwin.img` |
+| x86_64 desktop | built, booted, released (installer, USB sticks, SSD image), runs Windows console programs and windows with text (GDI) with Raven | PureDarwin's preview image `puredarwin.img` |
 | x86_64 on real PCs | tested on an HP 15s-fq5655ng: boot from USB, recovery | the same |
 | arm64 (QEMU virt) | built, booted with Apple's hypervisor and emulated | `puredarwin-arm64-virt-minimal.img` |
 | arm64 desktop | built, booted with HVF, released (installer) | `puredarwin-arm64-virt.img` |
@@ -408,7 +408,7 @@ The kernel is the smaller problem, since XNU is open source (Apple Public Source
 4. **Port the shell.** Menu bar, Dock, Launchpad and System Settings are native in CloakServer, apps are `.app` bundles, Mac apps run through Darling's AppKit. Open: Fundus, Search and the other prototype apps as native programs.
 5. ~~**Installer.**~~ Done: installer, recovery, USB sticks and SSD image (see [Recovery and installation](#recovery-and-installation)).
 6. **Real hardware.** Started: USB installers, SATA detection, PS/2 keyboard and touchpad (ClokePS2), I²C touchpads, several CPU cores. Next: Wi-Fi (Realtek RTL8821CE in development), graphics.
-7. **Windows.** The NT interface exists, and Raven (a Linux Windows-compatibility runtime ported to XNU) runs 64-bit console `.exe` programs and simple GDI windows on x86_64. Next: text (Skia, fonts), installers, more programs tested, arm64 through the translation layer.
+7. **Windows.** The NT interface exists, and Raven (a Linux Windows-compatibility runtime ported to XNU) runs 64-bit console `.exe` programs and GDI windows with text on x86_64. Next: installers, more programs tested, more programs tested, arm64 through the translation layer.
 8. **Linux.** First version done on arm64 and x86_64 (`tux`, see [Linux programs](#linux-programs-tux)); still to do: graphical Linux programs, `inotify`, programs of the other architecture.
 9. **Other CPU.** Done: x86_64 programs on arm64 (`ucrun`, Unicorn-based, about 20x slower than Rosetta 2; own block JIT started) and arm64 programs on x86_64 (`a64run`), see [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). Next: JIT for SSE/dynamic programs and threads, Windows programs on arm64 through the translated Wine, x86_64 Linux programs through `tux`.
 10. **iOS apps.** Run iOS apps (arm64 Mach-O) on ClokeOS, on top of the Mac frameworks and the translation layer, with UIKit shims. Not started.

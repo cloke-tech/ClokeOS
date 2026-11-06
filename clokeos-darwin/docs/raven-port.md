@@ -93,3 +93,10 @@ from the PureDarwin image; pixman 0.46.4 is built from source with meson) shows 
 Skia and fonts (`scripts/provision-text.py`, a large download that has not been approved yet). The `raven` wrapper passes
 `--desktop=x11` by default (`RAVEN_DESKTOP` overrides). Caveats seen: the guest bootstrap was left suspended once after a killed run, and
 the MinGW GUI start code needs `__p__acmdln`, which Raven's ucrtbase lacks (the test program used its own entry point).
+
+## Status (2026-11-06, evening): text in windows
+
+Skia (commit `a21aae8`, CPU only, `target_os=mac target_cpu=x64`, `skia_use_fonthost_mac=false` because CoreText does not exist on
+PureDarwin) and the Liberation/Raven Sans fonts are part of `raven/build.sh`. Only FreeType is fetched for Skia (`git-sync-deps` would
+download 7 GB, mostly Dawn, ICU and unicodetools); Skia's FreeType needs libpng headers (taken from the image). The GDI test window now shows
+a Windows title bar with its caption and `TextOutA` text on the ClokeOS desktop. The stage grows by about 7 MB for the fonts.

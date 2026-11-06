@@ -5,7 +5,7 @@
 #   raven/build.sh <stage>     legt <stage>/usr/libexec/raven/{raven,raven-bootstrap} und die gepatchte libc++ ab
 #
 # Ohne Vulkan, OpenSSL, Skia, FreeType und libpng: 64-Bit-Konsolenprogramme und einfache Fenster über den X11-Desktop (xcb,
-# xkbcommon, pixman); Text in Fenstern braucht Skia und Schriften (noch nicht). Getestet: ein Konsolenprogramm, ein GDI-Fenster. Nur x86_64: Raven führt x86-64-Code nativ aus.
+# xkbcommon, pixman); mit Skia (nur CPU) und Liberation-Schriften auch Text. Getestet: ein Konsolenprogramm, ein GDI-Fenster mit Text. Nur x86_64: Raven führt x86-64-Code nativ aus.
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
 need "$DEBUGFS" clang cmake ninja git python3 nm curl x86_64-w64-mingw32-gcc pkg-config
@@ -73,12 +73,54 @@ INI
   PATH="$WORK/raven/dl/mv/bin:$PATH" ninja -C "$WORK/raven/dl/pixman-build" install >/dev/null
 fi
 export PKG_CONFIG_LIBDIR="$sys/lib/pkgconfig" PKG_CONFIG_PATH="$sys/lib/pkgconfig"
+# Text in Fenstern: Skia (nur CPU, ohne CoreText) und die Schriften. Von Skia wird nur FreeType gebraucht; git-sync-deps holt
+# dagegen 7 GB, deshalb wird FreeType allein geholt.
+text="$WORK/raven/text"
+mkdir -p "$text/pnginc"
+cp "$sys/include/png.h" "$sys/include/pngconf.h" "$sys/include/pnglibconf.h" "$text/pnginc/"
+if [ ! -f "$text/cpu-fonts/libskia.a" ]; then
+  skia_rev=a21aae83d6e4e3da284100a30f0a5eafc443b60f
+  if [ ! -d "$text/skia/.git" ]; then
+    git init -q "$text/skia"
+    git -C "$text/skia" fetch -q --depth=1 https://skia.googlesource.com/skia.git "$skia_rev"
+    git -C "$text/skia" checkout -q FETCH_HEAD
+  fi
+  if [ ! -f "$text/skia/third_party/externals/freetype/include/freetype/freetype.h" ]; then
+    ft_rev=$(sed -n 's#.*"third_party/externals/freetype" *: *"[^"]*@\([0-9a-f]*\)".*#\1#p' "$text/skia/DEPS")
+    mkdir -p "$text/skia/third_party/externals/freetype"
+    git -C "$text/skia/third_party/externals/freetype" init -q
+    git -C "$text/skia/third_party/externals/freetype" fetch -q --depth=1 https://chromium.googlesource.com/chromium/src/third_party/freetype2.git "$ft_rev"
+    git -C "$text/skia/third_party/externals/freetype" checkout -q FETCH_HEAD
+  fi
+  python3 "$text/skia/bin/fetch-gn" >/dev/null
+  mkdir -p "$text/cpu-fonts"
+  python3 - "$src/scripts/provision-text.py" "$text" <<'PY'
+import re, sys
+args = re.search(r'SKIA_ARGUMENTS = """(.*?)"""', open(sys.argv[1]).read(), re.S).group(1)
+args += 'target_os = "mac"\ntarget_cpu = "x64"\nskia_use_system_freetype2 = false\nskia_use_fonthost_mac = false\n'
+args += 'extra_cflags = ["-mmacosx-version-min=11.0", "-fPIC", "-isystem", "%s/pnginc"]\n' % sys.argv[2]
+open(sys.argv[2] + "/cpu-fonts/args.gn", "w").write(args)
+PY
+  (cd "$text/skia" && ./bin/gn gen "$text/cpu-fonts" >/dev/null)
+  ninja -C "$text/cpu-fonts" skia >/dev/null
+fi
+if [ ! -f "$text/fonts/RavenSans-Regular.ttf" ]; then
+  # macOS-tar kennt --wildcards nicht; fontTools aus einer venv
+  mkdir -p "$text/shim"
+  printf '#!/bin/bash\nargs=(); for a in "$@"; do [ "$a" = --wildcards ] || args+=("$a"); done\nexec /usr/bin/tar "${args[@]}"\n' > "$text/shim/tar"
+  chmod +x "$text/shim/tar"
+  [ -x "$WORK/raven/dl/mv/bin/pip" ] || python3 -m venv "$WORK/raven/dl/mv" >/dev/null
+  "$WORK/raven/dl/mv/bin/pip" -q install fonttools >/dev/null 2>&1
+  PATH="$text/shim:$PATH" "$WORK/raven/dl/mv/bin/python" "$src/scripts/provision-text.py" --output "$text" --fonts-only >/dev/null
+fi
 # die Gast-Komponenten (RTL, ucrtbase, Controls) baut Raven mit MinGW aus den eigenen Quellen
 [ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
 [ -f "$WORK/raven/components/controls/ucrtbase.dll" ] || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
 cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON -DCMAKE_DISABLE_FIND_PACKAGE_PNG=ON \
-  -DCMAKE_DISABLE_FIND_PACKAGE_Freetype=ON -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
+  -DFREETYPE_INCLUDE_DIR_freetype2="$sys/include/freetype2" -DFREETYPE_INCLUDE_DIR_ft2build="$sys/include/freetype2" \
+  -DFREETYPE_LIBRARY_RELEASE="$sys/lib/libfreetype.dylib" -DRAVEN_SKIA_SOURCE="$text/skia" -DRAVEN_SKIA_LIBRARY="$text/cpu-fonts/libskia.a" \
+  -DRAVEN_FONT_DIRECTORY="$text/fonts" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
   -DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0 -DRAVEN_RTL_COMPONENT_PATH="$WORK/raven/components/rtl/raven-rtl.dll" \
   -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" >/dev/null
 ninja -C "$build" raven raven-bootstrap >/dev/null
@@ -93,6 +135,7 @@ python3 -I "$src/native/platform/patch_libcxx.py" "$WORK/tmp/raven/libc++.1.dyli
 
 mkdir -p "$stage/usr/libexec/raven" "$stage/usr/lib"
 cp "$build/native/raven" "$build/native/raven-bootstrap" "$stage/usr/libexec/raven/"
+cp -R "$text/fonts" "$stage/usr/libexec/raven/fonts"
 # die Komponenten liegen neben dem Programm: Raven sucht sie dort
 for f in "$build"/native/*.dll "$build"/native/*.exe; do [ -f "$f" ] && cp "$f" "$stage/usr/libexec/raven/"; done
 cp "$WORK/tmp/raven/libc++.1.dylib.patched" "$stage/usr/lib/libc++.1.dylib"
