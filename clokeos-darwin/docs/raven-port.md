@@ -179,3 +179,21 @@ the document has 25 lines). Text only; other formats (images, files) and Drag an
   setup process produces tens of thousands of trace lines in minutes (so it is working through many calls, not blocked), but the
   trace was not read to the end because the single-CPU VM stopped answering shell commands while it ran. Next step: read
   `/tmp/tr.<pid>` of the last process and look for the repeating call.
+
+## Status (2026-11-06, night 4): the Inno Setup stall found and fixed
+
+Cause of "setup then stalls", in three layers (found with per-process traces; 32-bit programs trace with `RAVEN_TRACE_X86=1`,
+not `RAVEN_TRACE_API`, and `RAVEN_TRACE_FILE=/tmp/tr` writes one file per process):
+
+1. Without `/CURRENTUSER` or `/ALLUSERS` even `/VERYSILENT` shows the "Select Setup Install Mode" dialog (elevation is not
+   implemented, so the all-users choice is not testable). That is Inno behaviour, not a stall.
+2. Inno's 32-bit setup stage loops over a bitmap and calls `MulDiv` three times per pixel. Every call was a trap into the
+   runtime (a Mach exception round trip), minutes under TCG. The 32-bit kernel32 provider now holds a guest-side `MulDiv`
+   (`x86_muldiv_code` in providers.cpp, same rounding and error rules as the 64-bit prelude; checked with 13 cases in a 32-bit
+   test program).
+3. Inno then needs `SHGetImageList` (new in raven-shell, built on comctl32 image lists) and `IPropertyStore` on the shell
+   link object (link.c; the store accepts values and answers every key as empty), or it ends in "Interface not supported".
+
+Result: Inno Setup 6.7.4 installs its files (`/VERYSILENT /CURRENTUSER`) under Raven. Still open: the install has not been
+checked to its very end (uninstaller, Start menu links), elevation, and the windows of the non-silent wizard.
+build.sh rebuilds the controls components when `raven-shell.dll` lacks `SHGetImageList`.

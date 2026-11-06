@@ -242,7 +242,7 @@ index 7713b09..ea6369d 100644
  	}
  	return *text_engine;
 diff --git a/native/main.cpp b/native/main.cpp
-index 7fab6e2..37c76e7 100644
+index 7fab6e2..7a64689 100644
 --- a/native/main.cpp
 +++ b/native/main.cpp
 @@ -136,6 +136,11 @@ static void show_fault(int signal)
@@ -257,7 +257,14 @@ index 7fab6e2..37c76e7 100644
  	if (std::getenv("RAVEN_BACKTRACE")) {
  		std::set_terminate(show_backtrace);
  		std::signal(SIGSEGV, show_fault);
-@@ -152,7 +157,7 @@ int main(int argc, char **argv)
+@@ -148,11 +153,14 @@ int main(int argc, char **argv)
+ 			return 2;
+ 		// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
+ 		std::setvbuf(stderr, nullptr, _IOLBF, 0);
++		// Gets the file another descriptor than 2 (a child starts without standard handles), std::cerr still writes to 2.
++		if (::fileno(stderr) != 2)
++			::dup2(::fileno(stderr), 2);
+ 	}
  	const std::string mode = argc > 1 ? argv[1] : "";
  	// A restart of Windows: the moves and deletions installers left for it, then the programs that run once at the next logon.
  	if (mode == "--reboot") {
@@ -266,7 +273,7 @@ index 7fab6e2..37c76e7 100644
  		std::cout << "restarted: " << done << " pending operations and programs ran\n";
  		return 0;
  	}
-@@ -301,14 +306,14 @@ int main(int argc, char **argv)
+@@ -301,14 +309,14 @@ int main(int argc, char **argv)
  			}
  			if (run_modules || run_process) {
  #ifdef RAVEN_NATIVE_CPU
@@ -283,7 +290,7 @@ index 7fab6e2..37c76e7 100644
  						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
  							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
  									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
-@@ -336,7 +341,7 @@ int main(int argc, char **argv)
+@@ -336,7 +344,7 @@ int main(int argc, char **argv)
  								const auto file = from / server;
  								if (std::filesystem::exists(file, error))
  									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
@@ -292,7 +299,7 @@ index 7fab6e2..37c76e7 100644
  							}
  						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
  						std::string recorded;
-@@ -357,7 +362,7 @@ int main(int argc, char **argv)
+@@ -357,7 +365,7 @@ int main(int argc, char **argv)
  										// Setup is quiet: only a failure says anything, on standard error.
  										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
  											::dup2(quiet, 1);
@@ -301,7 +308,7 @@ index 7fab6e2..37c76e7 100644
  										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
  											server, static_cast<char *>(nullptr));
  										::_exit(127);
-@@ -428,7 +433,7 @@ int main(int argc, char **argv)
+@@ -428,7 +436,7 @@ int main(int argc, char **argv)
  					// known once the program's launch is (below), before its libraries are loaded.
  					std::vector<std::filesystem::path> later_folders;
  					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
@@ -310,7 +317,7 @@ index 7fab6e2..37c76e7 100644
  					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
  #ifdef RAVEN_OPENGL
  						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
-@@ -451,7 +456,7 @@ int main(int argc, char **argv)
+@@ -451,7 +459,7 @@ int main(int argc, char **argv)
  						// A 64-bit program built against msvcrt.dll gets the C runtime component as that library too: a runtime of its own, as
  						// msvcrt is beside ucrtbase on Windows.
  						if (!selected && name=="msvcrt.dll" && entry->image.is_64) {
@@ -319,7 +326,7 @@ index 7fab6e2..37c76e7 100644
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
  						}
-@@ -461,13 +466,13 @@ int main(int argc, char **argv)
+@@ -461,13 +469,13 @@ int main(int argc, char **argv)
  								return read_module(component.c_str());
  						if (!selected && name=="ucrtbase.dll") {
  							// A 32-bit program gets the 32-bit build of the component.
@@ -335,7 +342,7 @@ index 7fab6e2..37c76e7 100644
  								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
-@@ -484,7 +489,7 @@ int main(int argc, char **argv)
+@@ -484,7 +492,7 @@ int main(int argc, char **argv)
  										places.emplace_back(std::string(part));
  									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
  								}
@@ -344,7 +351,7 @@ index 7fab6e2..37c76e7 100644
  							for (const auto &place : places)
  								if (std::filesystem::exists(place / name))
  									return read_module((place / name).c_str());
-@@ -516,7 +521,7 @@ int main(int argc, char **argv)
+@@ -516,7 +524,7 @@ int main(int argc, char **argv)
  					};
  					// The guest heap component ships beside the runtime when the build provisioned it.
  					if (entry->image.is_64 && !modules.all().contains("raven-rtl.dll")) {
@@ -353,7 +360,7 @@ index 7fab6e2..37c76e7 100644
  						if (std::filesystem::exists(component))
  							modules.add("raven-rtl.dll", read_file(component.c_str()));
  					}
-@@ -752,7 +757,7 @@ int main(int argc, char **argv)
+@@ -752,7 +760,7 @@ int main(int argc, char **argv)
  		if (run_entry) {
  #ifdef RAVEN_NATIVE_CPU
  			raven::LoadedImage loaded(image, image.image_base);
@@ -597,10 +604,53 @@ index e19f568..967eea2 100644
  	registry.add("GetMachineTypeAttributes", 2, [](ApiCall &call) {
  		if (!call[1]) {
 diff --git a/native/nt/providers.cpp b/native/nt/providers.cpp
-index 00fa140..0c3912e 100644
+index 00fa140..b5540c8 100644
 --- a/native/nt/providers.cpp
 +++ b/native/nt/providers.cpp
-@@ -1896,7 +1896,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+@@ -1729,6 +1729,17 @@ size_t fast_stub_trap_offset(std::string_view module, std::string_view name)
+ 	return 0;
+ }
+ 
++// MulDiv for a 32-bit program (stdcall, three words): rounds half away from zero, -1 for a zero divisor or a result beyond 32 bits.
++static const std::vector<uint8_t> &x86_muldiv_code()
++{
++	static const std::vector<uint8_t> code{
++		0x53, 0x8b, 0x44, 0x24, 0x08, 0xf7, 0x6c, 0x24, 0x0c, 0x8b, 0x4c, 0x24, 0x10, 0x85, 0xc9, 0x74, 0x3e, 0x89, 0xd3, 0x31, 0xcb, 0x85, 0xd2, 0x79,
++		0x07, 0xf7, 0xd8, 0x83, 0xd2, 0x00, 0xf7, 0xda, 0x85, 0xc9, 0x79, 0x02, 0xf7, 0xd9, 0x56, 0x89, 0xce, 0xd1, 0xee, 0x01, 0xf0, 0x83, 0xd2, 0x00,
++		0x39, 0xca, 0x73, 0x1a, 0xf7, 0xf1, 0x85, 0xdb, 0x78, 0x06, 0x85, 0xc0, 0x78, 0x10, 0xeb, 0x09, 0x3d, 0x00, 0x00, 0x00, 0x80, 0x77, 0x07, 0xf7,
++		0xd8, 0x5e, 0x5b, 0xc2, 0x0c, 0x00, 0x5e, 0xb8, 0xff, 0xff, 0xff, 0xff, 0x5b, 0xc2, 0x0c, 0x00};
++	return code;
++}
++
+ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+ 	std::span<const std::string_view> exports, bool x86, std::span<const std::string_view> data_exports,
+ 	std::span<const std::pair<std::string_view, uint16_t>> ordinal_exports, bool fast_paths)
+@@ -1828,7 +1839,14 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+ 		for (const auto symbol : exports)
+ 			queued_count += queued_arguments(name, symbol) != 0;
+ 	const size_t queued_start = blocks_start + block_size;
+-	const size_t end = queued_start + queued_count * queued_prelude_size;
++	// A 32-bit program multiplies and divides through MulDiv in its pixel loops; a trap for each call costs a round trip to the
++	// runtime, so the 32-bit provider answers it in the guest (see x86_muldiv_code).
++	const auto x86_inline = [&](std::string_view symbol) { return x86 && symbol == "MulDiv" && (name == "kernel32.dll" || name == "kernelbase.dll"); };
++	const size_t inline_start = queued_start + queued_count * queued_prelude_size;
++	size_t inline_count = 0;
++	for (const auto symbol : exports)
++		inline_count += x86_inline(symbol);
++	const size_t end = inline_start + inline_count * 96;
+ 	std::vector<uint8_t> bytes((end + 511) & ~size_t(511));
+ 	const auto rva = [](size_t offset) { return 0x1000 + offset - 0x200; };
+ 	const auto put = [&](size_t offset, uint64_t value, size_t width = 4) {
+@@ -1881,7 +1899,7 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+ 	text(module_name, name);
+ 	size_t cursor = module_name + name.size() + 1;
+ 	size_t fast_next = 0, served_next = 0, clock_next = 0, commit_next = 0, strings_next = strings_start, blocks_next = blocks_start;
+-	size_t queued_next = queued_start;
++	size_t queued_next = queued_start, inline_next = 0;
+ 	for (size_t index = 0; index < exports.size(); ++index) {
+ 		size_t code = 0x200 + index * 16;
+ 		const uint32_t service = x86 ? 0 : nt_service_number(name, exports[index]);
+@@ -1896,7 +1914,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
  		if (service) {
  			const std::array<uint8_t, 11> entry{0x4c, 0x8b, 0xd1, 0xb8, 0, 0, 0, 0, 0x0f, 0x05, 0xc3};
  			std::copy(entry.begin(), entry.end(), bytes.begin() + ptrdiff_t(code));
@@ -613,6 +663,18 @@ index 00fa140..0c3912e 100644
  		}
  		if (!x86 && served_api(name, exports[index])) {
  			code = served_start + 64 + served_next++ * served_stub_size;
+@@ -1952,6 +1975,11 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+ 			const auto prelude = queued_prelude(int32_t(served) - int32_t(code), queued_arguments(name, exports[index]), exports[index]);
+ 			std::copy(prelude.begin(), prelude.end(), bytes.begin() + ptrdiff_t(code));
+ 		}
++		if (x86_inline(exports[index])) {
++			code = inline_start + inline_next++ * 96;
++			const auto &body = x86_muldiv_code();
++			std::copy(body.begin(), body.end(), bytes.begin() + ptrdiff_t(code));
++		}
+ 		const auto data = std::find(data_exports.begin(), data_exports.end(), exports[index]);
+ 		const size_t entry = numbered ? slot_of[index] - 1 : index;
+ 		put(functions + entry * 4, data == data_exports.end() ? rva(code) : rva(data_start + size_t(data - data_exports.begin()) * 16));
 diff --git a/native/nt/service_api.cpp b/native/nt/service_api.cpp
 index 0bec6ad..b3b063c 100644
 --- a/native/nt/service_api.cpp
@@ -848,6 +910,19 @@ index 6aa9547..23c3b71 100644
  			for (const auto &place : places)
  				if (std::filesystem::exists(place)) {
  					identity = name;
+diff --git a/native/nt/x86_process.cpp b/native/nt/x86_process.cpp
+index fea3be2..fa2960b 100644
+--- a/native/nt/x86_process.cpp
++++ b/native/nt/x86_process.cpp
+@@ -754,6 +754,8 @@ NativeResult run_native_process_x86(ModuleSet &modules, PEModule &entry,
+ 		images.push_back(&module->loaded);
+ 	const auto deadline = std::chrono::steady_clock::now() + timeout;
+ 	NativeProcess process(images, bootstrap, timeout, NativeMode::x86, entry.image.stack_reserve);
++	// MulDiv runs in the guest (the provider holds its code at the export), so no breakpoint stands at its address.
++	std::erase_if(traps, [](const auto &trap) { return trap.second.first == "MulDiv"; });
+ 	for (const auto &[address, api] : traps)
+ 		process.add_api_trap(address, api.second);
+ 	NativeEnvironment environment(process, entry.loaded.base(), uint32_t(::getpid()), 1);
 diff --git a/native/pe/loaded_image.cpp b/native/pe/loaded_image.cpp
 index 28f086c..89b6f58 100644
 --- a/native/pe/loaded_image.cpp
@@ -2454,3 +2529,125 @@ index 0000000..54d58db
 +data[offset:offset + 3] = b'\x31\xc0\xc3'
 +open(dst, 'wb').write(data)
 +print('patched uncaught_exceptions at', hex(offset))
+diff --git a/native/upstream/raven-shell/link.c b/native/upstream/raven-shell/link.c
+index e7bdd84..62098b7 100644
+--- a/native/upstream/raven-shell/link.c
++++ b/native/upstream/raven-shell/link.c
+@@ -13,6 +13,7 @@
+ #define _WIN32_WINNT 0x0601
+ #include <windows.h>
+ #include <shobjidl.h>
++#include <propsys.h>
+ #include <stddef.h>
+ #include <string.h>
+ 
+@@ -30,6 +31,7 @@
+ typedef struct {
+ 	const IShellLinkWVtbl *link_vtbl;
+ 	const IPersistFileVtbl *file_vtbl;
++	const IPropertyStoreVtbl *store_vtbl;
+ 	LONG refs;
+ 	WCHAR path[MAX_PATH], relative[MAX_PATH], directory[MAX_PATH], icon[MAX_PATH], current[MAX_PATH];
+ 	WCHAR arguments[TEXT_MAX], description[TEXT_MAX];
+@@ -76,6 +78,7 @@ static HRESULT get_text(const WCHAR *from, WCHAR *to, int capacity)
+ }
+ 
+ #define LINK_OF_LINK(self) ((LinkObject *)(self))
++#define LINK_OF_STORE(self) ((LinkObject *)((char *)(self) - offsetof(LinkObject, store_vtbl)))
+ #define LINK_OF_FILE(self) ((LinkObject *)((char *)(self) - offsetof(LinkObject, file_vtbl)))
+ 
+ /* IUnknown -------------------------------------------------------------------------------------------------- */
+@@ -89,6 +92,8 @@ static HRESULT link_query(LinkObject *link, REFIID iid, void **out)
+ 		*out = &link->link_vtbl;
+ 	} else if (same_guid(iid, &IID_IPersistFile) || same_guid(iid, &IID_IPersist)) {
+ 		*out = &link->file_vtbl;
++	} else if (same_guid(iid, &IID_IPropertyStore)) {
++		*out = &link->store_vtbl;
+ 	} else {
+ 		return E_NOINTERFACE;
+ 	}
+@@ -586,6 +591,27 @@ static HRESULT WINAPI pf_current_file(IPersistFile *self, LPOLESTR *file)
+ 	return S_OK;
+ }
+ 
++/* IPropertyStore ---------------------------------------------------------------------------------------------- */
++
++/* Installers set the application's user model id on a link through this; the link file format here has no place for properties,
++ * so the store takes the values and answers every key as empty. */
++static HRESULT STDMETHODCALLTYPE store_query(IPropertyStore *self, REFIID iid, void **out) { return link_query(LINK_OF_STORE(self), iid, out); }
++static ULONG STDMETHODCALLTYPE store_add_ref(IPropertyStore *self) { return link_add_ref(LINK_OF_STORE(self)); }
++static ULONG STDMETHODCALLTYPE store_release(IPropertyStore *self) { return link_release(LINK_OF_STORE(self)); }
++static HRESULT STDMETHODCALLTYPE store_count(IPropertyStore *self, DWORD *count) { if (!count) return E_POINTER; *count = 0; return S_OK; }
++static HRESULT STDMETHODCALLTYPE store_at(IPropertyStore *self, DWORD index, PROPERTYKEY *key) { return E_INVALIDARG; }
++static HRESULT STDMETHODCALLTYPE store_get(IPropertyStore *self, REFPROPERTYKEY key, PROPVARIANT *value)
++{
++	if (!value)
++		return E_POINTER;
++	memset(value, 0, sizeof(*value));
++	return S_OK;
++}
++static HRESULT STDMETHODCALLTYPE store_set(IPropertyStore *self, REFPROPERTYKEY key, REFPROPVARIANT value) { return S_OK; }
++static HRESULT STDMETHODCALLTYPE store_commit(IPropertyStore *self) { return S_OK; }
++
++static const IPropertyStoreVtbl store_vtbl = {store_query, store_add_ref, store_release, store_count, store_at, store_get, store_set, store_commit};
++
+ static const IPersistFileVtbl file_vtbl = {
+ 	pf_query, pf_add_ref, pf_release, pf_class_id, pf_is_dirty, pf_load, pf_save, pf_save_completed, pf_current_file,
+ };
+@@ -598,6 +624,7 @@ HRESULT raven_make_shell_link(REFIID iid, void **out)
+ 		return E_OUTOFMEMORY;
+ 	link->link_vtbl = &link_vtbl;
+ 	link->file_vtbl = &file_vtbl;
++	link->store_vtbl = &store_vtbl;
+ 	link->refs = 1;
+ 	link->show = SW_SHOWNORMAL;
+ 	result = link_query(link, iid, out);
+diff --git a/native/upstream/raven-shell/shell.c b/native/upstream/raven-shell/shell.c
+index 9d54430..ca7349f 100644
+--- a/native/upstream/raven-shell/shell.c
++++ b/native/upstream/raven-shell/shell.c
+@@ -1656,3 +1656,31 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
+ {
+ 	return TRUE;
+ }
++
++/* SHGetImageList: the system image lists as comctl32 image lists of the sizes the shell uses (large, small, extra large, small again,
++ * jumbo), empty until a program adds to them; the interface comes from the image list itself. Programs that ask for it (Inno Setup's
++ * folder tree) refuse to go on without one. */
++HRESULT WINAPI SHGetImageList(int which, REFIID iid, void **out)
++{
++	static const int sizes[5] = {32, 16, 48, 16, 256};
++	static HIMAGELIST lists[5];
++	typedef HIMAGELIST (WINAPI *create_type)(int, int, UINT, int, int);
++	typedef HRESULT (WINAPI *query_type)(HIMAGELIST, REFIID, void **);
++	if (!out)
++		return E_INVALIDARG;
++	*out = NULL;
++	if (which < 0 || which > 4)
++		return E_INVALIDARG;
++	HMODULE controls = LoadLibraryW(L"comctl32.dll");
++	if (!controls)
++		return E_FAIL;
++	create_type create = (create_type)GetProcAddress(controls, "ImageList_Create");
++	query_type query = (query_type)GetProcAddress(controls, "HIMAGELIST_QueryInterface");
++	if (!create || !query)
++		return E_NOINTERFACE;
++	if (!lists[which])
++		lists[which] = create(sizes[which], sizes[which], 0x21 /* ILC_COLOR32 | ILC_MASK */, 8, 8);
++	if (!lists[which])
++		return E_OUTOFMEMORY;
++	return query(lists[which], iid, out);
++}
+diff --git a/scripts/provision-controls.py b/scripts/provision-controls.py
+index bf002a9..6be21d7 100644
+--- a/scripts/provision-controls.py
++++ b/scripts/provision-controls.py
+@@ -155,7 +155,7 @@ def main():
+                    "OpenRegStream", "SHOpenRegStreamW", "SHOpenRegStreamA", "SHOpenRegStream2W", "SHOpenRegStream2A", "InitNetworkAddressControl",
+                    "RoGetActivationFactory", "RoActivateInstance", "CoCreateFreeThreadedMarshaler",
+                    "SHGetDesktopFolder", "SHCreateItemFromIDList", "CreateFileMoniker", "SHLoadIndirectString", "SHGetPropertyStoreFromParsingName", "ILGetSize", "ILGetNext", "ILFindLastID", "ILClone", "ILCloneFirst", "ILCombine", "ILFree", "ILCreateFromPathW", "ILIsEqual",
+-                   "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard")
++                   "CreateErrorInfo", "SetErrorInfo", "GetErrorInfo", "CoWaitForMultipleHandles", "OleGetClipboard", "SHGetImageList")
+     (output / "raven-shell.def").write_text("NAME raven-shell.dll\nEXPORTS\n" + "".join(definition_line(name, shell_defined.get(name)) for name in shell_names))
+     run([triple + "-gcc", "-shared", "-nostdlib", f"-Wl,--entry,{entry_point},--image-base,{bases['shell']:#x},--no-insert-timestamp", *link_extra,
+          "-o", output / "raven-shell.dll", *shell_objects, output / "raven-shell.def", "-luser32", "-lgdi32", "-ladvapi32", "-lkernel32", "-lole32", "-loleaut32", "-luuid", "-lruntimeobject", "-lgcc"])

@@ -125,9 +125,9 @@ if [ ! -f "$text/fonts/RavenSans-Regular.ttf" ]; then
 fi
 # die Gast-Komponenten (RTL, ucrtbase, Controls) baut Raven mit MinGW aus den eigenen Quellen
 [ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
-[ -f "$WORK/raven/components/controls/ucrtbase.dll" ] || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
+[ -f "$WORK/raven/components/controls/ucrtbase.dll" ] && grep -aq SHGetImageList "$WORK/raven/components/controls/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
 # 32-Bit-Komponenten (MinGW i686): Controls und ucrtbase32 (die CMake-Regel dafür hängt an Bedingungen, die hier nicht gelten)
-[ -f "$WORK/raven/components/controls32/comctl32.dll" ] || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$WORK/raven/components/controls32" >/dev/null
+[ -f "$WORK/raven/components/controls32/comctl32.dll" ] && grep -aq SHGetImageList "$WORK/raven/components/controls32/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$WORK/raven/components/controls32" >/dev/null
 # Installer-Komponenten (msiexec, regsvr32, msxml3, oleaut32, windowscodecs ...): bauen aus den ReactOS-Quellen (ca. 150 MB Archiv),
 # brauchen widl (MinGW, pro Architektur) und bison >= 3.8 (brew)
 bisonbin="$(brew --prefix bison 2>/dev/null)/bin"
