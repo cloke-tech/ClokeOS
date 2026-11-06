@@ -8,7 +8,7 @@
 # xkbcommon, pixman); mit Skia (nur CPU) und Liberation-Schriften auch Text. Getestet: ein Konsolenprogramm, ein GDI-Fenster mit Text. Nur x86_64: Raven führt x86-64-Code nativ aus.
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
-need "$DEBUGFS" clang cmake ninja git python3 nm curl x86_64-w64-mingw32-gcc pkg-config
+need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gcc pkg-config
 [ "$CLOKE_ARCH" = x86_64 ] || { echo "Raven gibt es nur für x86_64" >&2; exit 0; }
 
 stage="$1"
@@ -50,6 +50,16 @@ if [ ! -f "$sys/lib/libpixman-1.a" ]; then
     [ -f "$f" ] || continue
     sed -i '' -e "s#^prefix=.*#prefix=$sys#" -e '/^Requires.private/d' -e '/^Libs.private/d' -e "s#/nix/store/[a-z0-9]*-[A-Za-z0-9._-]*#$sys#g" "$f"
   done
+  # OpenSSL (Zertifikate in crypt32): Bibliotheken aus dem Image, Header von Homebrews openssl@3 (gleiche Hauptversion)
+  mkdir -p "$sys/ssl/include" "$WORK/raven/dl"
+  cp -R "$(brew --prefix openssl@3)/include/openssl" "$sys/ssl/include/"
+  for f in libcrypto.a libssl.a; do "$DEBUGFS" -R "dump /lib/$f $sys/lib/$f" "$fs0" >/dev/null 2>&1; done
+  # libpng 1.6.59 (Raven verlangt mindestens diese Version, das Image hat 1.6.58)
+  png=1.6.59
+  [ -d "$WORK/raven/dl/libpng-$png" ] || { curl -sL "https://download.sourceforge.net/libpng/libpng-$png.tar.xz" | tar xJ -C "$WORK/raven/dl"; }
+  cmake -G Ninja -S "$WORK/raven/dl/libpng-$png" -B "$WORK/raven/dl/libpng-build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+    -DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$sys/png" >/dev/null
+  ninja -C "$WORK/raven/dl/libpng-build" install >/dev/null
   pixman=0.46.4
   mkdir -p "$WORK/raven/dl"
   [ -d "$WORK/raven/dl/pixman-$pixman" ] || { curl -sL "https://www.cairographics.org/releases/pixman-$pixman.tar.gz" | tar xz -C "$WORK/raven/dl"; }
@@ -117,10 +127,11 @@ fi
 [ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
 [ -f "$WORK/raven/components/controls/ucrtbase.dll" ] || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
 cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON -DCMAKE_DISABLE_FIND_PACKAGE_OpenSSL=ON -DCMAKE_DISABLE_FIND_PACKAGE_PNG=ON \
+  -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON \
   -DFREETYPE_INCLUDE_DIR_freetype2="$sys/include/freetype2" -DFREETYPE_INCLUDE_DIR_ft2build="$sys/include/freetype2" \
   -DFREETYPE_LIBRARY_RELEASE="$sys/lib/libfreetype.dylib" -DRAVEN_SKIA_SOURCE="$text/skia" -DRAVEN_SKIA_LIBRARY="$text/cpu-fonts/libskia.a" \
-  -DRAVEN_FONT_DIRECTORY="$text/fonts" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
+  -DRAVEN_FONT_DIRECTORY="$text/fonts" -DOPENSSL_INCLUDE_DIR="$sys/ssl/include" -DOPENSSL_CRYPTO_LIBRARY="$sys/lib/libcrypto.a" -DOPENSSL_SSL_LIBRARY="$sys/lib/libssl.a" \
+  -DPNG_LIBRARY_RELEASE="$sys/png/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$sys/png/include" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
   -DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0 -DRAVEN_RTL_COMPONENT_PATH="$WORK/raven/components/rtl/raven-rtl.dll" \
   -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" >/dev/null
 ninja -C "$build" raven raven-bootstrap >/dev/null

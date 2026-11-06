@@ -112,6 +112,8 @@ a Windows title bar with its caption and `TextOutA` text on the ClokeOS desktop.
   components (ReactOS sources, `scripts/provision-installer.py`), not fetched.
 * PureDarwin's libSystem has no `swapcontext`: `native/platform/context_darwin.{h,cpp}` is a small x86-64 replacement (guest threads are
   coroutines).
-* Notepad++ (the fixture's portable build) now starts, reads its configuration and then stops with `__fastfail(7)` after a C++ exception
-  (`0xe06d7363`) whose handler (`handler=140420254`, a language-specific handler in the program) reports "not handled" in Raven's SEH
-  dispatch; this is the next thing to look at (`RAVEN_TRACE_SEH=1`).
+* **Notepad++** (the fixture's portable build) runs with its full window: menus, toolbar icons, the editor, and typed text arrives
+  (`vmctl type` through X). Two fixes got it there: (1) the `__fastfail(7)` was a `std::bad_alloc` for a 4 GiB request, which Raven rejected
+  because the guest stack lay inside the requested range; XNU's "anywhere" mappings start at the bottom of the address space, so they now start at
+  `0x100000000000` like Linux; (2) OpenSSL (crypt32: Notepad++ checks plugin signatures) and libpng 1.6.59 (icons) are linked: libcrypto/libssl from the
+  image, headers from Homebrew's openssl@3, libpng built from source by `raven/build.sh`.

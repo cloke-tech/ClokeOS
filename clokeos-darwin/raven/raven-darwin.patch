@@ -1284,10 +1284,10 @@ index 0000000..dc34388
 +}
 diff --git a/native/platform/mach_guest.cpp b/native/platform/mach_guest.cpp
 new file mode 100644
-index 0000000..496d178
+index 0000000..74e9c23
 --- /dev/null
 +++ b/native/platform/mach_guest.cpp
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,676 @@
 +// ClokeOS: guest-process control on XNU, see mach_guest.h
 +#ifdef __APPLE__
 +#include "platform/mach_guest.h"
@@ -1315,8 +1315,12 @@ index 0000000..496d178
 +namespace {
 +
 +// PureDarwin's kernel prints a line for every mach_vm_allocate on another task; mach_vm_map without an object does the same silently
++constexpr mach_vm_address_t anywhere_start = 0x100000000000ULL;
++
 +kern_return_t allocate(mach_port_t task, mach_vm_address_t *address, mach_vm_size_t size, int flags)
 +{
++	if ((flags & VM_FLAGS_ANYWHERE) && *address == 0)
++		*address = anywhere_start;
 +	return mach_vm_map(task, address, size, 0, flags, MACH_PORT_NULL, 0, FALSE, VM_PROT_READ | VM_PROT_WRITE, VM_PROT_ALL, VM_INHERIT_NONE);
 +}
 +
@@ -1901,6 +1905,8 @@ index 0000000..496d178
 +		vm_address_t remapped = address;
 +		vm_prot_t current = VM_PROT_NONE, maximum = VM_PROT_NONE;
 +		const int remap_flags = (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE) | ((flags & MAP_FIXED) ? VM_FLAGS_OVERWRITE : 0);
++		if ((remap_flags & VM_FLAGS_ANYWHERE) && remapped == 0)
++			remapped = anywhere_start;
 +		result = vm_remap(task, &remapped, size, 0, remap_flags, mach_task_self(), reinterpret_cast<vm_address_t>(view), FALSE, &current, &maximum,
 +			VM_INHERIT_NONE);
 +		munmap(view, size);
