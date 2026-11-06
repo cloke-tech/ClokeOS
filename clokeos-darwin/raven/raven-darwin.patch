@@ -242,10 +242,22 @@ index 7713b09..ea6369d 100644
  	}
  	return *text_engine;
 diff --git a/native/main.cpp b/native/main.cpp
-index 7fab6e2..da1b70d 100644
+index 7fab6e2..37c76e7 100644
 --- a/native/main.cpp
 +++ b/native/main.cpp
-@@ -152,7 +152,7 @@ int main(int argc, char **argv)
+@@ -136,6 +136,11 @@ static void show_fault(int signal)
+ 
+ int main(int argc, char **argv)
+ {
++	// Diagnose: jeder Prozess schreibt seine Meldungen in <RAVEN_TRACE_FILE>.<pid> (Kindprozesse haben sonst kein stderr)
++	if (const char *trace = std::getenv("RAVEN_TRACE_FILE"); trace && *trace) {
++		const std::string path = std::string(trace) + "." + std::to_string(::getpid());
++		[[maybe_unused]] auto *reopened = std::freopen(path.c_str(), "a", stderr);
++	}
+ 	if (std::getenv("RAVEN_BACKTRACE")) {
+ 		std::set_terminate(show_backtrace);
+ 		std::signal(SIGSEGV, show_fault);
+@@ -152,7 +157,7 @@ int main(int argc, char **argv)
  	const std::string mode = argc > 1 ? argv[1] : "";
  	// A restart of Windows: the moves and deletions installers left for it, then the programs that run once at the next logon.
  	if (mode == "--reboot") {
@@ -254,7 +266,7 @@ index 7fab6e2..da1b70d 100644
  		std::cout << "restarted: " << done << " pending operations and programs ran\n";
  		return 0;
  	}
-@@ -301,14 +301,14 @@ int main(int argc, char **argv)
+@@ -301,14 +306,14 @@ int main(int argc, char **argv)
  			}
  			if (run_modules || run_process) {
  #ifdef RAVEN_NATIVE_CPU
@@ -271,7 +283,7 @@ index 7fab6e2..da1b70d 100644
  						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
  							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
  									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
-@@ -336,7 +336,7 @@ int main(int argc, char **argv)
+@@ -336,7 +341,7 @@ int main(int argc, char **argv)
  								const auto file = from / server;
  								if (std::filesystem::exists(file, error))
  									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
@@ -280,7 +292,7 @@ index 7fab6e2..da1b70d 100644
  							}
  						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
  						std::string recorded;
-@@ -357,7 +357,7 @@ int main(int argc, char **argv)
+@@ -357,7 +362,7 @@ int main(int argc, char **argv)
  										// Setup is quiet: only a failure says anything, on standard error.
  										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
  											::dup2(quiet, 1);
@@ -289,7 +301,7 @@ index 7fab6e2..da1b70d 100644
  										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
  											server, static_cast<char *>(nullptr));
  										::_exit(127);
-@@ -428,7 +428,7 @@ int main(int argc, char **argv)
+@@ -428,7 +433,7 @@ int main(int argc, char **argv)
  					// known once the program's launch is (below), before its libraries are loaded.
  					std::vector<std::filesystem::path> later_folders;
  					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
@@ -298,7 +310,7 @@ index 7fab6e2..da1b70d 100644
  					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
  #ifdef RAVEN_OPENGL
  						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
-@@ -451,7 +451,7 @@ int main(int argc, char **argv)
+@@ -451,7 +456,7 @@ int main(int argc, char **argv)
  						// A 64-bit program built against msvcrt.dll gets the C runtime component as that library too: a runtime of its own, as
  						// msvcrt is beside ucrtbase on Windows.
  						if (!selected && name=="msvcrt.dll" && entry->image.is_64) {
@@ -307,7 +319,7 @@ index 7fab6e2..da1b70d 100644
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
  						}
-@@ -461,13 +461,13 @@ int main(int argc, char **argv)
+@@ -461,13 +466,13 @@ int main(int argc, char **argv)
  								return read_module(component.c_str());
  						if (!selected && name=="ucrtbase.dll") {
  							// A 32-bit program gets the 32-bit build of the component.
@@ -323,7 +335,7 @@ index 7fab6e2..da1b70d 100644
  								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
-@@ -484,7 +484,7 @@ int main(int argc, char **argv)
+@@ -484,7 +489,7 @@ int main(int argc, char **argv)
  										places.emplace_back(std::string(part));
  									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
  								}
@@ -332,7 +344,7 @@ index 7fab6e2..da1b70d 100644
  							for (const auto &place : places)
  								if (std::filesystem::exists(place / name))
  									return read_module((place / name).c_str());
-@@ -516,7 +516,7 @@ int main(int argc, char **argv)
+@@ -516,7 +521,7 @@ int main(int argc, char **argv)
  					};
  					// The guest heap component ships beside the runtime when the build provisioned it.
  					if (entry->image.is_64 && !modules.all().contains("raven-rtl.dll")) {
@@ -341,7 +353,7 @@ index 7fab6e2..da1b70d 100644
  						if (std::filesystem::exists(component))
  							modules.add("raven-rtl.dll", read_file(component.c_str()));
  					}
-@@ -752,7 +752,7 @@ int main(int argc, char **argv)
+@@ -752,7 +757,7 @@ int main(int argc, char **argv)
  		if (run_entry) {
  #ifdef RAVEN_NATIVE_CPU
  			raven::LoadedImage loaded(image, image.image_base);

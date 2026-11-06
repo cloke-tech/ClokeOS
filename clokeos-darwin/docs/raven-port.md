@@ -174,3 +174,8 @@ the document has 25 lines). Text only; other formats (images, files) and Drag an
   Silent installs (`/VERYSILENT`) did not install either. "Install for all users" exits because elevation is not implemented.
 * Test-rig trap: the PureDarwin image has no `pgrep`; use `ps ax | awk '/[r]aven/{print $1}'` to kill stray runs (stray runs make Inno say
   "Setup is currently running").
+* Diagnosis aid added: `RAVEN_TRACE_FILE=/tmp/tr` makes every Raven process (also the children an installer starts, which have no stderr)
+  write its trace to `/tmp/tr.<pid>`; use it with `RAVEN_TRACE_API=1` and `RAVEN_TRACE_STOPS=1`. First result for Inno: the 64-bit
+  setup process produces tens of thousands of trace lines in minutes (so it is working through many calls, not blocked), but the
+  trace was not read to the end because the single-CPU VM stopped answering shell commands while it ran. Next step: read
+  `/tmp/tr.<pid>` of the last process and look for the repeating call.
