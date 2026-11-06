@@ -150,3 +150,10 @@ desktop; a real NSIS installer (`makensis` 3.13: `File`, `WriteUninstaller`, `Wr
 (the copied line was pasted again: `length : 26, lines : 4`, text twice). The text went through Notepad++'s own copy and paste inside Raven; copying
 between a Windows program and a Unix program through the X selection was not tested. (A note for the test rig: after the VM starts, wait for
 the login screen before pressing Return, otherwise the typed text lands in the password field.)
+
+## Status (2026-11-06, night 4): clipboard between Windows and Unix programs
+
+Raven's X11 presentation owns and requests the `CLIPBOARD` selection like any X client; tested both ways in the VM with `xfce4-terminal`:
+Notepad++ Ctrl+A, Ctrl+C, then Ctrl+Shift+V in the terminal pasted `Windows-Text fuer Unix`; the other way, `Unix-Text fuer Windows` typed in the
+terminal, Ctrl+Shift+A and Ctrl+Shift+C there, then Ctrl+A and Ctrl+V in Notepad++ replaced the editor text (the whole terminal screen came along, so
+the document has 25 lines). Text only; other formats (images, files) and Drag and drop are untested.
