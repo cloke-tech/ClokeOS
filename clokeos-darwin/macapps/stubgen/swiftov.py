@@ -183,7 +183,7 @@ def main():
         have = exports_deep(lib, a.arch, a.root)
         ovr = overlays.get(name)
         syms = [s for s in info["symbols"] if s not in have and not (ovr and s in ovr[1])]
-        if syms:
+        if syms or ovr:   # mit Overlay auch ohne Trap-Marken: das Supplement re-exportiert das Overlay
             work.append((idx, name, lib, syms))
     hdr.prefetch(sorted({s[1:] for _, _, _, syms in work for s in syms
                          if not s.startswith("_$") and s[1:2].isalpha() and s[1:].isidentifier() and not s.startswith("_OBJC")}))

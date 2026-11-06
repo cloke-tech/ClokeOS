@@ -10,6 +10,7 @@ static int32_t always_yes(uint32_t count, const void *versions) { (void)count; (
 /* PureDarwins os_log_create liefert eine einfache Struktur ohne isa; Programme halten sie in ObjC-Eigenschaften (NSObject<OS_os_log>) und
  * ARC ruft objc_release darauf (Logic Pro: Absturz in -[MAUCContentPackageImporter .cxx_destruct]). Hier bekommt sie die Klasse OS_os_log
  * (liegt in fo.dylib, swift/overlay/compat.m; NSObject-Unterklasse). */
+extern id objc_retain(id);
 extern void *os_log_create(const char *subsystem, const char *category);
 static void *fixed_os_log_create(const char *subsystem, const char *category) {
   void *o = os_log_create(subsystem, category);
@@ -17,6 +18,9 @@ static void *fixed_os_log_create(const char *subsystem, const char *category) {
     Class k = objc_getClass("OS_os_log");
     if (k) *(Class *)o = k;
   }
+  /* PureDarwin verwaltet diese Objekte selbst (zwischengespeichert, nicht einzeln mit malloc angelegt); ARC darf sie nie auf 0 bringen und freigeben. Ein zusätzliches
+   * Retain pro Aufruf macht sie unsterblich. */
+  if (o && *(void **)o) objc_retain((id)o);
   return o;
 }
 __attribute__((used)) static const struct { const void *replacement, *original; } interposers[]

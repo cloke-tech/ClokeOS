@@ -8,6 +8,7 @@
 #define _DARWIN_C_SOURCE 1
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <mach/mach.h>
 #include <pthread.h>
 #include <pthread.h>
@@ -102,8 +103,9 @@ static void *exc_thread(void *arg) {
       frame("pc", st.__pc); frame("lr", st.__lr);
       out("  sp "); hex(st.__sp); out("  fp "); hex(st.__fp); out("\n");
       for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
-      out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n");
-      out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n");
+      { uint64_t v, isa;
+        if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
+        if (rd64(st.__x[0], &isa) && isa && rd64(isa, &v)) { out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n"); } }
       for (int r = 19; r <= 22; r++) {   /* Register mit Objekten der aufrufenden Funktion: Klasse, wenn sie lesbar sind */
         uint64_t isa;
         if (st.__x[r] > 0x100000000ULL && !(st.__x[r] & 7) && rd64(st.__x[r], &isa) && isa) { out("  x"); hex((uint64_t)r); out(" ist Objekt der Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[r])); out("\n");
@@ -115,6 +117,20 @@ static void *exc_thread(void *arg) {
               out(" "); out(ivar_getTypeEncoding(iv[k]) ? ivar_getTypeEncoding(iv[k]) : "?"); out(" = "); hex(val); out("\n");
             }
           } }
+      }
+      { /* CRASHPC_PEEK=<hexversatz>: Wert (Zeiger) an Bildbasis+Versatz des abgestürzten Bildes, mit Symbol */
+        const char *pk = getenv("CRASHPC_PEEK"); Dl_info di;
+        if (pk && dladdr((void *)(uintptr_t)st.__pc, &di)) {
+          uint64_t off = strtoull(pk, 0, 16), v = 0;
+          if (rd64((uint64_t)(uintptr_t)di.dli_fbase + off, &v)) { out("  peek "); hex(off); out(" = "); hex(v); out("\n"); frame("  peek-ziel", v); }
+        }
+      }
+      { /* Stapelsuche: Wörter ab sp, die in einem Bild liegen (Rücksprungadressen auch ohne Rahmenzeiger); nur Adressen in Code-Bildern */
+        int shown = 0;
+        for (uint64_t a = st.__sp; a < st.__sp + 0x600 && shown < 24; a += 8) {
+          uint64_t v; Dl_info di2;
+          if (rd64(a, &v) && v > 0x100000000ULL && v < 0x200000000ULL && dladdr((void *)(uintptr_t)v, &di2) && di2.dli_fname && di2.dli_sname) { out("  stack"); hex(a - st.__sp); out(" "); frame("", v); shown++; }
+        }
       }
       uint64_t fp = st.__fp;
       for (int i = 0; i < 400 && fp && !(fp & 7) && fp > 0x1000; i++) {

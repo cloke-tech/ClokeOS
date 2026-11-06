@@ -1,5 +1,6 @@
 // _ObjectiveCBridgeable-Konformanzen für die Typen aus FoundationEssentials (dort fehlt die ObjC-Schicht)
 import ObjectiveC
+import Darwin
 import _SwiftFoundationOverlayShims
 
 extension URL: _ObjectiveCBridgeable {
@@ -174,5 +175,82 @@ extension String {
     }
     public static func localizedStringWithFormat(_ format: String, _ arguments: CVarArg...) -> String {
         return String(format: format, locale: Locale.current, arguments: arguments)
+    }
+}
+
+// Bundle(__dsoHandle:): das Bundle, in dem der Code mit diesem Handle liegt (#dsohandle in Swift-Code, der Bundle.module / Bundle(for:) braucht)
+extension Bundle {
+    public convenience init?(__dsoHandle handle: UnsafeRawPointer) {
+        var info = Dl_info()
+        guard dladdr(handle, &info) != 0, let name = info.dli_fname else { return nil }
+        var url = URL(fileURLWithPath: String(cString: name))
+        while url.path != "/" && !url.path.isEmpty {
+            url.deleteLastPathComponent()
+            let ext = url.pathExtension
+            if ext == "framework" || ext == "app" || ext == "bundle" || ext == "xpc" || ext == "appex" { self.init(path: url.path); return }
+        }
+        return nil
+    }
+}
+
+// Locale.Language.region steckt in FoundationInternationalization (ICU, nicht gebaut); die Komponenten lassen sich über Reflection lesen
+extension Locale.Language {
+    public var region: Locale.Region? {
+        for child in Mirror(reflecting: self).children where child.label == "components" {
+            if let c = child.value as? Locale.Language.Components { return c.region }
+        }
+        return nil
+    }
+}
+
+// URLRequest (FoundationNetworking bei Apple im Foundation-Modul): so viel wie Logic Pro braucht, mit Brücke zu NSURLRequest
+public struct URLRequest: Equatable, Hashable, CustomStringConvertible, _ObjectiveCBridgeable {
+    public var url: URL?
+    public var cachePolicy: NSURLRequest.CachePolicy
+    public var timeoutInterval: TimeInterval
+    public var httpMethod: String? = "GET"
+    public var allHTTPHeaderFields: [String: String]?
+    public var httpBody: Data?
+    public var mainDocumentURL: URL?
+    public init(url: URL, cachePolicy: NSURLRequest.CachePolicy = .useProtocolCachePolicy, timeoutInterval: TimeInterval = 60.0) {
+        self.url = url; self.cachePolicy = cachePolicy; self.timeoutInterval = timeoutInterval
+    }
+    public var description: String { return url?.absoluteString ?? "(null)" }
+    public mutating func setValue(_ value: String?, forHTTPHeaderField field: String) {
+        var h = allHTTPHeaderFields ?? [:]; h[field] = value; allHTTPHeaderFields = h
+    }
+    public func value(forHTTPHeaderField field: String) -> String? { return allHTTPHeaderFields?[field] }
+
+    public func _bridgeToObjectiveC() -> NSURLRequest {
+        let r = NSMutableURLRequest(url: (url ?? URL(fileURLWithPath: ""))._bridgeToObjectiveC(),
+                                    cachePolicy: cachePolicy, timeoutInterval: timeoutInterval)
+        r.httpMethod = httpMethod ?? "GET"
+        if let h = allHTTPHeaderFields { r.allHTTPHeaderFields = h }
+        if let b = httpBody { r.httpBody = b._bridgeToObjectiveC() }
+        return r
+    }
+    public static func _forceBridgeFromObjectiveC(_ source: NSURLRequest, result: inout URLRequest?) {
+        result = URLRequest._unconditionallyBridgeFromObjectiveC(source)
+    }
+    public static func _conditionallyBridgeFromObjectiveC(_ source: NSURLRequest, result: inout URLRequest?) -> Bool {
+        result = URLRequest._unconditionallyBridgeFromObjectiveC(source); return true
+    }
+    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURLRequest?) -> URLRequest {
+        var r = URLRequest(url: source?.url.map { URL._unconditionallyBridgeFromObjectiveC($0) } ?? URL(fileURLWithPath: ""),
+                           cachePolicy: source?.cachePolicy ?? .useProtocolCachePolicy, timeoutInterval: source?.timeoutInterval ?? 60.0)
+        r.httpMethod = source?.httpMethod
+        r.allHTTPHeaderFields = source?.allHTTPHeaderFields
+        return r
+    }
+}
+
+extension URLQueryItem: _ObjectiveCBridgeable {
+    public func _bridgeToObjectiveC() -> NSURLQueryItem { return NSURLQueryItem(name: name, value: value) }
+    public static func _forceBridgeFromObjectiveC(_ source: NSURLQueryItem, result: inout URLQueryItem?) { result = URLQueryItem(name: source.name, value: source.value) }
+    public static func _conditionallyBridgeFromObjectiveC(_ source: NSURLQueryItem, result: inout URLQueryItem?) -> Bool {
+        result = URLQueryItem(name: source.name, value: source.value); return true
+    }
+    public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURLQueryItem?) -> URLQueryItem {
+        return URLQueryItem(name: source?.name ?? "", value: source?.value)
     }
 }

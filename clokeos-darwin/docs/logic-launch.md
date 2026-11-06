@@ -444,3 +444,20 @@ for the metadata involved) and whether it is one of my overlay classes (`OSSignp
 * New stop (arm64 VM): `EXC_BAD_INSTRUCTION` in `/usr/lib/sov/17.dylib` `$s7Combine9PublishedVMa` = `Combine.Published` metadata accessor, i.e. the Combine stub (trap labels). Logic's SwiftUI/Combine code
   (`@Published`, `ObservableObject`, subjects, `AnyCancellable`) needs a real Combine. Combine is resilient, Logic's classes embed `Published<T>` through metadata at run time, so a reimplementation with the same
   public API (OpenCombine, MIT) built as module `Combine` with `-module-abi-name Combine -enable-library-evolution` is a candidate; not started.
+
+### Round 26: Combine (OpenCombine), Network, more Foundation; the open problem is heap corruption
+
+* **Combine:** `swift/combine.sh` builds OpenCombine (MIT, 3.5 MB) as module `Combine` with library evolution into `combine.dylib` (165 of the 179 Combine symbols Logic imports have identical mangling); the C++ helper is replaced by
+  `swift/overlay/combine-helpers.c` (PureDarwin has no libc++ `recursive_mutex`). `fo.dylib` links against it (FoundationEssentials' JSONDecoder is a `TopLevelDecoder`). `swift/foundation-objc.sh` now also compiles Apple's Combine glue from the 5.3
+  overlay against it (Dispatch `SchedulerOptions`, NotificationCenter/Timer/KVO publishers, RunLoop/OperationQueue schedulers); `NotificationCenter` is ambiguous between FoundationEssentials and the SDK's class, so the Essentials import is per file and left out of that one file.
+* **Network:** `swift/overlay/Network.swift` (`NWPathMonitor`, `NWPath`: always `unsatisfied`). **Foundation:** `Locale.Language.region` (via reflection), `URLRequest`, `URLQueryItem` bridging, `Bundle(__dsoHandle:)`.
+* **Tooling traps found:** `swiftov.py` built no supplement for a stub library whose symbols are all provided by an overlay, so the stub kept re-exporting an old trap file; it now always builds one, and `swift/deploy-overlay.sh` deletes stale `usr/lib/sov` files in the image.
+  `macapps/crashpc.c` got `CRASHPC_PEEK`, a stack scan, safe reads (a dereference inside the exception thread had killed the report) and `LOGIC_ENV="MallocCheckHeapStart=… MallocScribble=1"` runs through `macapps/logicrun.sh`.
+* **`os_log_create`:** objects handed out by PureDarwin are now retained once more in the interposer (they are cached and were freed by ARC).
+
+State (arm64 VM): Logic gets through the factories, MAUniversalContent's async tasks and a lot of Foundation/Combine/Dispatch use, and then dies of **heap corruption**: `free_list_checksum_botch` in `malloc`, or, with `MallocScribble`, `swift_retain` of a scribbled
+(`0x55…`) pointer inside `URL.baseURL.getter` called from `URL._bridgeToObjectiveC` with a `self` pointing at freed memory (a Logic class instance whose `URL?` ivars are read after the object was released). This points to an over-release earlier
+(Swift object released through the ObjC path, or an ownership convention mismatch of one of my bridging functions: owned vs guaranteed arguments of `_unconditionallyBridge…`, `Optional<URL>` handling) rather than to a missing symbol.
+Next step: log retain/release of that class (interpose `swift_release` for objects whose class name matches), or compile the bridging functions with `@_effects`/explicit `__owned` to match Apple's conventions, and compare with the disassembly of Logic's callers.
+
+Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
