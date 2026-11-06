@@ -117,3 +117,11 @@ a Windows title bar with its caption and `TextOutA` text on the ClokeOS desktop.
   because the guest stack lay inside the requested range; XNU's "anywhere" mappings start at the bottom of the address space, so they now start at
   `0x100000000000` like Linux; (2) OpenSSL (crypt32: Notepad++ checks plugin signatures) and libpng 1.6.59 (icons) are linked: libcrypto/libssl from the
   image, headers from Homebrew's openssl@3, libpng built from source by `raven/build.sh`.
+
+## Status (2026-11-06, late): files and dialogs in Notepad++
+
+Through the menus (clicks and typing by `vmctl` through X): **File > Save As** opens Raven's own file dialog (Quick access, This PC with
+`C:` = `~/Library/Raven/drive_c` and `Z:` = the Unix root), typing `Z:\tmp\docs\saved.txt` and Save wrote `/tmp/docs/saved.txt` (25 bytes, the
+typed text); **File > Open** listed `Z:\tmp\docs` with sizes and dates and loaded `unix.txt` (detected as Unix LF). Not tested: keyboard
+shortcuts with modifiers (`vmctl xkey` has no Ctrl), clipboard, drag and drop, printing. The log shows `thread N waits for window ... to answer
+message 430` lines while a dialog is open; they are Raven's own trace of a cross-thread message and did not hurt.
