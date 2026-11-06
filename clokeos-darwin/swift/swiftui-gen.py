@@ -64,7 +64,7 @@ for path in files:
             q = ".".join(scope + [name])
             first = q not in index
             if first:
-                index[q] = dict(kind=kind, gens=generics(m.group(3)), frozen=frozen_here or pending_frozen, fields=[], cases=[])
+                index[q] = dict(kind=kind, gens=generics(m.group(3)), frozen=frozen_here or pending_frozen, fields=[], cases=[], reqs=[])
             stack.append((depth, name, first))   # zweite Deklaration (#if-Varianten der Schnittstelle): keine Felder mehr
         elif e and opens:
             stack.append((depth, qual(e.group(1)), None))
@@ -74,7 +74,9 @@ for path in files:
             # Felder und Fälle direkt im Rumpf eines Typs
             owner = ".".join(x[1] for x in stack if x[1])
             ent = index.get(owner)
-            if ent is not None and ent["frozen"]:
+            if ent is not None and ent["kind"] == "protocol" and s.strip() and not s.strip().startswith("}") and not s.strip().startswith("#"):
+                ent["reqs"].append(s.strip())   # Anforderungen in Deklarationsreihenfolge (bestimmt das Layout der Zeugentabelle)
+            elif ent is not None and ent["frozen"]:
                 f = FIELD.match(s)
                 c = CASE.match(s) if ent["kind"] == "enum" else None
                 if f and "{" not in s and not s.strip().startswith("static"): ent["fields"].append((f.group(2), f.group(3)))
@@ -98,7 +100,7 @@ while todo:
     for i in range(1, len(parts)):     # äußere Typen
         todo.append(".".join(parts[:i]))
     ent = index[q]
-    for src in [ty for _, ty in ent["fields"]] + ent["cases"]:
+    for src in [ty for _, ty in ent["fields"]] + ent["cases"] + ent.get("reqs", []):
         flat = src
         while re.search(r"<[^<>]*>", flat): flat = re.sub(r"<[^<>]*>", "", flat)   # generische Argumente entfernen, damit A<B>.C als A.C erkannt wird
         flat = flat.replace("SwiftUICore.", "SwiftUICore::").replace("SwiftUI.", "SwiftUI::")
@@ -133,7 +135,7 @@ for q in need:
     node.setdefault(parts[-1], {"_q": None, "_kids": {}})["_q"] = q
 
 lines = ["// erzeugt von swift/swiftui-gen.py: Platzhalter-Typen für SwiftUI (Metadaten und Layout der @frozen-Typen)",
-         "import Swift", "import CoreFoundation", "import CoreGraphics", ""]
+         "import Swift", "import CoreFoundation", "import CoreGraphics", "import AppKit", ""]
 def emit(nodes, ind):
     for name, nd in sorted(nodes.items()):
         pad = "    " * ind
@@ -144,8 +146,16 @@ def emit(nodes, ind):
         g = "<" + ", ".join(ent["gens"]) + ">" if ent["gens"] else ""
         fr = "@frozen " if ent["frozen"] and ent["kind"] in ("struct", "enum") else ""
         if ent["kind"] == "protocol":
-            assoc = " ".join(f"associatedtype {x}" for x in ent["gens"])
-            lines.append(f"{pad}public protocol {name}{g} {{ {assoc} }}")
+            lines.append(f"{pad}public protocol {name}{g} {{")
+            have_assoc = set()
+            for r in ent["reqs"]:
+                r2 = swifttype(r)
+                a = re.match(r"associatedtype\s+(\w+)", r2)
+                if a: have_assoc.add(a.group(1))
+                lines.append(f"{pad}    {r2}")
+            for x in ent["gens"]:
+                if x not in have_assoc: lines.append(f"{pad}    associatedtype {x}")
+            lines.append(f"{pad}}}")
             continue
         if ent["kind"] == "class":
             lines.append(f"{pad}open class {name}{g} {{ public init() {{ }}")

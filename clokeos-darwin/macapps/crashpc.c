@@ -199,8 +199,9 @@ static void *exc_thread(void *arg) {
       out("  sp "); hex(st.__sp); out("  fp "); hex(st.__fp); out("\n");
       for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
       { uint64_t v, isa;
-        if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
-        if (rd64(st.__x[0], &isa) && isa && rd64(isa, &v)) { out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n"); } }
+        if (getenv("CRASHPC_OBJC")) {   /* Selektor/Empfänger nur auf Wunsch: bei Nicht-Objekten stürzt sonst der Bericht ab */
+          if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
+          if (rd64(st.__x[0], &isa) && isa && rd64(isa, &v)) { out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n"); } } }
       for (int r = 19; r <= 19; r++) {   /* Register mit Objekten der aufrufenden Funktion: Klasse, wenn sie lesbar sind */
         uint64_t isa;
         if (st.__x[r] > 0x100000000ULL && st.__x[r] < 0x160000000ULL && !(st.__x[r] & 7) && rd64(st.__x[r], &isa) && isa > 0x100000000ULL && isa < 0x160000000ULL && rd64(isa, &isa)) { out("  x"); hex((uint64_t)r); out(" ist Objekt der Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[r])); out("\n");
@@ -222,9 +223,9 @@ static void *exc_thread(void *arg) {
       }
       { /* Stapelsuche: Wörter ab sp, die in einem Bild liegen (Rücksprungadressen auch ohne Rahmenzeiger); nur Adressen in Code-Bildern */
         int shown = 0;
-        for (uint64_t a = st.__sp; a < st.__sp + 0x600 && shown < 24; a += 8) {
+        for (uint64_t a = st.__sp; a < st.__sp + 0x80000 && shown < 40; a += 8) {   /* tief, aber ohne libSystem-Rahmen (sonst nur Rekursion zu sehen) */
           uint64_t v; Dl_info di2;
-          if (rd64(a, &v) && v > 0x100000000ULL && v < 0x200000000ULL && dladdr((void *)(uintptr_t)v, &di2) && di2.dli_fname && di2.dli_sname) { out("  stack"); hex(a - st.__sp); out(" "); frame("", v); shown++; }
+          if (rd64(a, &v) && v > 0x100000000ULL && v < 0x200000000ULL && dladdr((void *)(uintptr_t)v, &di2) && di2.dli_fname && di2.dli_sname && !strstr(di2.dli_fname, "libSystem") && !strstr(di2.dli_fname, "CoreFoundation") && !strstr(di2.dli_fname, "libobjc")) { out("  stack"); hex(a - st.__sp); out(" "); frame("", v); shown++; }
         }
       }
       uint64_t fp = st.__fp;

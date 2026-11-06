@@ -566,3 +566,14 @@ Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
 * `swift/overlay/SwiftUIFuncs.swift` (hand-written, same module): `Image(_:bundle:)` (keeps name and bundle) and `NSHostingView<Content: View>`, a real `NSView` subclass holding `rootView` (draws nothing yet).
 * Next stop: a Swift runtime fatal error in `instantiateWitnessTable` while checking a generic requirement — a Logic type's conformance to a SwiftUI protocol (e.g. `View`) has Apple's witness-table layout, my placeholder protocols have no requirements.
   Next step: generate the protocols with their requirement lists (associated types, `body`, `_makeView…`) from the interfaces so that witness tables line up.
+
+### Round 35: SwiftUI protocols with their requirements; Logic now loads its first window (nib)
+
+* `swift/swiftui-gen.py` now copies each protocol's requirements in declaration order (associated types, `body`, `_makeView`, `_makeViewList`, …), so that witness tables of Logic's conformances (e.g. its views to `View`) line up; 453 types, typechecks.
+  The runtime error in `instantiateWitnessTable` is gone.
+* `macapps/crashpc.c`: the deep stack scan (512 KB) skips libSystem/CoreFoundation/libobjc frames; selector/receiver printing only with `CRASHPC_OBJC=1`.
+* **New stop: Logic opens its first window.** Chain: `-[NSWindowController window]` → `-loadWindow` → `+[NSBundle loadNibFile:externalNameTable:withZone:]` → `-[NSNib instantiateNibWithExternalNameTable:]` → `-[NSKeyedUnarchiver initForReadingWithData:]`.
+  Logic's nibs are Apple's compiled **NIBArchive** format (see round 16, `macapps/nibarchive.py`), which Cocotron cannot read; the failure path logs the nib data as a huge formatted string and `-window` is entered again and again until the stack overflows.
+* Next step: a NIBArchive reader in AppKit (an NSCoder that decodes NIBArchive's object/key/value tables into the objects Cocotron's nib loader expects; `macapps/nibarchive.py` documents the format), plus a re-entrancy guard in `-[NSWindowController window]`.
+
+Untested: x86_64, `Jump.logicx`, audio, rendering; no window is visible yet.
