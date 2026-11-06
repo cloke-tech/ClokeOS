@@ -98,6 +98,13 @@ ovc ObjectiveC "$w/src/ObjectiveC.swift"
 ovc CoreGraphics "$w/src/CGFloat.swift"
 ovc Dispatch "$w"/src/Disp*.swift
 ovc Darwin "$w/src/MachError.swift"
+# SwiftUI-Platzhalter (nur Typen mit Metadaten, swift/swiftui-gen.py aus den SDK-Schnittstellen und der Importliste)
+swiftui_obj=()
+if [ -f "${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}" ]; then
+  python3 -I "$here/swiftui-gen.py" "${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}" "$w/src/SwiftUIPlaceholders.swift" 2>/dev/null
+  swiftc -c -O -wmo -parse-as-library -swift-version 5 -enable-library-evolution -module-name SwiftUI -target arm64-apple-macos11.0 -sdk "$sdk" \
+    "$w/src/SwiftUIPlaceholders.swift" -o "$w/out/ovSwiftUI.o" && swiftui_obj=("$w/out/ovSwiftUI.o")
+fi
 cp "$here/overlay/CoreData.swift" "$w/src/CoreData.swift"
 ovc CoreData "$w/src/CoreData.swift"
 # Logics Code importiert z. B. URL._bridgeToObjectiveC unter dem Namen der Typ-eigenen Methode; meine Fassung steht als Erweiterung ("10FoundationE")
@@ -140,7 +147,7 @@ exports:
     symbols: [ dummy_sym ]
 ...
 T
-ld -arch arm64 -dylib -o "$run/fo2.dylib" "$w"/out/fnov.o "$w"/out/ovObjectiveC.o "$w"/out/ovCoreGraphics.o "$w"/out/ovDispatch.o "$w"/out/ovDarwin.o "$w"/out/ovCoreData.o \
+ld -arch arm64 -dylib -o "$run/fo2.dylib" "$w"/out/fnov.o "$w"/out/ovObjectiveC.o "$w"/out/ovCoreGraphics.o "$w"/out/ovDispatch.o "$w"/out/ovDarwin.o "$w"/out/ovCoreData.o ${swiftui_obj[@]+"${swiftui_obj[@]}"} \
   "$w"/out/dstub.o "$w"/out/dstub2.o "${aliasargs[@]}" "$run/fo.dylib" "$run/libswiftCore.dylib" "$run/libswift_Concurrency.dylib" "$run/libswiftDarwin.dylib" "$w/out/sys.tbd" \
   -platform_version macos 11.0 11.0 -install_name /usr/lib/sov/fo2.dylib -rpath /usr/lib/swift -not_for_dyld_shared_cache -undefined dynamic_lookup \
   -L"$sdk/usr/lib" -lobjc 2>&1 | grep -v warning || true

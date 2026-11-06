@@ -546,3 +546,15 @@ Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
   A first step could generate placeholder structs/classes with the right mangled names for the data symbols only (so metadata exists and instantiation works) and keep functions as traps until they are reached.
 
 Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
+
+### Round 33: SwiftUI placeholder types generated; now the first SwiftUI function is reached
+
+* `swift/swiftui-gen.py` reads the SDK's `SwiftUICore` and `SwiftUI` `.swiftinterface` files (SwiftUICore has `-public-module-name SwiftUI`, so its types mangle as `SwiftUI.…`) and generates, for the types whose descriptors Logic imports,
+  placeholder declarations with the right kind (struct/class/enum/protocol), nesting and generic parameter count (protocols with primary associated types get the matching `associatedtype`s). 392 of the 394 wanted types are found
+  (`KeyPress.Phases`/`.Result` are missing); `swift/foundation-objc.sh` compiles them as module `SwiftUI` (library evolution) into `fo2.dylib`, and the SwiftUI stub re-exports it.
+* With that, `Published<SwiftUI.Image>` instantiates and Logic runs on to the first SwiftUI **function**: `SwiftUI.Image.init(_: String, bundle: Bundle?)` (trap in `sov/107.dylib`).
+* What comes next is of a different size: Logic imports 977 SwiftUI functions plus 198 conformances and 96 opaque result types (`some View`). And many SwiftUI types are `@frozen` (`Image`, `Text`, `Color`, …): Logic's code has their
+  exact memory layout compiled in, so placeholders need the same stored properties as Apple's (the `.swiftinterface` lists them for frozen types; their internal types such as `AnyImageProviderBox` would have to be generated too).
+  Views would then also need layout and drawing on top of AppKit. This is the SwiftUI reimplementation that Cutefish describes as the hardest part of their (closed) Mac layer.
+
+Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
