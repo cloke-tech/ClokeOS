@@ -1,0 +1,1987 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a52e8aa..f1b2ddc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,8 +1,8 @@
+ cmake_minimum_required(VERSION 3.20)
+ project(Raven LANGUAGES C CXX)
+ 
+-if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+-    message(FATAL_ERROR "The native Raven runtime currently requires Linux")
++if(NOT CMAKE_SYSTEM_NAME MATCHES "^(Linux|Darwin)$")
++    message(FATAL_ERROR "The native Raven runtime requires Linux or Darwin (ClokeOS)")
+ endif()
+ 
+ set(CMAKE_CXX_STANDARD 20)
+diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
+index d8c8b46..a5d5de8 100644
+--- a/native/CMakeLists.txt
++++ b/native/CMakeLists.txt
+@@ -1,3 +1,7 @@
++if(APPLE)
++    include_directories(BEFORE ${CMAKE_CURRENT_SOURCE_DIR}/platform/include)
++    add_compile_options($<$<COMPILE_LANGUAGE:CXX,C>:-include${CMAKE_CURRENT_SOURCE_DIR}/platform/darwin_compat.h>)
++endif()
+ add_library(raven_pe STATIC pe/pe.cpp pe/loaded_image.cpp pe/module_set.cpp pe/resources.cpp)
+ target_include_directories(raven_pe PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+ target_compile_options(raven_pe PRIVATE -Wall -Wextra -Wpedantic -Wconversion)
+@@ -54,7 +58,7 @@ else()
+     set_tests_properties(native_png_dependent_tests_unavailable PROPERTIES SKIP_REGULAR_EXPRESSION "libpng 1.6.59 or newer is missing")
+ endif()
+ 
+-add_executable(raven main.cpp)
++add_executable(raven main.cpp $<$<BOOL:${APPLE}>:platform/cxx_compat.cpp>)
+ target_link_libraries(raven PRIVATE raven_pe)
+ 
+ add_executable(pe_test pe/pe_test.cpp)
+@@ -71,9 +75,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+     enable_language(ASM)
+     add_executable(raven-bootstrap cpu/bootstrap.S)
+     target_compile_options(raven-bootstrap PRIVATE -fno-sanitize=all)
++    if(APPLE)
++        target_link_options(raven-bootstrap PRIVATE -nostdlib -static -Wl,-e,_start,-pagezero_size,0x1000,-image_base,0x700000000000)
++    else()
+     target_link_options(raven-bootstrap PRIVATE -fno-sanitize=all -nostdlib -static
+         -Wl,-no-pie,-Ttext-segment=0x700000000000,-e,_start,--build-id=none)
+-    add_library(raven_cpu STATIC cpu/native_cpu.cpp nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
++    endif()
++    add_library(raven_cpu STATIC cpu/native_cpu.cpp $<$<BOOL:${APPLE}>:platform/mach_guest.cpp> nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
+     target_include_directories(raven_cpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+     set(NLS_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/reactos-nls)
+     file(SHA256 ${NLS_SOURCE}/c_1252.txt NLS_TEXT_HASH)
+@@ -196,7 +204,9 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
+     if(FREETYPE_FOUND)
+         target_link_libraries(raven_cpu PUBLIC Freetype::Freetype)
+         # The Skia library that some programs link after it needs FreeType too; keep the library whatever the link order drops.
+-        target_link_options(raven_cpu INTERFACE LINKER:--no-as-needed)
++        if(NOT APPLE)
++            target_link_options(raven_cpu INTERFACE LINKER:--no-as-needed)
++        endif()
+         target_compile_definitions(raven_cpu PRIVATE RAVEN_FREETYPE=1)
+     endif()
+     set(RAVEN_SKIA_SOURCE "" CACHE PATH "Pinned Skia source directory")
+diff --git a/native/cpu/bootstrap.S b/native/cpu/bootstrap.S
+index ea39cb0..a7d1add 100644
+--- a/native/cpu/bootstrap.S
++++ b/native/cpu/bootstrap.S
+@@ -1,3 +1,12 @@
++#ifdef __APPLE__
++.text
++.globl _start
++_start:
++	int3
++	syscall
++	int3
++	ud2
++#else
+ .section .text
+ .global _start
+ _start:
+@@ -7,3 +16,4 @@ _start:
+ 	ud2
+ 
+ .section .note.GNU-stack,"",@progbits
++#endif
+diff --git a/native/cpu/native_cpu.cpp b/native/cpu/native_cpu.cpp
+index d3abdc2..84afc8a 100644
+--- a/native/cpu/native_cpu.cpp
++++ b/native/cpu/native_cpu.cpp
+@@ -12,7 +12,9 @@
+ #include <cstring>
+ #include <iostream>
+ #include <sstream>
++#ifndef __APPLE__
+ #include <elf.h>
++#endif
+ #include <fcntl.h>
+ #include <functional>
+ #include <csignal>
+@@ -29,6 +31,9 @@
+ #include <sys/mman.h>
+ #include <sys/eventfd.h>
+ #include <sys/socket.h>
++#ifdef __APPLE__
++#include "platform/mach_guest.h"
++#else
+ #include <linux/audit.h>
+ #include <linux/filter.h>
+ #include <linux/seccomp.h>
+@@ -36,6 +41,8 @@
+ #include <sys/ptrace.h>
+ #include <sys/syscall.h>
+ #include <sys/user.h>
++#define RAVEN_DEBUGREG_OFFSET offsetof(struct user, u_debugreg)
++#endif
+ #include <sys/uio.h>
+ #include <sys/wait.h>
+ #include <thread>
+@@ -81,6 +88,7 @@ static void trace(enum __ptrace_request operation, pid_t child, void *data = nul
+ 	}
+ }
+ 
++#ifndef __APPLE__
+ class NativeChild {
+ public:
+ 	NativeChild(std::span<const int> image_fds, const std::string &bootstrap, std::chrono::milliseconds timeout);
+@@ -512,6 +520,8 @@ uint64_t NativeChild::syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_
+ 	return registers.rax;
+ }
+ 
++#endif // !__APPLE__
++
+ struct NativeProcess::State {
+ 	std::unique_ptr<NativeChild> child;
+ 	pid_t memory_task = 0;
+@@ -741,6 +751,13 @@ NativeProcess::~NativeProcess()
+ 		std::cerr << "profile: queued calls=" << state->queued_calls << '\n';
+ }
+ 
++#ifdef __APPLE__
++void NativeProcess::install_seccomp()
++{
++	throw std::runtime_error("the native guest sandbox (seccomp) is not available on ClokeOS");
++}
++
++#else
+ void NativeProcess::install_seccomp()
+ {
+ 	auto &child = *state->child;
+@@ -775,6 +792,8 @@ void NativeProcess::install_seccomp()
+ 	state->seccomp = true;
+ }
+ 
++#endif
++
+ NativeContext NativeProcess::context() const
+ {
+ 	state->require_stopped();
+@@ -1415,7 +1434,7 @@ void NativeProcess::watch_write(uint64_t address)
+ 	state->require_stopped();
+ 	const pid_t pid = state->child->pid;
+ 	const auto poke = [&](size_t index, uint64_t value) {
+-		const long offset = long(offsetof(struct user, u_debugreg)) + long(index * sizeof(unsigned long));
++		const long offset = long(RAVEN_DEBUGREG_OFFSET) + long(index * sizeof(unsigned long));
+ 		if (ptrace(PTRACE_POKEUSER, pid, reinterpret_cast<void *>(offset), reinterpret_cast<void *>(value)) == -1)
+ 			throw std::runtime_error("cannot program the debug registers");
+ 	};
+@@ -2032,7 +2051,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
+ 	state->debug_print_fault=signal==SIGSEGV && info.si_code==SI_KERNEL && registers.rax==1;
+ 	if (signal == SIGTRAP && info.si_code == TRAP_HWBKPT) {
+ 		// Reading the stop reason is enough; DR6 must be cleared or the next trap reports a stale cause.
+-		ptrace(PTRACE_POKEUSER, child.pid, reinterpret_cast<void *>(offsetof(struct user, u_debugreg) + 6 * sizeof(unsigned long)), nullptr);
++		ptrace(PTRACE_POKEUSER, child.pid, reinterpret_cast<void *>(RAVEN_DEBUGREG_OFFSET + 6 * sizeof(unsigned long)), nullptr);
+ 	}
+ 	const bool breakpoint = signal == SIGTRAP && (info.si_code == TRAP_BRKPT || info.si_code == SI_KERNEL);
+ 	if (breakpoint && registers.rip == (x86 ? state->return_gate : child.gate) + 1) {
+diff --git a/native/desktop/foreign_surface.cpp b/native/desktop/foreign_surface.cpp
+index 26451b4..2829ba1 100644
+--- a/native/desktop/foreign_surface.cpp
++++ b/native/desktop/foreign_surface.cpp
+@@ -426,7 +426,7 @@ bool take_foreign_frame(uint64_t window, uint32_t &seen, const std::function<voi
+ 		void *mapped = ::mmap(nullptr, size_t(status.st_size), PROT_READ, MAP_SHARED, file, 0);
+ 		if (mapped != MAP_FAILED) {
+ 			const auto *header = static_cast<const uint32_t *>(mapped);
+-			const uint32_t sequence = std::atomic_ref<const uint32_t>(header[3]).load(std::memory_order_acquire);
++			const uint32_t sequence = __atomic_load_n(&header[3], __ATOMIC_ACQUIRE);
+ 			const uint32_t width = header[1], height = header[2];
+ 			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
+ 				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {
+diff --git a/native/desktop/objects.cpp b/native/desktop/objects.cpp
+index 7713b09..ea6369d 100644
+--- a/native/desktop/objects.cpp
++++ b/native/desktop/objects.cpp
+@@ -611,7 +611,7 @@ IconDisplay DesktopObjects::display() const { return icon_display; }
+ TextRenderer &DesktopObjects::text()
+ {
+ 	if (!text_engine) {
+-		const auto bundled=std::filesystem::read_symlink("/proc/self/exe").parent_path()/"fonts";
++		const auto bundled=raven_self_exe().parent_path()/"fonts";
+ 		text_engine=std::make_unique<TextRenderer>(std::filesystem::is_directory(bundled) ? bundled.string() : RAVEN_FONT_DIRECTORY);
+ 	}
+ 	return *text_engine;
+diff --git a/native/main.cpp b/native/main.cpp
+index 7fab6e2..da1b70d 100644
+--- a/native/main.cpp
++++ b/native/main.cpp
+@@ -152,7 +152,7 @@ int main(int argc, char **argv)
+ 	const std::string mode = argc > 1 ? argv[1] : "";
+ 	// A restart of Windows: the moves and deletions installers left for it, then the programs that run once at the next logon.
+ 	if (mode == "--reboot") {
+-		const auto done = raven::simulate_restart(raven::NativePrefix::from_environment(), std::filesystem::read_symlink("/proc/self/exe"));
++		const auto done = raven::simulate_restart(raven::NativePrefix::from_environment(), raven_self_exe());
+ 		std::cout << "restarted: " << done << " pending operations and programs ran\n";
+ 		return 0;
+ 	}
+@@ -301,14 +301,14 @@ int main(int argc, char **argv)
+ 			}
+ 			if (run_modules || run_process) {
+ #ifdef RAVEN_NATIVE_CPU
+-				const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
++				const auto bootstrap = raven_self_exe().parent_path() / "raven-bootstrap";
+ 				if (run_process) {
+ 					const auto directory = std::filesystem::absolute(argv[first_file]).parent_path();
+ 					const raven::NativePrefix prefix=raven::NativePrefix::from_environment();
+ 					// The system's own programs, libraries and tables the runtime ships, in the system directory of each width as Windows has them; a
+ 					// copy that is missing or differs from the runtime's is put back.
+ 					{
+-						const auto runtime = std::filesystem::read_symlink("/proc/self/exe").parent_path();
++						const auto runtime = raven_self_exe().parent_path();
+ 						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
+ 							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
+ 									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
+@@ -336,7 +336,7 @@ int main(int argc, char **argv)
+ 								const auto file = from / server;
+ 								if (std::filesystem::exists(file, error))
+ 									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
+-										std::to_string(std::filesystem::last_write_time(file, error).time_since_epoch().count()) + "\n";
++										std::to_string(static_cast<long long>(std::filesystem::last_write_time(file, error).time_since_epoch().count())) + "\n";
+ 							}
+ 						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
+ 						std::string recorded;
+@@ -357,7 +357,7 @@ int main(int argc, char **argv)
+ 										// Setup is quiet: only a failure says anything, on standard error.
+ 										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
+ 											::dup2(quiet, 1);
+-										const std::string self = std::filesystem::read_symlink("/proc/self/exe").string(), path = program.string();
++										const std::string self = raven_self_exe().string(), path = program.string();
+ 										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
+ 											server, static_cast<char *>(nullptr));
+ 										::_exit(127);
+@@ -428,7 +428,7 @@ int main(int argc, char **argv)
+ 					// known once the program's launch is (below), before its libraries are loaded.
+ 					std::vector<std::filesystem::path> later_folders;
+ 					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
+-					const auto component_directory = std::filesystem::read_symlink("/proc/self/exe").parent_path() / (entry->image.is_64 ? "" : "x86");
++					const auto component_directory = raven_self_exe().parent_path() / (entry->image.is_64 ? "" : "x86");
+ 					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
+ #ifdef RAVEN_OPENGL
+ 						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
+@@ -451,7 +451,7 @@ int main(int argc, char **argv)
+ 						// A 64-bit program built against msvcrt.dll gets the C runtime component as that library too: a runtime of its own, as
+ 						// msvcrt is beside ucrtbase on Windows.
+ 						if (!selected && name=="msvcrt.dll" && entry->image.is_64) {
+-							const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "ucrtbase.dll";
++							const auto component = raven_self_exe().parent_path() / "ucrtbase.dll";
+ 							if (std::filesystem::exists(component))
+ 								return read_module(component.c_str());
+ 						}
+@@ -461,13 +461,13 @@ int main(int argc, char **argv)
+ 								return read_module(component.c_str());
+ 						if (!selected && name=="ucrtbase.dll") {
+ 							// A 32-bit program gets the 32-bit build of the component.
+-							const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / (entry->image.is_64 ? "ucrtbase.dll" : "ucrtbase32.dll");
++							const auto component = raven_self_exe().parent_path() / (entry->image.is_64 ? "ucrtbase.dll" : "ucrtbase32.dll");
+ 							if (std::filesystem::exists(component))
+ 								return read_module(component.c_str());
+ 						}
+ 						// DirectWrite, Direct2D and Windows Animation are the runtime's own components too: the library names resolve to them.
+ 						if (!selected && (name=="dwrite.dll" || name=="d2d1.dll" || name=="uianimation.dll") && entry->image.is_64) {
+-							const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() /
++							const auto component = raven_self_exe().parent_path() /
+ 								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
+ 							if (std::filesystem::exists(component))
+ 								return read_module(component.c_str());
+@@ -484,7 +484,7 @@ int main(int argc, char **argv)
+ 										places.emplace_back(std::string(part));
+ 									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
+ 								}
+-							places.emplace_back(std::filesystem::read_symlink("/proc/self/exe").parent_path());
++							places.emplace_back(raven_self_exe().parent_path());
+ 							for (const auto &place : places)
+ 								if (std::filesystem::exists(place / name))
+ 									return read_module((place / name).c_str());
+@@ -516,7 +516,7 @@ int main(int argc, char **argv)
+ 					};
+ 					// The guest heap component ships beside the runtime when the build provisioned it.
+ 					if (entry->image.is_64 && !modules.all().contains("raven-rtl.dll")) {
+-						const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-rtl.dll";
++						const auto component = raven_self_exe().parent_path() / "raven-rtl.dll";
+ 						if (std::filesystem::exists(component))
+ 							modules.add("raven-rtl.dll", read_file(component.c_str()));
+ 					}
+@@ -752,7 +752,7 @@ int main(int argc, char **argv)
+ 		if (run_entry) {
+ #ifdef RAVEN_NATIVE_CPU
+ 			raven::LoadedImage loaded(image, image.image_base);
+-			const auto bootstrap = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "raven-bootstrap";
++			const auto bootstrap = raven_self_exe().parent_path() / "raven-bootstrap";
+ 			return native_result(raven::run_native_entry(image, loaded, bootstrap.string(), std::chrono::seconds(5)));
+ #else
+ 			throw std::runtime_error("native execution requires an x86-64 Linux host");
+diff --git a/native/nt/access_token.cpp b/native/nt/access_token.cpp
+index 247b706..3986e94 100644
+--- a/native/nt/access_token.cpp
++++ b/native/nt/access_token.cpp
+@@ -62,7 +62,7 @@ private:
+ void AccessToken::map()
+ {
+ 	struct stat information{};
+-	if (descriptor < 0 || ::fstat(descriptor, &information) || information.st_size != sizeof(Shared))
++	if (descriptor < 0 || ::fstat(descriptor, &information) || off_t(information.st_size) < off_t(sizeof(Shared)))
+ 		throw std::runtime_error("invalid access token storage");
+ 	const auto mapped = ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+ 	if (mapped == MAP_FAILED)
+diff --git a/native/nt/authenticode.cpp b/native/nt/authenticode.cpp
+index 5eac567..044eada 100644
+--- a/native/nt/authenticode.cpp
++++ b/native/nt/authenticode.cpp
+@@ -399,7 +399,7 @@ X509_STORE *trust_anchors()
+ 			if (X509_STORE_load_file(created, path))
+ 				break;
+ 		std::error_code error;
+-		const auto roots = std::filesystem::read_symlink("/proc/self/exe", error).parent_path() / "roots";
++		const auto roots = raven_self_exe(error).parent_path() / "roots";
+ 		for (const auto &entry : std::filesystem::directory_iterator(roots, error)) {
+ 			std::ifstream input(entry.path(), std::ios::binary);
+ 			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
+diff --git a/native/nt/child_process.cpp b/native/nt/child_process.cpp
+index d94b3b0..332a91e 100644
+--- a/native/nt/child_process.cpp
++++ b/native/nt/child_process.cpp
+@@ -66,6 +66,12 @@ bool runtime_process_alive(pid_t pid)
+ {
+ 	if (pid <= 0)
+ 		return false;
++#ifdef __APPLE__
++	const auto process = raven_process(pid);
++	return process.exists && !process.zombie && raven_process_path(pid) == raven_self_exe().string();
++#else
++	if (pid <= 0)
++		return false;
+ 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+ 	std::string text;
+ 	std::getline(stat, text);
+@@ -76,6 +82,7 @@ bool runtime_process_alive(pid_t pid)
+ 	const auto mine_length = ::readlink("/proc/self/exe", mine, sizeof(mine));
+ 	const auto theirs_length = ::readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), theirs, sizeof(theirs));
+ 	return mine_length > 0 && mine_length == theirs_length && std::equal(mine, mine + mine_length, theirs);
++#endif
+ }
+ 
+ void ProcessObject::reap() const
+@@ -127,7 +134,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+ 	// The child may write to the terminal too, moving the cursor where this process cannot follow it.
+ 	TerminalConsole::instance().mark_stale();
+ 	char self[4096];
++#ifdef __APPLE__
++	const auto self_path = raven_self_exe().string();
++	const auto length = ssize_t(std::min(self_path.size(), sizeof(self) - 1));
++	std::memcpy(self, self_path.data(), size_t(length));
++#else
+ 	const auto length = ::readlink("/proc/self/exe", self, sizeof(self) - 1);
++#endif
+ 	if (length <= 0) {
+ 		error = 5;
+ 		return nullptr;
+diff --git a/native/nt/event.cpp b/native/nt/event.cpp
+index e870fd7..f7a1992 100644
+--- a/native/nt/event.cpp
++++ b/native/nt/event.cpp
+@@ -30,7 +30,7 @@ EventObject::EventObject(int descriptor) : type(0), local_signaled(false), descr
+ {
+ 	try {
+ 		struct stat information{};
+-		if (descriptor < 0 || ::fstat(descriptor, &information) || information.st_size != sizeof(Shared))
++		if (descriptor < 0 || ::fstat(descriptor, &information) || off_t(information.st_size) < off_t(sizeof(Shared)))
+ 			throw std::runtime_error("invalid event storage");
+ 		void *mapped = ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+ 		if (mapped == MAP_FAILED)
+diff --git a/native/nt/font_service.cpp b/native/nt/font_service.cpp
+index 8c089c3..51a2ba8 100644
+--- a/native/nt/font_service.cpp
++++ b/native/nt/font_service.cpp
+@@ -117,7 +117,7 @@ std::vector<uint8_t> scan_fonts()
+ 			roots.push_back(installed);
+ 	} catch (const std::exception &) {}
+ 	// The fonts Raven bundles, such as the Raven Sans dialog faces, then the host's.
+-	if (const auto bundled = std::filesystem::read_symlink("/proc/self/exe", error).parent_path() / "fonts"; std::filesystem::is_directory(bundled, error))
++	if (const auto bundled = raven_self_exe(error).parent_path() / "fonts"; std::filesystem::is_directory(bundled, error))
+ 		roots.push_back(bundled);
+ #ifdef RAVEN_FONT_DIRECTORY
+ 	else if (std::filesystem::is_directory(RAVEN_FONT_DIRECTORY, error))
+diff --git a/native/nt/interfaces.cpp b/native/nt/interfaces.cpp
+index 523ef4d..94869db 100644
+--- a/native/nt/interfaces.cpp
++++ b/native/nt/interfaces.cpp
+@@ -34,10 +34,12 @@ std::vector<HostInterface> host_interfaces()
+ 			std::strncpy(request.ifr_name, entry->ifa_name, IFNAMSIZ - 1);
+ 			if (::ioctl(probe, SIOCGIFMTU, &request) == 0)
+ 				interface.mtu = uint32_t(request.ifr_mtu);
++			#ifndef __APPLE__
+ 			if (interface.type != if_type_loopback && ::ioctl(probe, SIOCGIFHWADDR, &request) == 0) {
+ 				std::memcpy(interface.hardware, request.ifr_hwaddr.sa_data, 6);
+ 				interface.hardware_length = 6;
+ 			}
++#endif
+ 			::close(probe);
+ 		}
+ 		interfaces.push_back(std::move(interface));
+diff --git a/native/nt/mutex.cpp b/native/nt/mutex.cpp
+index 068df1d..aaa3822 100644
+--- a/native/nt/mutex.cpp
++++ b/native/nt/mutex.cpp
+@@ -22,7 +22,7 @@ MutexObject::MutexObject(int descriptor) : descriptor(descriptor)
+ {
+ 	try {
+ 		struct stat information{};
+-		if (descriptor < 0 || ::fstat(descriptor, &information) || information.st_size != sizeof(MutexState))
++		if (descriptor < 0 || ::fstat(descriptor, &information) || off_t(information.st_size) < off_t(sizeof(MutexState)))
+ 			throw std::runtime_error("invalid mutex storage");
+ 		void *mapped = ::mmap(nullptr, sizeof(MutexState), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
+ 		if (mapped == MAP_FAILED)
+diff --git a/native/nt/process_info_api.cpp b/native/nt/process_info_api.cpp
+index e19f568..4db0741 100644
+--- a/native/nt/process_info_api.cpp
++++ b/native/nt/process_info_api.cpp
+@@ -72,6 +72,9 @@ uint64_t filetime_now()
+ // CPU time a running child has used so far, in nanoseconds; 0 once the host no longer lists it.
+ static uint64_t child_cpu_nanoseconds(pid_t pid)
+ {
++#ifdef __APPLE__
++	return raven_process(pid).cpu_ns;
++#endif
+ 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+ 	std::string text;
+ 	std::getline(stat, text);
+diff --git a/native/nt/service_api.cpp b/native/nt/service_api.cpp
+index 0bec6ad..b3b063c 100644
+--- a/native/nt/service_api.cpp
++++ b/native/nt/service_api.cpp
+@@ -62,6 +62,12 @@ bool alive(uint32_t pid)
+ {
+ 	if (!pid)
+ 		return false;
++#ifdef __APPLE__
++	{
++		const auto process = raven_process(pid_t(pid));
++		return process.exists && !process.zombie;
++	}
++#endif
+ 	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
+ 	std::string line;
+ 	if (!std::getline(stat, line))
+diff --git a/native/nt/shared_file.h b/native/nt/shared_file.h
+index dcc423a..7b8b5a5 100644
+--- a/native/nt/shared_file.h
++++ b/native/nt/shared_file.h
+@@ -10,13 +10,19 @@
+ #include <fcntl.h>
+ #include <filesystem>
+ #include <functional>
++#ifdef __APPLE__
++#include "platform/futex_darwin.h"
++#else
+ #include <linux/futex.h>
++#endif
+ #include <memory>
+ #include <mutex>
+ #include <string>
+ #include <sys/file.h>
+ #include <sys/mman.h>
++#ifndef __APPLE__
+ #include <sys/syscall.h>
++#endif
+ #include <thread>
+ #include <unistd.h>
+ 
+@@ -58,11 +64,16 @@ inline std::atomic<uint32_t> *shared_changes()
+ 	return word;
+ }
+ 
++#ifndef __APPLE__
++#define RAVEN_FUTEX_WAKE_ALL(word) ::syscall(SYS_futex, word, FUTEX_WAKE, INT32_MAX, nullptr, nullptr, 0)
++#define RAVEN_FUTEX_WAIT(word, seen) ::syscall(SYS_futex, word, FUTEX_WAIT, seen, nullptr, nullptr, 0)
++#endif
++
+ inline void announce_shared_change()
+ {
+ 	if (auto *word = shared_changes()) {
+ 		word->fetch_add(1);
+-		::syscall(SYS_futex, word, FUTEX_WAKE, INT32_MAX, nullptr, nullptr, 0);
++		RAVEN_FUTEX_WAKE_ALL(word);
+ 	}
+ }
+ 
+@@ -80,7 +91,7 @@ inline void listen_shared_changes()
+ 		std::thread([word] {
+ 			for (;;) {
+ 				const uint32_t seen = word->load();
+-				::syscall(SYS_futex, word, FUTEX_WAIT, seen, nullptr, nullptr, 0);
++				RAVEN_FUTEX_WAIT(word, seen);
+ 				if (const int descriptor = shared_change_listener.load(); descriptor >= 0) {
+ 					const uint64_t one = 1;
+ 					[[maybe_unused]] const auto written = ::write(descriptor, &one, sizeof one);
+diff --git a/native/nt/threads.cpp b/native/nt/threads.cpp
+index 437a810..006953d 100644
+--- a/native/nt/threads.cpp
++++ b/native/nt/threads.cpp
+@@ -186,7 +186,7 @@ void NativeThreads::thread_main(GuestThread &thread)
+ 		code = exit.code;
+ 	} catch (...) {
+ 		if (!pending)
+-			pending = std::current_exception();
++			pending = PendingError::capture();
+ 		// RAVEN_TRACE_API names the thread and the error that ends the process from a thread other than the first.
+ 		if (std::getenv("RAVEN_TRACE_API")) {
+ 			try {
+@@ -207,7 +207,7 @@ void NativeThreads::thread_main(GuestThread &thread)
+ 		} catch (...) {
+ 			// The first error is the one that ended the process: failing to save a thread of the process it ended must not replace it.
+ 			if (!pending)
+-				pending = std::current_exception();
++				pending = PendingError::capture();
+ 			// The main thread rethrows it from its own switch; hand the processor to it directly.
+ 			auto &main = *threads.front();
+ 			if (main.state != GuestThread::State::done && &main != running) {
+@@ -345,7 +345,7 @@ void NativeThreads::check_pending()
+ 	pending = nullptr;
+ 	// The error that ended another thread ends the process; the call this thread was in, waiting or running, will never complete.
+ 	process.end_call();
+-	std::rethrow_exception(exception);
++	exception.rethrow();
+ }
+ 
+ void NativeThreads::switch_to(GuestThread &next)
+diff --git a/native/nt/threads.h b/native/nt/threads.h
+index 346024d..b657151 100644
+--- a/native/nt/threads.h
++++ b/native/nt/threads.h
+@@ -14,6 +14,8 @@
+ #include <optional>
+ #include <ucontext.h>
+ #include <poll.h>
++#include <stdexcept>
++#include <string>
+ #include <vector>
+ 
+ namespace raven {
+@@ -88,6 +90,55 @@ struct ThreadExit {
+ 	uint32_t code;
+ };
+ 
++// The error that ended a non-main thread, carried to the main thread. std::exception_ptr is not used: PureDarwin's libc++ has none that works
++// (every use aborts), so the exception types that occur here are kept by value.
++class PendingError {
++public:
++	PendingError() = default;
++	PendingError(std::nullptr_t) {}
++	explicit operator bool() const { return kind != Kind::none; }
++	PendingError &operator=(std::nullptr_t)
++	{
++		kind = Kind::none;
++		return *this;
++	}
++	// Called inside a catch handler: records the exception being handled.
++	static PendingError capture()
++	{
++		PendingError error;
++		try {
++			throw;
++		} catch (const NativeResult &result) {
++			error.kind = Kind::result;
++			error.result = result;
++		} catch (const ThreadExit &exit) {
++			error.kind = Kind::exit;
++			error.code = exit.code;
++		} catch (const std::exception &failure) {
++			error.kind = Kind::failure;
++			error.message = failure.what();
++		} catch (...) {
++			error.kind = Kind::failure;
++			error.message = "unknown exception";
++		}
++		return error;
++	}
++	[[noreturn]] void rethrow() const
++	{
++		if (kind == Kind::result)
++			throw result;
++		if (kind == Kind::exit)
++			throw ThreadExit{code};
++		throw std::runtime_error(message);
++	}
++
++private:
++	enum class Kind { none, result, exit, failure } kind = Kind::none;
++	NativeResult result{};
++	uint32_t code = 0;
++	std::string message;
++};
++
+ // Cooperative scheduler over one traced process: guest threads switch only inside API calls.
+ class NativeThreads {
+ public:
+@@ -172,7 +223,7 @@ private:
+ 	bool tearing_down = false;
+ 	uint32_t next_id = 2;
+ 	// An exception from a non-main thread is carried to the main thread, which owns the process result.
+-	std::exception_ptr pending;
++	PendingError pending;
+ 	std::shared_ptr<GuestThread> pick(bool include_current);
+ 	void schedule();
+ 	void switch_to(GuestThread &next);
+diff --git a/native/nt/x86_loader.cpp b/native/nt/x86_loader.cpp
+index 6aa9547..23c3b71 100644
+--- a/native/nt/x86_loader.cpp
++++ b/native/nt/x86_loader.cpp
+@@ -52,7 +52,7 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
+ {
+ 	// The runtime's own components come from beside it, in their 32-bit builds.
+ 	if (std::find(std::begin(runtime_components), std::end(runtime_components), name) != std::end(runtime_components)) {
+-		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / name;
++		const auto component = raven_self_exe().parent_path() / "x86" / name;
+ 		if (std::filesystem::exists(component)) {
+ 			identity = name;
+ 			return read_all(component);
+@@ -60,7 +60,7 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
+ 	}
+ 	// The C runtime comes from the runtime's own directory, in its 32-bit build.
+ 	if (name == "ucrtbase.dll") {
+-		const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "ucrtbase32.dll";
++		const auto component = raven_self_exe().parent_path() / "ucrtbase32.dll";
+ 		if (!std::filesystem::exists(component))
+ 			return std::nullopt;
+ 		identity = name;
+@@ -81,7 +81,7 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
+ 	if (!resolved || !resolved->exists || !std::filesystem::is_regular_file(resolved->host)) {
+ 		// The common controls component stands in for comctl32.dll however late the program loads it.
+ 		if (name == "comctl32.dll") {
+-			const auto component = std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / name;
++			const auto component = raven_self_exe().parent_path() / "x86" / name;
+ 			if (std::filesystem::exists(component)) {
+ 				identity = name;
+ 				file = component;
+@@ -93,7 +93,7 @@ std::optional<std::vector<uint8_t>> NativeX86Loader::read_library(const std::str
+ 			std::vector<std::filesystem::path> places;
+ 			if (const char *directory = std::getenv("RAVEN_D3D_DIRECTORY"))
+ 				places.push_back(std::filesystem::path(directory) / name);
+-			places.push_back(std::filesystem::read_symlink("/proc/self/exe").parent_path() / "x86" / "raven-d3d10_1.dll");
++			places.push_back(raven_self_exe().parent_path() / "x86" / "raven-d3d10_1.dll");
+ 			for (const auto &place : places)
+ 				if (std::filesystem::exists(place)) {
+ 					identity = name;
+diff --git a/native/pe/loaded_image.cpp b/native/pe/loaded_image.cpp
+index 28f086c..89b6f58 100644
+--- a/native/pe/loaded_image.cpp
++++ b/native/pe/loaded_image.cpp
+@@ -1,4 +1,7 @@
+ #include "loaded_image.h"
++#ifdef __APPLE__
++#include "platform/mach_guest.h"
++#endif
+ 
+ #include <algorithm>
+ #include <cerrno>
+@@ -33,6 +36,13 @@ LoadedImage::LoadedImage(const PEImage &image, uint64_t base, bool relocated)
+ 			throw std::system_error(errno, std::generic_category(), "size PE backing file");
+ 		// The contents go in through the descriptor: copying them through the mapping took a page fault for every page of a library
+ 		// of hundreds of megabytes, in every process that loads it.
++#ifdef __APPLE__
++		// POSIX shared memory objects take no pwrite: the contents go through the mapping
++		void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
++		if (mapping == MAP_FAILED)
++			throw std::system_error(errno, std::generic_category(), "map PE backing file");
++		const auto put = [&](std::span<const uint8_t> source, uint64_t offset) { std::memcpy(static_cast<uint8_t *>(mapping) + offset, source.data(), source.size()); };
++#else
+ 		const auto put = [&](std::span<const uint8_t> source, uint64_t offset) {
+ 			for (size_t done = 0; done < source.size();) {
+ 				const auto written = pwrite(fd, source.data() + done, source.size() - done, static_cast<off_t>(offset + done));
+@@ -43,14 +53,20 @@ LoadedImage::LoadedImage(const PEImage &image, uint64_t base, bool relocated)
+ 				done += size_t(written);
+ 			}
+ 		};
++#endif
+ 		put(image.file_span(0, image.headers_size), 0);
+ 		for (const auto &section : image.sections)
+ 			if (section.file_size)
+ 				put(image.file_span(section.address, section.file_size), section.address);
++#ifndef __APPLE__
+ 		void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+ 		if (mapping == MAP_FAILED)
+ 			throw std::system_error(errno, std::generic_category(), "map PE backing file");
++#endif
+ 		storage = static_cast<uint8_t *>(mapping);
++#ifdef __APPLE__
++		raven_register_image(fd, storage, size);
++#endif
+ 		for (size_t page = 0; page * page_size < image.headers_size; ++page)
+ 			protections[page] = PROT_READ;
+ 		for (const auto &section : image.sections) {
+@@ -189,6 +205,10 @@ LoadedImage &LoadedImage::operator=(LoadedImage &&other) noexcept
+ 
+ void LoadedImage::release()
+ {
++#ifdef __APPLE__
++	if (fd >= 0 && storage)
++		raven_unregister_image(fd);
++#endif
+ 	if (storage)
+ 		munmap(storage, size);
+ 	if (fd >= 0)
+diff --git a/native/platform/cxx_compat.cpp b/native/platform/cxx_compat.cpp
+new file mode 100644
+index 0000000..79b5b26
+--- /dev/null
++++ b/native/platform/cxx_compat.cpp
+@@ -0,0 +1,14 @@
++// ClokeOS: PureDarwin's libc++ (20.5) stubs std::uncaught_exceptions with an abort, and iostream sentries call it.
++#ifdef __APPLE__
++#include <exception>
++
++extern "C" void *__cxa_get_globals() noexcept;
++
++namespace std {
++int uncaught_exceptions() noexcept
++{
++	struct Globals { void *caught; unsigned int uncaught; };
++	return int(static_cast<Globals *>(__cxa_get_globals())->uncaught);
++}
++}
++#endif
+diff --git a/native/platform/darwin_compat.h b/native/platform/darwin_compat.h
+new file mode 100644
+index 0000000..68bfd4d
+--- /dev/null
++++ b/native/platform/darwin_compat.h
+@@ -0,0 +1,273 @@
++// ClokeOS: the Linux interfaces Raven uses that XNU does not have. Included into every source file on Darwin
++// (CMake adds -include). Keep this file free of logic that belongs in the Mach backend (cpu/native_cpu_mach.cpp).
++#pragma once
++#ifdef __APPLE__
++#ifndef __APPLE_USE_RFC_3542
++#define __APPLE_USE_RFC_3542 1
++#endif
++#ifndef _XOPEN_SOURCE
++#define _XOPEN_SOURCE 700
++#endif
++#ifndef _DARWIN_C_SOURCE
++#define _DARWIN_C_SOURCE
++#endif
++#include <errno.h>
++#include <fcntl.h>
++#include <poll.h>
++#include <sys/mman.h>
++#include <sys/random.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <sys/types.h>
++#include <sys/ucred.h>
++#include <time.h>
++#include <unistd.h>
++#include <stdio.h>
++#include <string.h>
++
++// ptrace's register block: the Mach backend fills it from x86_THREAD_STATE64
++struct user_regs_struct {
++	unsigned long long r15, r14, r13, r12, rbp, rbx, r11, r10, r9, r8, rax, rcx, rdx, rsi, rdi, orig_rax, rip, cs, eflags, rsp, ss,
++		fs_base, gs_base, ds, es, fs, gs;
++};
++
++// memfd_create: an unlinked POSIX shared memory object
++#define MFD_CLOEXEC 0x0001u
++#define MFD_ALLOW_SEALING 0x0002u
++static inline int memfd_create(const char *name, unsigned flags)
++{
++	static unsigned counter;
++	char path[64];
++	snprintf(path, sizeof path, "/raven.%d.%u", int(getpid()), __atomic_add_fetch(&counter, 1, __ATOMIC_RELAXED));
++	(void)name;
++	const int fd = shm_open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
++	if (fd < 0)
++		return -1;
++	shm_unlink(path);
++	if (flags & MFD_CLOEXEC)
++		fcntl(fd, F_SETFD, FD_CLOEXEC);
++	return fd;
++}
++#define F_ADD_SEALS 1033
++#define F_GET_SEALS 1034
++#define F_SEAL_SEAL 0x0001
++#define F_SEAL_SHRINK 0x0002
++#define F_SEAL_GROW 0x0004
++#define F_SEAL_WRITE 0x0008
++
++// socket and pipe flags
++#define SOCK_CLOEXEC 0x10000000
++#define SOCK_NONBLOCK 0x20000000
++#define MSG_CMSG_CLOEXEC 0
++#define POLLRDHUP 0
++#define SO_PEERCRED LOCAL_PEERCRED
++#define CLOCK_BOOTTIME CLOCK_MONOTONIC
++#define CLOCK_MONOTONIC_COARSE CLOCK_MONOTONIC
++#define CLOCK_REALTIME_COARSE CLOCK_REALTIME
++#define TCP_KEEPIDLE TCP_KEEPALIVE
++#define st_mtim st_mtimespec
++#define st_atim st_atimespec
++#define st_ctim st_ctimespec
++#define O_PATH 0
++#define O_NOATIME 0
++#define O_DIRECT 0
++
++static inline void raven_apply_flags(int fd, int flags)
++{
++	if (fd < 0)
++		return;
++	if (flags & SOCK_CLOEXEC)
++		fcntl(fd, F_SETFD, FD_CLOEXEC);
++	if (flags & SOCK_NONBLOCK)
++		fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
++}
++static inline int raven_socket(int domain, int type, int protocol)
++{
++	const int fd = socket(domain, type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK), protocol);
++	raven_apply_flags(fd, type);
++	return fd;
++}
++static inline int raven_socketpair(int domain, int type, int protocol, int sv[2])
++{
++	// Darwin has no SOCK_SEQPACKET for AF_UNIX: datagram sockets keep the message boundaries
++	int base = type & ~(SOCK_CLOEXEC | SOCK_NONBLOCK);
++	if (domain == AF_UNIX && base == 5 /* Linux SOCK_SEQPACKET */)
++		base = SOCK_DGRAM;
++	const int rc = socketpair(domain, base, protocol, sv);
++	if (rc == 0) {
++		raven_apply_flags(sv[0], type);
++		raven_apply_flags(sv[1], type);
++	}
++	return rc;
++}
++static inline int accept4(int fd, struct sockaddr *address, socklen_t *length, int flags)
++{
++	const int result = accept(fd, address, length);
++	raven_apply_flags(result, flags);
++	return result;
++}
++static inline int raven_pipe2(int fds[2], int flags)
++{
++	const int rc = pipe(fds);
++	if (rc == 0) {
++		raven_apply_flags(fds[0], flags & O_NONBLOCK ? SOCK_NONBLOCK | SOCK_CLOEXEC * !!(flags & O_CLOEXEC) : SOCK_CLOEXEC * !!(flags & O_CLOEXEC));
++		raven_apply_flags(fds[1], flags & O_NONBLOCK ? SOCK_NONBLOCK | SOCK_CLOEXEC * !!(flags & O_CLOEXEC) : SOCK_CLOEXEC * !!(flags & O_CLOEXEC));
++	}
++	return rc;
++}
++#define pipe2 raven_pipe2
++
++// peer credentials of a UNIX socket: struct ucred and SO_PEERCRED
++struct ucred { pid_t pid; uid_t uid; gid_t gid; };
++#undef SO_PEERCRED
++#define SO_PEERCRED 0x5ea1
++static inline int raven_getsockopt(int fd, int level, int option, void *value, socklen_t *length)
++{
++	if (level == SOL_SOCKET && option == SO_PEERCRED) {
++		ucred *credentials = static_cast<ucred *>(value);
++		pid_t pid = 0;
++		socklen_t size = sizeof pid;
++		uid_t uid;
++		gid_t gid;
++		if (getpeereid(fd, &uid, &gid) != 0 || getsockopt(fd, 0 /* SOL_LOCAL */, 0x002 /* LOCAL_PEERPID */, &pid, &size) != 0)
++			return -1;
++		credentials->pid = pid;
++		credentials->uid = uid;
++		credentials->gid = gid;
++		*length = sizeof(ucred);
++		return 0;
++	}
++	return getsockopt(fd, level, option, value, length);
++}
++#define getsockopt raven_getsockopt
++
++// reentrant netdb lookups: Darwin has only the non-reentrant ones
++#include <netdb.h>
++#include <mutex>
++static inline std::mutex &raven_netdb_lock() { static std::mutex lock; return lock; }
++static inline int getservbyname_r(const char *name, const char *protocol, servent *result, char *, size_t, servent **found)
++{
++	std::lock_guard lock(raven_netdb_lock());
++	const servent *entry = getservbyname(name, protocol);
++	*found = entry ? (*result = *entry, result) : nullptr;
++	return 0;
++}
++static inline int getservbyport_r(int port, const char *protocol, servent *result, char *, size_t, servent **found)
++{
++	std::lock_guard lock(raven_netdb_lock());
++	const servent *entry = getservbyport(port, protocol);
++	*found = entry ? (*result = *entry, result) : nullptr;
++	return 0;
++}
++static inline int getprotobyname_r(const char *name, protoent *result, char *, size_t, protoent **found)
++{
++	std::lock_guard lock(raven_netdb_lock());
++	const protoent *entry = getprotobyname(name);
++	*found = entry ? (*result = *entry, result) : nullptr;
++	return 0;
++}
++static inline int getprotobynumber_r(int number, protoent *result, char *, size_t, protoent **found)
++{
++	std::lock_guard lock(raven_netdb_lock());
++	const protoent *entry = getprotobynumber(number);
++	*found = entry ? (*result = *entry, result) : nullptr;
++	return 0;
++}
++
++// processors
++struct cpu_set_t { unsigned long bits[16]; };
++#define CPU_ZERO(set) memset((set), 0, sizeof(cpu_set_t))
++#define CPU_SET(cpu, set) ((set)->bits[(cpu) / 64] |= 1ul << ((cpu) % 64))
++#define CPU_ISSET(cpu, set) (((set)->bits[(cpu) / 64] >> ((cpu) % 64)) & 1ul)
++static inline int CPU_COUNT(const cpu_set_t *set) { int n = 0; for (unsigned long w : set->bits) n += __builtin_popcountl(w); return n; }
++static inline int sched_getaffinity(pid_t, size_t, cpu_set_t *set)
++{
++	memset(set, 0, sizeof *set);
++	const long online = sysconf(_SC_NPROCESSORS_ONLN);
++	for (long cpu = 0; cpu < online && cpu < 1024; cpu++)
++		CPU_SET(cpu, set);
++	return 0;
++}
++static inline int sched_getcpu() { return -1; }
++
++static inline int ppoll(struct pollfd *descriptors, nfds_t count, const struct timespec *timeout, const void *)
++{
++	return poll(descriptors, count, timeout ? int(timeout->tv_sec * 1000 + (timeout->tv_nsec + 999999) / 1000000) : -1);
++}
++#ifndef SI_KERNEL
++#define SI_KERNEL 0x80
++#endif
++#ifndef TRAP_HWBKPT
++#define TRAP_HWBKPT 4
++#endif
++#define GRND_NONBLOCK 1
++#define GRND_RANDOM 2
++static inline ssize_t getrandom(void *buffer, size_t length, unsigned)
++{
++	size_t done = 0;
++	while (done < length) {
++		const size_t chunk = length - done > 256 ? 256 : length - done;
++		if (getentropy(static_cast<char *>(buffer) + done, chunk) != 0)
++			return done ? ssize_t(done) : -1;
++		done += chunk;
++	}
++	return ssize_t(length);
++}
++#include <filesystem>
++#include <mach-o/dyld.h>
++// /proc/self/exe
++static inline std::filesystem::path raven_self_exe(std::error_code &error)
++{
++	char buffer[4096];
++	uint32_t size = sizeof buffer;
++	if (_NSGetExecutablePath(buffer, &size) != 0) {
++		error = std::make_error_code(std::errc::filename_too_long);
++		return {};
++	}
++	return std::filesystem::canonical(buffer, error);
++}
++static inline std::filesystem::path raven_self_exe()
++{
++	std::error_code error;
++	const auto path = raven_self_exe(error);
++	if (error)
++		throw std::filesystem::filesystem_error("cannot find the running program", error);
++	return path;
++}
++
++// the replacements for the /proc/<pid>/stat reads: state, and the CPU time in nanoseconds
++#include <libproc.h>
++#include <sys/proc_info.h>
++#include <sys/sysctl.h>
++struct RavenProcess { bool exists = false, zombie = false; unsigned long long cpu_ns = 0; };
++static inline RavenProcess raven_process(pid_t pid)
++{
++	RavenProcess result;
++	proc_taskallinfo info{};
++	if (proc_pidinfo(pid, PROC_PIDTASKALLINFO, 0, &info, sizeof info) == int(sizeof info)) {
++		result.exists = true;
++		result.zombie = info.pbsd.pbi_status == SZOMB;
++		result.cpu_ns = info.ptinfo.pti_total_user + info.ptinfo.pti_total_system;
++	}
++	return result;
++}
++static inline std::string raven_process_path(pid_t pid)
++{
++	char path[PROC_PIDPATHINFO_MAXSIZE];
++	const int length = proc_pidpath(pid, path, sizeof path);
++	return length > 0 ? std::string(path, size_t(length)) : std::string();
++}
++// fcntl: sealing is not available; sealed objects are only a safety net, so the requests succeed
++template <class... Arguments> static inline int raven_fcntl(int descriptor, int command, Arguments... arguments)
++{
++	if (command == F_ADD_SEALS)
++		return 0;
++	if (command == F_GET_SEALS)
++		return 0xf;
++	return ::fcntl(descriptor, command, arguments...);
++}
++#define fcntl raven_fcntl
++#define socket raven_socket
++#define socketpair raven_socketpair
++#endif
+diff --git a/native/platform/futex_darwin.h b/native/platform/futex_darwin.h
+new file mode 100644
+index 0000000..63bc2be
+--- /dev/null
++++ b/native/platform/futex_darwin.h
+@@ -0,0 +1,9 @@
++// ClokeOS: futex on a word in shared memory (every process of the prefix maps it) through the ulock calls of libsystem_kernel
++#pragma once
++#include <cstdint>
++extern "C" int __ulock_wait(uint32_t operation, void *address, uint64_t value, uint32_t timeout_us);
++extern "C" int __ulock_wake(uint32_t operation, void *address, uint64_t wake_value);
++#define RAVEN_UL_COMPARE_AND_WAIT_SHARED 3u
++#define RAVEN_ULF_WAKE_ALL 0x100u
++#define RAVEN_FUTEX_WAKE_ALL(word) __ulock_wake(RAVEN_UL_COMPARE_AND_WAIT_SHARED | RAVEN_ULF_WAKE_ALL, (word), 0)
++#define RAVEN_FUTEX_WAIT(word, seen) __ulock_wait(RAVEN_UL_COMPARE_AND_WAIT_SHARED, (word), (seen), 0)
+diff --git a/native/platform/include/sys/eventfd.h b/native/platform/include/sys/eventfd.h
+new file mode 100644
+index 0000000..4136743
+--- /dev/null
++++ b/native/platform/include/sys/eventfd.h
+@@ -0,0 +1,39 @@
++// ClokeOS: eventfd as a datagram socket connected to itself: write(8 bytes) posts an event, read returns one
++#pragma once
++#include <cstdint>
++#include <cstdio>
++#include <fcntl.h>
++#include <sys/socket.h>
++#include <sys/un.h>
++#include <unistd.h>
++#include <cstring>
++#define EFD_CLOEXEC 0x80000
++#define EFD_NONBLOCK 0x800
++#define EFD_SEMAPHORE 1
++typedef uint64_t eventfd_t;
++static inline int eventfd(unsigned initial, int flags)
++{
++	static unsigned counter;
++	const int fd = ::socket(AF_UNIX, SOCK_DGRAM, 0);
++	if (fd < 0)
++		return -1;
++	sockaddr_un address{};
++	address.sun_family = AF_UNIX;
++	std::snprintf(address.sun_path, sizeof address.sun_path, "/tmp/.raven-ev.%d.%u", int(::getpid()), __atomic_add_fetch(&counter, 1, __ATOMIC_RELAXED));
++	address.sun_len = uint8_t(sizeof address);
++	if (::bind(fd, reinterpret_cast<sockaddr *>(&address), sizeof address) != 0 ||
++		::connect(fd, reinterpret_cast<sockaddr *>(&address), sizeof address) != 0) {
++		::close(fd);
++		return -1;
++	}
++	::unlink(address.sun_path);
++	if (flags & EFD_CLOEXEC)
++		::fcntl(fd, F_SETFD, FD_CLOEXEC);
++	if (flags & EFD_NONBLOCK)
++		::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
++	if (initial) {
++		const uint64_t value = initial;
++		[[maybe_unused]] const auto written = ::write(fd, &value, sizeof value);
++	}
++	return fd;
++}
+diff --git a/native/platform/include/sys/inotify.h b/native/platform/include/sys/inotify.h
+new file mode 100644
+index 0000000..51347f2
+--- /dev/null
++++ b/native/platform/include/sys/inotify.h
+@@ -0,0 +1,29 @@
++// ClokeOS: no inotify on XNU yet; change notifications report failure (FindFirstChangeNotification fails with an error)
++#pragma once
++#include <cerrno>
++#include <cstdint>
++#define IN_NONBLOCK 0x800
++#define IN_CLOEXEC 0x80000
++#define IN_ACCESS 0x1
++#define IN_MODIFY 0x2
++#define IN_ATTRIB 0x4
++#define IN_CLOSE_WRITE 0x8
++#define IN_CLOSE_NOWRITE 0x10
++#define IN_OPEN 0x20
++#define IN_MOVED_FROM 0x40
++#define IN_MOVED_TO 0x80
++#define IN_CREATE 0x100
++#define IN_DELETE 0x200
++#define IN_DELETE_SELF 0x400
++#define IN_MOVE_SELF 0x800
++#define IN_ONLYDIR 0x1000000
++#define IN_DONT_FOLLOW 0x2000000
++#define IN_EXCL_UNLINK 0x4000000
++#define IN_MASK_ADD 0x20000000
++#define IN_ISDIR 0x40000000
++#define IN_Q_OVERFLOW 0x4000
++#define IN_IGNORED 0x8000
++struct inotify_event { int wd; uint32_t mask, cookie, len; char name[]; };
++static inline int inotify_init1(int) { errno = ENOSYS; return -1; }
++static inline int inotify_add_watch(int, const char *, uint32_t) { errno = ENOSYS; return -1; }
++static inline int inotify_rm_watch(int, int) { errno = ENOSYS; return -1; }
+diff --git a/native/platform/include/sys/sysinfo.h b/native/platform/include/sys/sysinfo.h
+new file mode 100644
+index 0000000..dc34388
+--- /dev/null
++++ b/native/platform/include/sys/sysinfo.h
+@@ -0,0 +1,27 @@
++// ClokeOS: sysinfo from sysctl
++#pragma once
++#include <cstdint>
++#include <sys/sysctl.h>
++#include <sys/time.h>
++#include <sys/types.h>
++struct sysinfo { long uptime; unsigned long loads[3], totalram, freeram, sharedram, bufferram, totalswap, freeswap; unsigned short procs;
++	unsigned long totalhigh, freehigh; unsigned mem_unit; };
++static inline int sysinfo(struct sysinfo *info)
++{
++	*info = {};
++	uint64_t memory = 0;
++	size_t length = sizeof memory;
++	sysctlbyname("hw.memsize", &memory, &length, nullptr, 0);
++	timeval boot{};
++	length = sizeof boot;
++	int name[2] = {CTL_KERN, KERN_BOOTTIME};
++	if (sysctl(name, 2, &boot, &length, nullptr, 0) == 0) {
++		timeval now{};
++		gettimeofday(&now, nullptr);
++		info->uptime = long(now.tv_sec - boot.tv_sec);
++	}
++	info->totalram = memory;
++	info->freeram = memory / 2;
++	info->mem_unit = 1;
++	return 0;
++}
+diff --git a/native/platform/mach_guest.cpp b/native/platform/mach_guest.cpp
+new file mode 100644
+index 0000000..effc671
+--- /dev/null
++++ b/native/platform/mach_guest.cpp
+@@ -0,0 +1,646 @@
++// ClokeOS: guest-process control on XNU, see mach_guest.h
++#ifdef __APPLE__
++#include "platform/mach_guest.h"
++
++#include <atomic>
++#include <cerrno>
++#include <csignal>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <iostream>
++#include <mach/mach.h>
++#include <mach/mach_vm.h>
++#include <spawn.h>
++#include <sys/mman.h>
++#include <sys/wait.h>
++#include <stdexcept>
++#include <vector>
++
++extern char **environ;
++// Defined by darwin_compat.h as an alias of the Linux user_regs_struct
++#include "platform/darwin_compat.h"
++#undef ptrace
++
++namespace {
++
++std::mutex children_lock;
++std::mutex images_lock;
++std::map<int, std::pair<void *, size_t>> images;
++std::map<pid_t, raven::NativeChild *> children;
++
++#pragma pack(4)
++struct ExceptionRequest {
++	mach_msg_header_t head;
++	mach_msg_body_t body;
++	mach_msg_port_descriptor_t thread, task;
++	NDR_record_t ndr;
++	exception_type_t exception;
++	mach_msg_type_number_t code_count;
++	int64_t code[2];
++	char padding[512];
++};
++struct ExceptionReply {
++	mach_msg_header_t head;
++	NDR_record_t ndr;
++	kern_return_t result;
++};
++#pragma pack()
++
++[[noreturn]] void fail(const std::string &what, kern_return_t result)
++{
++	throw std::runtime_error("native " + what + ": " + mach_error_string(result));
++}
++
++void protect(mach_port_t task, uint64_t address, uint64_t size, int protection)
++{
++	vm_prot_t rights = VM_PROT_NONE;
++	if (protection & PROT_READ) rights |= VM_PROT_READ;
++	if (protection & PROT_WRITE) rights |= VM_PROT_WRITE;
++	if (protection & PROT_EXEC) rights |= VM_PROT_EXECUTE;
++	const auto result = mach_vm_protect(task, address, size, FALSE, rights);
++	if (result != KERN_SUCCESS) {
++		if (std::getenv("RAVEN_TRACE_API")) {
++			vm_region_basic_info_data_64_t info;
++			mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++			mach_port_t object;
++			mach_vm_address_t probe = address;
++			mach_vm_size_t probed = 0;
++			const auto found = mach_vm_region(task, &probe, &probed, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
++			std::fprintf(stderr, "raven: mprotect %llx+%llx to %d failed; region %llx+%llx found=%d prot=%d max=%d shared=%d\n", (unsigned long long)address,
++				(unsigned long long)size, int(rights), (unsigned long long)probe, (unsigned long long)probed, int(found), int(info.protection),
++				int(info.max_protection), int(info.shared));
++		}
++		fail("mprotect", result);
++	}
++}
++
++}
++
++void raven_register_image(int descriptor, void *storage, size_t size)
++{
++	std::lock_guard lock(images_lock);
++	images[descriptor] = {storage, size};
++}
++
++void raven_unregister_image(int descriptor)
++{
++	std::lock_guard lock(images_lock);
++	images.erase(descriptor);
++}
++
++long raven_ptrace(enum __ptrace_request request, pid_t pid, void *address, void *data)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) {
++		errno = ESRCH;
++		return -1;
++	}
++	return child->request(request, address, data);
++}
++
++ssize_t raven_process_vm_readv(pid_t pid, const struct iovec *local, unsigned long, const struct iovec *remote, unsigned long, unsigned long)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) { errno = ESRCH; return -1; }
++	return child->read_memory(reinterpret_cast<uint64_t>(remote->iov_base), local->iov_base, local->iov_len);
++}
++
++ssize_t raven_process_vm_writev(pid_t pid, const struct iovec *local, unsigned long, const struct iovec *remote, unsigned long, unsigned long)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) { errno = ESRCH; return -1; }
++	return child->write_memory(reinterpret_cast<uint64_t>(remote->iov_base), local->iov_base, local->iov_len);
++}
++
++namespace raven {
++
++NativeChild::NativeChild(std::span<const int>, const std::string &bootstrap, std::chrono::milliseconds timeout)
++	: deadline(std::chrono::steady_clock::now() + timeout)
++{
++	posix_spawnattr_t attributes;
++	posix_spawnattr_init(&attributes);
++	posix_spawnattr_setflags(&attributes, POSIX_SPAWN_START_SUSPENDED | POSIX_SPAWN_SETPGROUP);
++	posix_spawnattr_setpgroup(&attributes, 0);
++	char *arguments[] = {const_cast<char *>(bootstrap.c_str()), nullptr};
++	const int spawned = posix_spawn(&pid, bootstrap.c_str(), nullptr, &attributes, arguments, environ);
++	posix_spawnattr_destroy(&attributes);
++	if (spawned != 0) {
++		pid = -1;
++		throw std::runtime_error("cannot start native guest: " + std::string(std::strerror(spawned)));
++	}
++	mach_port_t guest_task = MACH_PORT_NULL;
++	kern_return_t result = task_for_pid(mach_task_self(), pid, &guest_task);
++	if (result != KERN_SUCCESS) {
++		kill(pid, SIGKILL);
++		waitpid(pid, nullptr, 0);
++		pid = -1;
++		fail("task_for_pid (run as root)", result);
++	}
++	task = guest_task;
++	mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &exception_port);
++	mach_port_insert_right(mach_task_self(), exception_port, exception_port, MACH_MSG_TYPE_MAKE_SEND);
++	result = task_set_exception_ports(task, EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC |
++		EXC_MASK_SOFTWARE | EXC_MASK_EMULATION, exception_port, EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES, x86_THREAD_STATE64);
++	if (result != KERN_SUCCESS) {
++		stop();
++		fail("task_set_exception_ports", result);
++	}
++	{
++		std::lock_guard lock(children_lock);
++		children[pid] = this;
++	}
++	listener = std::thread([this] { listen(); });
++	try {
++		task_resume(task);
++		const int status = wait();
++		if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP)
++			throw std::runtime_error("native bootstrap did not reach setup trap");
++		user_regs_struct registers{};
++		request(PTRACE_GETREGS, nullptr, &registers);
++		gate = registers.rip - 1;
++		uint32_t code = 0;
++		if (read_memory(gate, &code, sizeof code) != ssize_t(sizeof code) || code != 0xcc050fcc)
++			throw std::runtime_error("native bootstrap syscall gate is invalid");
++	} catch (...) {
++		stop();
++		throw;
++	}
++}
++
++NativeChild::~NativeChild()
++{
++	stop();
++}
++
++void NativeChild::set_timeout(std::chrono::milliseconds timeout)
++{
++	if (timeout.count() <= 0)
++		throw std::runtime_error("native execution requires a positive timeout");
++	deadline = std::chrono::steady_clock::now() + timeout;
++}
++
++void NativeChild::enable_parallel()
++{
++	throw std::runtime_error("parallel native execution is not supported on ClokeOS");
++}
++
++pid_t NativeChild::clone_task(uint64_t)
++{
++	throw std::runtime_error("parallel native execution is not supported on ClokeOS");
++}
++
++void NativeChild::stop()
++{
++	closing = true;
++	if (pid != -1) {
++		{
++			std::lock_guard lock(children_lock);
++			children.erase(pid);
++		}
++		kill(pid, SIGKILL);
++	}
++	if (listener.joinable())
++		listener.join();
++	if (pid != -1) {
++		int status = 0;
++		while (waitpid(pid, &status, 0) == -1 && errno == EINTR) {}
++		pid = -1;
++	}
++	if (thread != MACH_PORT_NULL) {
++		mach_port_deallocate(mach_task_self(), thread);
++		thread = MACH_PORT_NULL;
++	}
++	if (exception_port != MACH_PORT_NULL) {
++		mach_port_destroy(mach_task_self(), exception_port);
++		exception_port = MACH_PORT_NULL;
++	}
++	if (task != MACH_PORT_NULL) {
++		mach_port_deallocate(mach_task_self(), task);
++		task = MACH_PORT_NULL;
++	}
++	pending = false;
++}
++
++void NativeChild::listen()
++{
++	ExceptionRequest message;
++	while (!closing) {
++		const kern_return_t result = mach_msg(&message.head, MACH_RCV_MSG | MACH_RCV_TIMEOUT, 0, sizeof message, exception_port, 20, MACH_PORT_NULL);
++		if (result == KERN_SUCCESS) {
++			Event event{Event::stopped, 0, message.thread.name, SIGSEGV, 0, 0, {}};
++			if (message.task.name != MACH_PORT_NULL)
++				mach_port_deallocate(mach_task_self(), message.task.name);
++			const int64_t code0 = message.code_count > 0 ? message.code[0] : 0;
++			const int64_t code1 = message.code_count > 1 ? message.code[1] : 0;
++			switch (message.exception) {
++			case EXC_BREAKPOINT:
++				event.signal = SIGTRAP;
++				event.code = code0 == 1 ? 2 /* TRAP_TRACE */ : 1 /* TRAP_BRKPT */;
++				break;
++			case EXC_BAD_ACCESS:
++				event.signal = SIGSEGV;
++				event.code = code0 == KERN_INVALID_ADDRESS ? 1 : code0 == KERN_PROTECTION_FAILURE ? 2 : 0x80;
++				event.address = code0 == KERN_INVALID_ADDRESS || code0 == KERN_PROTECTION_FAILURE ? uint64_t(code1) : 0;
++				break;
++			case EXC_BAD_INSTRUCTION:
++				event.signal = SIGILL;
++				event.code = 1;
++				break;
++			case EXC_ARITHMETIC:
++				event.signal = SIGFPE;
++				event.code = 1;
++				break;
++			default:
++				event.signal = SIGILL;
++				event.code = 1;
++			}
++			event.message.assign(reinterpret_cast<uint8_t *>(&message.head), reinterpret_cast<uint8_t *>(&message.head) + sizeof message.head);
++			{
++				std::lock_guard lock(mutex);
++				events.push_back(std::move(event));
++			}
++			ready.notify_all();
++			continue;
++		}
++		int status = 0;
++		const pid_t exited = waitpid(pid, &status, WNOHANG);
++		if (exited == pid && (WIFEXITED(status) || WIFSIGNALED(status))) {
++			{
++				std::lock_guard lock(mutex);
++				events.push_back(Event{Event::exited, status, 0, 0, 0, 0, {}});
++			}
++			ready.notify_all();
++			return;
++		}
++	}
++}
++
++int NativeChild::wait(const std::function<bool()> *)
++{
++	std::unique_lock lock(mutex);
++	if (!ready.wait_until(lock, deadline, [&] { return !events.empty(); }))
++		return -1;
++	Event event = std::move(events.front());
++	events.pop_front();
++	if (event.kind == Event::exited) {
++		pid = -1;
++		return event.status;
++	}
++	if (thread != MACH_PORT_NULL && thread != event.thread)
++		mach_port_deallocate(mach_task_self(), thread);
++	thread = event.thread;
++	pending = true;
++	pending_message = std::move(event.message);
++	last_signal = event.signal;
++	last_code = event.code;
++	last_address = event.address;
++	return (event.signal << 8) | 0x7f;
++}
++
++void NativeChild::reply(kern_return_t result)
++{
++	if (!pending)
++		return;
++	pending = false;
++	mach_msg_header_t request;
++	std::memcpy(&request, pending_message.data(), sizeof request);
++	ExceptionReply answer{};
++	answer.head.msgh_bits = MACH_MSGH_BITS(MACH_MSGH_BITS_REMOTE(request.msgh_bits), 0);
++	answer.head.msgh_size = sizeof answer;
++	answer.head.msgh_remote_port = request.msgh_remote_port;
++	answer.head.msgh_local_port = MACH_PORT_NULL;
++	answer.head.msgh_id = request.msgh_id + 100;
++	answer.ndr = NDR_record;
++	answer.result = result;
++	mach_msg(&answer.head, MACH_SEND_MSG | MACH_SEND_TIMEOUT, sizeof answer, 0, MACH_PORT_NULL, 1000, MACH_PORT_NULL);
++}
++
++ssize_t NativeChild::read_memory(uint64_t address, void *buffer, size_t size)
++{
++	mach_vm_size_t done = 0;
++	const kern_return_t result = mach_vm_read_overwrite(task, address, size, reinterpret_cast<mach_vm_address_t>(buffer), &done);
++	if (result != KERN_SUCCESS) {
++		errno = EFAULT;
++		return -1;
++	}
++	return ssize_t(done);
++}
++
++ssize_t NativeChild::write_memory(uint64_t address, const void *buffer, size_t size)
++{
++	const kern_return_t result = mach_vm_write(task, address, reinterpret_cast<vm_offset_t>(buffer), mach_msg_type_number_t(size));
++	if (result != KERN_SUCCESS) {
++		errno = EFAULT;
++		return -1;
++	}
++	return ssize_t(size);
++}
++
++void NativeChild::set_gs_base(uint64_t base)
++{
++	if (base == gs_base)
++		return;
++	// The guest sets its own GS base: the thread runs the machine-dependent call _thread_set_tsd_base at the bootstrap gate and stops
++	// at the next trap there; its registers are put back afterwards.
++	x86_thread_state64_t saved;
++	mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
++	if (thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&saved), &count) != KERN_SUCCESS)
++		throw std::runtime_error("cannot read guest registers");
++	x86_thread_state64_t call = saved;
++	call.__rip = gate + 1;
++	call.__rax = 0x3000003;
++	call.__rdi = base;
++	call.__rsi = 0;
++	thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&call), count);
++	reply(KERN_SUCCESS);
++	const auto previous = deadline;
++	deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
++	const int status = wait();
++	deadline = previous;
++	if (!WIFSTOPPED(status) || WSTOPSIG(status) != SIGTRAP)
++		throw std::runtime_error("native GS base call did not reach its trap");
++	count = x86_THREAD_STATE64_COUNT;
++	x86_thread_state64_t after;
++	thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&after), &count);
++	if (after.__rip != gate + 4)
++		throw std::runtime_error("native GS base call stopped outside its gate");
++	thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&saved), x86_THREAD_STATE64_COUNT);
++	gs_base = base;
++}
++
++long NativeChild::request(enum __ptrace_request operation, void *address, void *data)
++{
++	switch (operation) {
++	case PTRACE_CONT:
++	case PTRACE_SYSEMU:
++		if (!pending) {
++			errno = ESRCH;
++			return -1;
++		}
++		reply(KERN_SUCCESS);
++		return 0;
++	case PTRACE_SINGLESTEP: {
++		x86_thread_state64_t state;
++		mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
++		thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), &count);
++		state.__rflags |= 0x100;
++		thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), count);
++		reply(KERN_SUCCESS);
++		return 0;
++	}
++	case PTRACE_SETOPTIONS:
++		return 0;
++	case PTRACE_GETREGS: {
++		if (!pending) { errno = ESRCH; return -1; }
++		x86_thread_state64_t state;
++		mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
++		if (thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), &count) != KERN_SUCCESS) {
++			errno = ESRCH;
++			return -1;
++		}
++		auto &r = *static_cast<user_regs_struct *>(data);
++		r = {};
++		r.r15 = state.__r15; r.r14 = state.__r14; r.r13 = state.__r13; r.r12 = state.__r12; r.rbp = state.__rbp; r.rbx = state.__rbx;
++		r.r11 = state.__r11; r.r10 = state.__r10; r.r9 = state.__r9; r.r8 = state.__r8; r.rax = state.__rax; r.rcx = state.__rcx;
++		r.rdx = state.__rdx; r.rsi = state.__rsi; r.rdi = state.__rdi; r.orig_rax = uint64_t(-1); r.rip = state.__rip;
++		r.cs = state.__cs; r.eflags = state.__rflags; r.rsp = state.__rsp; r.ss = 0x2b; r.fs_base = 0; r.gs_base = gs_base;
++		r.fs = state.__fs; r.gs = state.__gs;
++		return 0;
++	}
++	case PTRACE_SETREGS: {
++		if (!pending) { errno = ESRCH; return -1; }
++		const auto &r = *static_cast<const user_regs_struct *>(data);
++		x86_thread_state64_t state;
++		mach_msg_type_number_t count = x86_THREAD_STATE64_COUNT;
++		if (thread_get_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), &count) != KERN_SUCCESS) {
++			errno = ESRCH;
++			return -1;
++		}
++		state.__r15 = r.r15; state.__r14 = r.r14; state.__r13 = r.r13; state.__r12 = r.r12; state.__rbp = r.rbp; state.__rbx = r.rbx;
++		state.__r11 = r.r11; state.__r10 = r.r10; state.__r9 = r.r9; state.__r8 = r.r8; state.__rax = r.rax; state.__rcx = r.rcx;
++		state.__rdx = r.rdx; state.__rsi = r.rsi; state.__rdi = r.rdi; state.__rip = r.rip; state.__rflags = r.eflags; state.__rsp = r.rsp;
++		if (thread_set_state(thread, x86_THREAD_STATE64, reinterpret_cast<thread_state_t>(&state), count) != KERN_SUCCESS) {
++			errno = EIO;
++			return -1;
++		}
++		if (r.gs_base != gs_base)
++			set_gs_base(r.gs_base);
++		return 0;
++	}
++	case PTRACE_GETSIGINFO: {
++		auto *info = static_cast<siginfo_t *>(data);
++		*info = {};
++		info->si_signo = last_signal;
++		info->si_code = last_code;
++		info->si_addr = reinterpret_cast<void *>(last_address);
++		return 0;
++	}
++	case PTRACE_GETFPREGS: {
++		if (!pending) { errno = ESRCH; return -1; }
++		x86_float_state64_t plain;
++		mach_msg_type_number_t count = x86_FLOAT_STATE64_COUNT;
++		if (thread_get_state(thread, x86_FLOAT_STATE64, reinterpret_cast<thread_state_t>(&plain), &count) != KERN_SUCCESS) {
++			errno = EIO;
++			return -1;
++		}
++		std::memcpy(data, &plain.__fpu_fcw, 512);
++		return 0;
++	}
++	case PTRACE_GETREGSET:
++	case PTRACE_SETREGSET: {
++		if (!pending) { errno = ESRCH; return -1; }
++		auto *vector = static_cast<iovec *>(data);
++		const bool avx = true;
++		x86_avx_state64_t state;
++		mach_msg_type_number_t count = x86_AVX_STATE64_COUNT;
++		kern_return_t result = thread_get_state(thread, x86_AVX_STATE64, reinterpret_cast<thread_state_t>(&state), &count);
++		bool have_avx = avx && result == KERN_SUCCESS;
++		if (!have_avx) {
++			x86_float_state64_t plain;
++			count = x86_FLOAT_STATE64_COUNT;
++			if (thread_get_state(thread, x86_FLOAT_STATE64, reinterpret_cast<thread_state_t>(&plain), &count) != KERN_SUCCESS) {
++				errno = EIO;
++				return -1;
++			}
++			std::memset(&state, 0, sizeof state);
++			std::memcpy(&state, &plain, sizeof plain);
++		}
++		const size_t size = have_avx ? 832 : 576;
++		auto *fx = reinterpret_cast<uint8_t *>(&state.__fpu_fcw);
++		auto *high = reinterpret_cast<uint8_t *>(&state.__fpu_ymmh0);
++		if (operation == PTRACE_GETREGSET) {
++			if (vector->iov_len < size) { errno = EINVAL; return -1; }
++			auto *out = static_cast<uint8_t *>(vector->iov_base);
++			std::memset(out, 0, size);
++			std::memcpy(out, fx, 512);
++			const uint64_t mask = have_avx ? 7 : 3;
++			std::memcpy(out + 512, &mask, 8);
++			if (have_avx)
++				std::memcpy(out + 576, high, 256);
++			vector->iov_len = size;
++			return 0;
++		}
++		if (vector->iov_len < 512) { errno = EINVAL; return -1; }
++		const auto *in = static_cast<const uint8_t *>(vector->iov_base);
++		std::memcpy(fx, in, 512);
++		if (have_avx && vector->iov_len >= 832)
++			std::memcpy(high, in + 576, 256);
++		const kern_return_t set = have_avx ? thread_set_state(thread, x86_AVX_STATE64, reinterpret_cast<thread_state_t>(&state), x86_AVX_STATE64_COUNT) :
++			thread_set_state(thread, x86_FLOAT_STATE64, reinterpret_cast<thread_state_t>(&state), x86_FLOAT_STATE64_COUNT);
++		if (set != KERN_SUCCESS) { errno = EIO; return -1; }
++		return 0;
++	}
++	case PTRACE_PEEKTEXT:
++	case PTRACE_PEEKDATA: {
++		uint64_t word = 0;
++		errno = 0;
++		if (read_memory(reinterpret_cast<uint64_t>(address), &word, sizeof word) != ssize_t(sizeof word)) {
++			errno = EIO;
++			return -1;
++		}
++		return long(word);
++	}
++	case PTRACE_POKEUSER:
++		return 0;
++	default:
++		errno = ENOSYS;
++		return -1;
++	}
++}
++
++uint64_t NativeChild::syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6)
++{
++	switch (number) {
++	case SYS_mmap: {
++		uint64_t address = a1;
++		const uint64_t size = a2;
++		const int protection = int(a3), flags = int(a4);
++		const int descriptor = int(a5);
++		const uint64_t offset = a6;
++		const bool fixed = flags & (MAP_FIXED | MAP_FIXED_NOREPLACE);
++		const int placement = (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE) | ((flags & MAP_FIXED) ? VM_FLAGS_OVERWRITE : 0);
++		kern_return_t result;
++		if (flags & MAP_ANON) {
++			if (flags & MAP_FIXED)
++				mach_vm_deallocate(task, address, size);
++			mach_vm_address_t where = address;
++			result = mach_vm_allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
++			if (result != KERN_SUCCESS)
++				fail("mmap", result);
++			if (protection != (PROT_READ | PROT_WRITE))
++				protect(task, where, size, protection);
++			return where;
++		}
++		std::pair<void *, size_t> image{nullptr, 0};
++		{
++			std::lock_guard lock(images_lock);
++			const auto found = images.find(descriptor);
++			if (found != images.end())
++				image = found->second;
++		}
++		if (image.first && offset == 0 && size <= image.second) {
++			// a PE image: its pages are copied into guest memory and the host's view is replaced by a shared view of them
++			if (flags & MAP_FIXED)
++				mach_vm_deallocate(task, address, size);
++			mach_vm_address_t where = address;
++			result = mach_vm_allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
++			if (result != KERN_SUCCESS)
++				fail("mmap of an image", result);
++			result = mach_vm_write(task, where, reinterpret_cast<vm_offset_t>(image.first), mach_msg_type_number_t(size));
++			if (result != KERN_SUCCESS)
++				fail("copy of an image", result);
++			vm_address_t host = reinterpret_cast<vm_address_t>(image.first);
++			vm_prot_t current = VM_PROT_NONE, maximum = VM_PROT_NONE;
++			result = vm_remap(mach_task_self(), &host, size, 0, VM_FLAGS_FIXED | VM_FLAGS_OVERWRITE, task, where, FALSE, &current, &maximum, VM_INHERIT_NONE);
++			if (result != KERN_SUCCESS)
++				fail("sharing of an image", result);
++			if (protection != (PROT_READ | PROT_WRITE))
++				protect(task, where, size, protection);
++			return where;
++		}
++		// a shared object: the host maps it, a memory entry names its pages, and the guest maps the entry
++		void *view = mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_SHARED, descriptor, off_t(offset));
++		if (view == MAP_FAILED)
++			view = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, off_t(offset));
++		if (view == MAP_FAILED)
++			throw std::runtime_error("native mmap: cannot map the shared object in the host: " + std::string(std::strerror(errno)));
++		// vm_remap without copying shares the host's pages with the guest
++		vm_address_t remapped = address;
++		vm_prot_t current = VM_PROT_NONE, maximum = VM_PROT_NONE;
++		const int remap_flags = (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE) | ((flags & MAP_FIXED) ? VM_FLAGS_OVERWRITE : 0);
++		result = vm_remap(task, &remapped, size, 0, remap_flags, mach_task_self(), reinterpret_cast<vm_address_t>(view), FALSE, &current, &maximum,
++			VM_INHERIT_NONE);
++		munmap(view, size);
++		if (result != KERN_SUCCESS)
++			fail("mmap of a shared object", result);
++		const mach_vm_address_t where = remapped;
++		if (protection != (VM_PROT_READ | VM_PROT_WRITE))
++			protect(task, where, size, protection);
++		return where;
++	}
++	case SYS_mprotect:
++		protect(task, a1, a2, int(a3));
++		return 0;
++	case SYS_munmap: {
++		const auto result = mach_vm_deallocate(task, a1, a2);
++		if (result != KERN_SUCCESS)
++			fail("munmap", result);
++		return 0;
++	}
++	case SYS_madvise: {
++		// MADV_DONTNEED: the pages read as zero again
++		mach_vm_address_t where = a1;
++		mach_vm_size_t size = a2;
++		vm_region_basic_info_data_64_t info;
++		mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++		mach_port_t object;
++		mach_vm_address_t probe = a1;
++		mach_vm_size_t probed = 0;
++		if (mach_vm_region(task, &probe, &probed, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object) != KERN_SUCCESS || probe > a1)
++			return 0;
++		const vm_prot_t rights = info.protection;
++		mach_vm_deallocate(task, where, size);
++		if (mach_vm_allocate(task, &where, size, VM_FLAGS_FIXED) != KERN_SUCCESS)
++			throw std::runtime_error("native madvise: cannot re-create the pages");
++		if (rights != (VM_PROT_READ | VM_PROT_WRITE))
++			mach_vm_protect(task, where, size, FALSE, rights);
++		return 0;
++	}
++	case SYS_openat: {
++		// the descriptor named as /proc/<pid>/fd/<n> is the host's own: the guest and the host share one descriptor table here
++		char path[128] = {};
++		if (read_memory(a2, path, sizeof path - 1) < 0)
++			throw std::runtime_error("native openat: cannot read the path");
++		const char *marker = std::strstr(path, "/fd/");
++		if (!marker)
++			throw std::runtime_error("native openat: unsupported path");
++		return uint64_t(std::atoi(marker + 4));
++	}
++	case SYS_close:
++		return 0;
++	default:
++		throw std::runtime_error("native syscall " + std::to_string(number) + " is not available on ClokeOS");
++	}
++}
++
++}
++#endif
+diff --git a/native/platform/mach_guest.h b/native/platform/mach_guest.h
+new file mode 100644
+index 0000000..f1c1d1a
+--- /dev/null
++++ b/native/platform/mach_guest.h
+@@ -0,0 +1,153 @@
++// ClokeOS: the guest-process control of cpu/native_cpu.cpp on XNU. Raven drives its x86-64 guest with ptrace (stops, registers,
++// memory, injected system calls); here the same operations are made from a Mach task port and exception messages, and
++// ptrace() and the wait statuses are emulated on top of them so that native_cpu.cpp stays as it is.
++#pragma once
++#ifdef __APPLE__
++#include <chrono>
++#include <condition_variable>
++#include <cstdint>
++#include <deque>
++#include <functional>
++#include <map>
++#include <mutex>
++#include <optional>
++#include <span>
++#include <string>
++#include <thread>
++#include <mach/kern_return.h>
++#include <sys/types.h>
++#include <sys/uio.h>
++
++// Linux numbers: only tokens for NativeChild::syscall, which maps them to Mach VM calls
++#undef SYS_mmap
++#undef SYS_mprotect
++#undef SYS_munmap
++#undef SYS_madvise
++#undef SYS_close
++#undef SYS_openat
++#undef SYS_recvmsg
++#undef SYS_clone
++#undef SYS_modify_ldt
++#undef SYS_prctl
++#undef SYS_seccomp
++#define SYS_close 3
++#define SYS_mmap 9
++#define SYS_mprotect 10
++#define SYS_munmap 11
++#define SYS_madvise 28
++#define SYS_recvmsg 47
++#define SYS_clone 56
++#define SYS_modify_ldt 154
++#define SYS_prctl 157
++#define SYS_openat 257
++#define SYS_seccomp 317
++#define MAP_FIXED_NOREPLACE 0x00100000
++#define MAP_32BIT 0x00400000
++#define MADV_DONTNEED_LINUX 4
++#ifndef AT_FDCWD
++#define AT_FDCWD (-100)
++#endif
++#ifndef MSG_CMSG_CLOEXEC
++#define MSG_CMSG_CLOEXEC 0
++#endif
++#ifndef MSG_NOSIGNAL
++#define MSG_NOSIGNAL 0
++#endif
++#define __WALL 0
++
++enum __ptrace_request {
++	PTRACE_TRACEME = 0, PTRACE_PEEKTEXT = 1, PTRACE_PEEKDATA = 2, PTRACE_PEEKUSER = 3, PTRACE_POKEUSER = 6, PTRACE_CONT = 7,
++	PTRACE_SINGLESTEP = 9, PTRACE_GETREGS = 12, PTRACE_SETREGS = 13, PTRACE_GETFPREGS = 14, PTRACE_SYSEMU = 31, PTRACE_SETOPTIONS = 0x4200,
++	PTRACE_GETEVENTMSG = 0x4201, PTRACE_GETSIGINFO = 0x4202, PTRACE_GETREGSET = 0x4204, PTRACE_SETREGSET = 0x4205,
++};
++#define PTRACE_O_EXITKILL 0
++#define PTRACE_O_TRACESYSGOOD 0
++#define PTRACE_O_TRACECLONE 0
++#define PTRACE_O_TRACESECCOMP 0
++#define PTRACE_EVENT_CLONE 3
++#define PTRACE_EVENT_SECCOMP 7
++#define NT_X86_XSTATE 0x202
++#ifndef TRAP_BRKPT
++#define TRAP_BRKPT 1
++#endif
++#ifndef TRAP_TRACE
++#define TRAP_TRACE 2
++#endif
++
++#define RAVEN_DEBUGREG_OFFSET 0
++struct user_fpregs_struct { unsigned char head[160]; unsigned int xmm_space[64]; unsigned char tail[96]; };
++
++// the ptrace requests of native_cpu.cpp; pid names a NativeChild
++long raven_ptrace(enum __ptrace_request request, pid_t pid, void *address, void *data);
++#define ptrace raven_ptrace
++ssize_t raven_process_vm_readv(pid_t pid, const struct iovec *local, unsigned long local_count, const struct iovec *remote, unsigned long remote_count, unsigned long flags);
++ssize_t raven_process_vm_writev(pid_t pid, const struct iovec *local, unsigned long local_count, const struct iovec *remote, unsigned long remote_count, unsigned long flags);
++#define process_vm_readv raven_process_vm_readv
++#define process_vm_writev raven_process_vm_writev
++
++// A PE image is backed by a shared memory object that cannot be mapped executable; mapping it into the guest copies it into guest memory
++// and re-points the host's view at those pages.
++void raven_register_image(int descriptor, void *storage, size_t size);
++void raven_unregister_image(int descriptor);
++
++namespace raven {
++
++class NativeChild {
++public:
++	NativeChild(std::span<const int> image_fds, const std::string &bootstrap, std::chrono::milliseconds timeout);
++	~NativeChild();
++	NativeChild(const NativeChild &) = delete;
++	NativeChild &operator=(const NativeChild &) = delete;
++	pid_t pid = -1;
++	uint64_t gate = 0;
++	int wait(const std::function<bool()> *served = nullptr);
++	uint64_t syscall(uint64_t number, uint64_t a1 = 0, uint64_t a2 = 0, uint64_t a3 = 0, uint64_t a4 = 0, uint64_t a5 = 0, uint64_t a6 = 0);
++	void stop();
++	void send_descriptor(int) {}
++	int descriptor_socket() const { return -1; }
++	void set_timeout(std::chrono::milliseconds timeout);
++	void enable_parallel();
++	pid_t clone_task(uint64_t);
++	bool take_stop(pid_t, int &) { return false; }
++	void stop_task(pid_t) {}
++	void pause_task() {}
++	int execution_descriptor() const { return -1; }
++	void drain_execution() {}
++	void set_slice(std::chrono::steady_clock::duration) {}
++	void ensure_slice(std::chrono::steady_clock::time_point) {}
++	void clear_slice() {}
++
++	// the emulated ptrace operations
++	long request(enum __ptrace_request request, void *address, void *data);
++	ssize_t read_memory(uint64_t address, void *buffer, size_t size);
++	ssize_t write_memory(uint64_t address, const void *buffer, size_t size);
++
++private:
++	struct Event {
++		enum Kind { stopped, exited } kind;
++		int status;
++		uint32_t thread;
++		int signal, code;
++		uint64_t address;
++		std::vector<uint8_t> message;
++	};
++	void listen();
++	void reply(kern_return_t result);
++	void set_gs_base(uint64_t base);
++	uint32_t task = 0, exception_port = 0, thread = 0;
++	std::chrono::steady_clock::time_point deadline;
++	std::thread listener;
++	std::mutex mutex;
++	std::condition_variable ready;
++	std::deque<Event> events;
++	std::atomic<bool> closing{false};
++	bool pending = false;
++	std::vector<uint8_t> pending_message;
++	int last_signal = 0, last_code = 0;
++	uint64_t last_address = 0;
++	uint64_t gs_base = 0;
++	std::map<uint64_t, uint64_t> host_views;
++};
++
++}
++#endif
+diff --git a/native/platform/patch_libcxx.py b/native/platform/patch_libcxx.py
+new file mode 100644
+index 0000000..54d58db
+--- /dev/null
++++ b/native/platform/patch_libcxx.py
+@@ -0,0 +1,23 @@
++#!/usr/bin/env python3
++"""PureDarwin's libc++.1.dylib (20.5) has std::uncaught_exceptions() as an abort ("not yet implemented"); iostream sentries
++inside the library call it. Replaces its first bytes by `xor eax,eax; ret` (no exception in flight).
++
++  patch_libcxx.py <in> <out>
++"""
++import subprocess
++import sys
++
++src, dst = sys.argv[1], sys.argv[2]
++data = bytearray(open(src, 'rb').read())
++out = subprocess.run(['nm', '-m', src], capture_output=True, text=True, check=True).stdout
++offset = None
++for line in out.splitlines():
++    if line.endswith('__ZSt19uncaught_exceptionsv') and '(__TEXT,__text)' in line:
++        offset = int(line.split()[0], 16)
++if offset is None:
++    sys.exit('uncaught_exceptions not found')
++# __TEXT starts at file offset 0 and vm address 0 in PureDarwin's libc++
++assert bytes(data[offset:offset + 1]) != b'\x31', 'already patched'
++data[offset:offset + 3] = b'\x31\xc0\xc3'
++open(dst, 'wb').write(data)
++print('patched uncaught_exceptions at', hex(offset))

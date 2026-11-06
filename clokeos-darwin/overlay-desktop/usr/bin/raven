@@ -1,0 +1,16 @@
+#!/bin/sh
+# ClokeOS: Startskript für Raven (Windows-Programme ohne Wine, nur x86_64).
+#   raven programm.exe [argumente]    startet ein Windows-Programm; der Windows-Prefix liegt in ~/Library/Raven
+#   raven --inspect programm.exe      weitere Raven-Befehle werden unverändert durchgereicht
+dir=/usr/libexec/raven
+[ -x "$dir/raven" ] || { echo "raven: auf dieser Architektur nicht installiert" >&2; exit 127; }
+: "${RAVEN_PREFIX:=$HOME/Library/Raven}"
+export RAVEN_PREFIX
+mkdir -p "$RAVEN_PREFIX"
+case "$1" in
+  --*) exec "$dir/raven" "$@" ;;
+  "") exec "$dir/raven" ;;
+esac
+program=$1
+shift
+exec "$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit --desktop=x11 "$program" -- "$@"

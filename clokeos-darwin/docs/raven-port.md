@@ -53,3 +53,27 @@ Raven runs the program's x86-64 machine code natively in a child process and ans
 
 License: Raven is GPL-3.0 with MIT guest adapters (`LICENSES.md`). ClokeOS releases that ship Raven must offer the
 corresponding source (Raven's own `packaging.md` describes the two-archive scheme).
+
+## Status (2026-11-06): first x64 PE runs
+
+`raven/build.sh` builds Raven for x86_64-apple-macos11 on the Mac (clone of upstream commit `387c718`, `raven/raven-darwin.patch` applied,
+CMake + Ninja, no Vulkan/OpenSSL/Skia/FreeType/libpng/pixman). In the x86_64 VM, as root:
+
+    raven --run-entry --execution=native entry.exe      ->  Native entry returned 42
+
+`entry.exe` is an import-free PE64 (`mov eax,42; ret`); the PE image is mapped into a Mach task, API/return traps arrive as Mach
+exceptions, registers and XSTATE go through `thread_get_state`, memory through `mach_vm_*`. What the port contains:
+
+* `native/platform/mach_guest.{h,cpp}`: `NativeChild` on XNU (posix_spawn suspended + `task_for_pid` + exception port + listener thread),
+  an emulated `ptrace()` and `process_vm_*`, Linux `mmap/mprotect/munmap/madvise` mapped to `mach_vm_*`, the guest's GS base set by running
+  `_thread_set_tsd_base` at the bootstrap gate. `native_cpu.cpp` keeps its ptrace-shaped logic and only includes this instead of the Linux code.
+* `native/platform/darwin_compat.h` (force-included): `user_regs_struct`, `memfd_create` (POSIX shm), `SOCK_CLOEXEC`/`accept4`/`pipe2`,
+  `SO_PEERCRED`, `getrandom`, `eventfd` (self-connected datagram socket), `inotify` stub, `sysinfo`, `/proc/self/exe`, process queries via libproc.
+* PureDarwin traps found on the way: shared memory objects cannot be mapped executable (PE images are copied into guest pages and the
+  host view is re-pointed at them with `vm_remap`), there is no `mach_make_memory_entry_64`/`task_terminate`, `pwrite` fails on shm,
+  `fstat` of shm reports page-rounded sizes, and its libc++ aborts in `std::uncaught_exceptions()` and every `std::exception_ptr`
+  (`native/platform/patch_libcxx.py` patches the first, `PendingError` in `nt/threads.h` replaces the second).
+
+Not yet: programs with imports (`--run-process` needs Raven's component DLLs: `scripts/provision-*.py`, large downloads), the X11
+desktop (pixman, freetype, xcb for x86_64), non-root users (`task_for_pid`), the guest sandbox, time slicing and parallel threads,
+32-bit programs, `inotify`, `/proc`-based queries (network tables, memory statistics).
