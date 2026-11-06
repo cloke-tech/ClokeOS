@@ -83,7 +83,7 @@ index ea39cb0..a7d1add 100644
  .section .note.GNU-stack,"",@progbits
 +#endif
 diff --git a/native/cpu/native_cpu.cpp b/native/cpu/native_cpu.cpp
-index d3abdc2..84afc8a 100644
+index d3abdc2..ff6d0a8 100644
 --- a/native/cpu/native_cpu.cpp
 +++ b/native/cpu/native_cpu.cpp
 @@ -12,7 +12,9 @@
@@ -164,7 +164,19 @@ index d3abdc2..84afc8a 100644
  		if (ptrace(PTRACE_POKEUSER, pid, reinterpret_cast<void *>(offset), reinterpret_cast<void *>(value)) == -1)
  			throw std::runtime_error("cannot program the debug registers");
  	};
-@@ -2032,7 +2051,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
+@@ -1754,6 +1773,11 @@ NativeResult NativeProcess::begin_call(uint64_t address, std::span<const uint64_
+ 		throw std::runtime_error("native call exceeds initial argument limit");
+ 	if (!state->covers(address, 1, PROT_EXEC))
+ 		throw std::runtime_error("native entry is outside executable image memory");
++	if (std::getenv("RAVEN_TRACE_STOPS")) {
++		std::fprintf(stderr, "raven: call %llx args:", (unsigned long long)address);
++		for (auto argument : arguments) std::fprintf(stderr, " %llx", (unsigned long long)argument);
++		std::fprintf(stderr, "\n");
++	}
+ 	state->child->set_timeout(timeout);
+ 	if (state->mode == NativeMode::x86)
+ 		return begin_x86_call(address, arguments, stack_ceiling, timeout);
+@@ -2032,7 +2056,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
  	state->debug_print_fault=signal==SIGSEGV && info.si_code==SI_KERNEL && registers.rax==1;
  	if (signal == SIGTRAP && info.si_code == TRAP_HWBKPT) {
  		// Reading the stop reason is enough; DR6 must be cleared or the next trap reports a stale cause.
@@ -443,6 +455,23 @@ index e19f568..4db0741 100644
  	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
  	std::string text;
  	std::getline(stat, text);
+diff --git a/native/nt/providers.cpp b/native/nt/providers.cpp
+index 00fa140..0c3912e 100644
+--- a/native/nt/providers.cpp
++++ b/native/nt/providers.cpp
+@@ -1896,7 +1896,12 @@ std::vector<uint8_t> runtime_provider(std::string_view name, uint64_t base,
+ 		if (service) {
+ 			const std::array<uint8_t, 11> entry{0x4c, 0x8b, 0xd1, 0xb8, 0, 0, 0, 0, 0x0f, 0x05, 0xc3};
+ 			std::copy(entry.begin(), entry.end(), bytes.begin() + ptrdiff_t(code));
++#ifdef __APPLE__
++			// XNU raises EXC_SYSCALL for a Mach trap number it does not have; a plain number would run a BSD system call
++			put(code + 4, service | 0x1000000);
++#else
+ 			put(code + 4, service);
++#endif
+ 		}
+ 		if (!x86 && served_api(name, exports[index])) {
+ 			code = served_start + 64 + served_next++ * served_stub_size;
 diff --git a/native/nt/service_api.cpp b/native/nt/service_api.cpp
 index 0bec6ad..b3b063c 100644
 --- a/native/nt/service_api.cpp
@@ -1147,10 +1176,10 @@ index 0000000..dc34388
 +}
 diff --git a/native/platform/mach_guest.cpp b/native/platform/mach_guest.cpp
 new file mode 100644
-index 0000000..effc671
+index 0000000..496d178
 --- /dev/null
 +++ b/native/platform/mach_guest.cpp
-@@ -0,0 +1,646 @@
+@@ -0,0 +1,670 @@
 +// ClokeOS: guest-process control on XNU, see mach_guest.h
 +#ifdef __APPLE__
 +#include "platform/mach_guest.h"
@@ -1176,6 +1205,12 @@ index 0000000..effc671
 +#undef ptrace
 +
 +namespace {
++
++// PureDarwin's kernel prints a line for every mach_vm_allocate on another task; mach_vm_map without an object does the same silently
++kern_return_t allocate(mach_port_t task, mach_vm_address_t *address, mach_vm_size_t size, int flags)
++{
++	return mach_vm_map(task, address, size, 0, flags, MACH_PORT_NULL, 0, FALSE, VM_PROT_READ | VM_PROT_WRITE, VM_PROT_ALL, VM_INHERIT_NONE);
++}
 +
 +std::mutex children_lock;
 +std::mutex images_lock;
@@ -1312,7 +1347,7 @@ index 0000000..effc671
 +	mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &exception_port);
 +	mach_port_insert_right(mach_task_self(), exception_port, exception_port, MACH_MSG_TYPE_MAKE_SEND);
 +	result = task_set_exception_ports(task, EXC_MASK_BREAKPOINT | EXC_MASK_BAD_ACCESS | EXC_MASK_BAD_INSTRUCTION | EXC_MASK_ARITHMETIC |
-+		EXC_MASK_SOFTWARE | EXC_MASK_EMULATION, exception_port, EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES, x86_THREAD_STATE64);
++		EXC_MASK_SOFTWARE | EXC_MASK_EMULATION | EXC_MASK_SYSCALL | EXC_MASK_MACH_SYSCALL, exception_port, EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES, x86_THREAD_STATE64);
 +	if (result != KERN_SUCCESS) {
 +		stop();
 +		fail("task_set_exception_ports", result);
@@ -1413,10 +1448,26 @@ index 0000000..effc671
 +				event.signal = SIGSEGV;
 +				event.code = code0 == KERN_INVALID_ADDRESS ? 1 : code0 == KERN_PROTECTION_FAILURE ? 2 : 0x80;
 +				event.address = code0 == KERN_INVALID_ADDRESS || code0 == KERN_PROTECTION_FAILURE ? uint64_t(code1) : 0;
++				if (std::getenv("RAVEN_TRACE_API")) {
++					vm_region_basic_info_data_64_t info{};
++					mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++					mach_port_t object;
++					mach_vm_address_t probe = uint64_t(code1);
++					mach_vm_size_t probed = 0;
++					const auto found = mach_vm_region(task, &probe, &probed, VM_REGION_BASIC_INFO_64, reinterpret_cast<vm_region_info_t>(&info), &count, &object);
++					std::fprintf(stderr, "raven: access fault code=%lld addr=%llx; region %llx+%llx found=%d prot=%d max=%d\n", (long long)code0, (unsigned long long)code1,
++						(unsigned long long)probe, (unsigned long long)probed, int(found), int(info.protection), int(info.max_protection));
++				}
 +				break;
 +			case EXC_BAD_INSTRUCTION:
 +				event.signal = SIGILL;
 +				event.code = 1;
++				break;
++			case EXC_SYSCALL:
++			case EXC_MACH_SYSCALL:
++				event.signal = SIGTRAP | 0x80;
++				event.code = 0;
++				event.address = uint64_t(code0) & 0xffffff;
 +				break;
 +			case EXC_ARITHMETIC:
 +				event.signal = SIGFPE;
@@ -1426,6 +1477,8 @@ index 0000000..effc671
 +				event.signal = SIGILL;
 +				event.code = 1;
 +			}
++			if (std::getenv("RAVEN_TRACE_STOPS"))
++				std::fprintf(stderr, "raven: guest exception %d code=%lld,%llx -> signal %d\n", int(message.exception), (long long)code0, (unsigned long long)code1, event.signal);
 +			event.message.assign(reinterpret_cast<uint8_t *>(&message.head), reinterpret_cast<uint8_t *>(&message.head) + sizeof message.head);
 +			{
 +				std::lock_guard lock(mutex);
@@ -1574,7 +1627,7 @@ index 0000000..effc671
 +		r = {};
 +		r.r15 = state.__r15; r.r14 = state.__r14; r.r13 = state.__r13; r.r12 = state.__r12; r.rbp = state.__rbp; r.rbx = state.__rbx;
 +		r.r11 = state.__r11; r.r10 = state.__r10; r.r9 = state.__r9; r.r8 = state.__r8; r.rax = state.__rax; r.rcx = state.__rcx;
-+		r.rdx = state.__rdx; r.rsi = state.__rsi; r.rdi = state.__rdi; r.orig_rax = uint64_t(-1); r.rip = state.__rip;
++		r.rdx = state.__rdx; r.rsi = state.__rsi; r.rdi = state.__rdi; r.orig_rax = last_signal == (SIGTRAP | 0x80) ? last_address : uint64_t(-1); r.rip = state.__rip;
 +		r.cs = state.__cs; r.eflags = state.__rflags; r.rsp = state.__rsp; r.ss = 0x2b; r.fs_base = 0; r.gs_base = gs_base;
 +		r.fs = state.__fs; r.gs = state.__gs;
 +		return 0;
@@ -1696,7 +1749,7 @@ index 0000000..effc671
 +			if (flags & MAP_FIXED)
 +				mach_vm_deallocate(task, address, size);
 +			mach_vm_address_t where = address;
-+			result = mach_vm_allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
++			result = allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
 +			if (result != KERN_SUCCESS)
 +				fail("mmap", result);
 +			if (protection != (PROT_READ | PROT_WRITE))
@@ -1715,7 +1768,7 @@ index 0000000..effc671
 +			if (flags & MAP_FIXED)
 +				mach_vm_deallocate(task, address, size);
 +			mach_vm_address_t where = address;
-+			result = mach_vm_allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
++			result = allocate(task, &where, size, (fixed && address ? VM_FLAGS_FIXED : VM_FLAGS_ANYWHERE));
 +			if (result != KERN_SUCCESS)
 +				fail("mmap of an image", result);
 +			result = mach_vm_write(task, where, reinterpret_cast<vm_offset_t>(image.first), mach_msg_type_number_t(size));
@@ -1772,7 +1825,7 @@ index 0000000..effc671
 +			return 0;
 +		const vm_prot_t rights = info.protection;
 +		mach_vm_deallocate(task, where, size);
-+		if (mach_vm_allocate(task, &where, size, VM_FLAGS_FIXED) != KERN_SUCCESS)
++		if (allocate(task, &where, size, VM_FLAGS_FIXED) != KERN_SUCCESS)
 +			throw std::runtime_error("native madvise: cannot re-create the pages");
 +		if (rights != (VM_PROT_READ | VM_PROT_WRITE))
 +			mach_vm_protect(task, where, size, FALSE, rights);

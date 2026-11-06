@@ -54,7 +54,14 @@ Raven runs the program's x86-64 machine code natively in a child process and ans
 License: Raven is GPL-3.0 with MIT guest adapters (`LICENSES.md`). ClokeOS releases that ship Raven must offer the
 corresponding source (Raven's own `packaging.md` describes the two-archive scheme).
 
-## Status (2026-11-06): first x64 PE runs
+## Status (2026-11-06): a Windows console program runs
+
+A MinGW-built 64-bit console program (`printf`, `GetNativeSystemInfo`, exit code 7) runs through `raven --run-process` in the x86_64 VM:
+`Hallo von Windows: Zeiger 64 Bit, Architektur 9, Prozessoren 1` and the exit code arrives. The NT service stubs of Raven's synthetic
+ntdll use a Mach-class number (`eax | 0x1000000`) because XNU raises `EXC_SYSCALL` for an unknown Mach trap, which replaces
+`PTRACE_SYSEMU`; plain numbers would run a BSD system call. The details below are from the first milestone (an import-free entry).
+
+### First milestone: an import-free PE64 runs
 
 `raven/build.sh` builds Raven for x86_64-apple-macos11 on the Mac (clone of upstream commit `387c718`, `raven/raven-darwin.patch` applied,
 CMake + Ninja, no Vulkan/OpenSSL/Skia/FreeType/libpng/pixman). In the x86_64 VM, as root:
