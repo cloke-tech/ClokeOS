@@ -632,3 +632,6 @@ Untested: clicking through the alert, the project chooser, x86_64, `Jump.logicx`
   and Logic's splash window ("Searching for Audio Unit plug-ins") and the Settings panel remain.
 
 Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`, audio, rendering.
+* Next stop: the splash stays at "Searching for Audio Unit plug-ins". The only exception left is on the Audio Unit scan thread (`MAAudioUnitSupport`, `XAUCache_ThreadFunction`): it builds a CoreData model in code
+  (`-[NSAttributeDescription init]`), which Cocotron's CoreData has as an abstract stub. Likely the scan thread ends there and the splash waits for it (not yet verified with the sampler).
+  Next step: CoreData model classes that can be created in code (`NSEntityDescription`/`NSAttributeDescription`/`NSRelationshipDescription` setters) plus whatever store the AU cache uses, or a way to let the scan finish without its cache.
