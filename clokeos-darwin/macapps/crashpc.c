@@ -88,6 +88,57 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
 }
 
 
+
+/* CRASHPC_RRLOG=1: alle swift_retain/release/allocObject über die Schaltstelle des Swift-Laufzeit-Instrumentierungsmechanismus (_swift_retain & Co. + Schalter)
+ * in einen Ringpuffer; im Absturzbericht die Geschichte des freigegebenen Objekts. Aufrufkonvention der Schaltstellen: preserve_most. */
+#define RRRING (1u << 21)
+typedef struct { uint64_t obj, ra, ra2; uint32_t op, n; } rrrec;
+static rrrec *rrring;
+static volatile uint32_t rrpos;
+#define PMT __attribute__((preserve_most))
+typedef void *PMT (*fn_retain)(void *); typedef void *PMT (*fn_retain_n)(void *, uint32_t); typedef void PMT (*fn_release)(void *);
+typedef void PMT (*fn_release_n)(void *, uint32_t); typedef void *PMT (*fn_alloc)(void *, size_t, size_t);
+extern fn_retain _swift_retain; extern fn_retain_n _swift_retain_n; extern fn_release _swift_release; extern fn_release_n _swift_release_n; extern fn_alloc _swift_allocObject;
+extern unsigned char _swift_enableSwizzlingOfAllocationAndRefCountingFunctions_forInstrumentsOnly;
+static fn_retain o_retain; static fn_retain_n o_retain_n; static fn_release o_release; static fn_release_n o_release_n; static fn_alloc o_alloc;
+#define PM __attribute__((preserve_most, noinline))
+static inline void rrlog(uint32_t op, void *obj, uint32_t n, void *ra) {
+  uint32_t i = __atomic_fetch_add(&rrpos, 1, __ATOMIC_RELAXED) % RRRING;
+  uint64_t *fp = (uint64_t *)__builtin_frame_address(0), r1 = 0, r2 = 0;   /* ra ist der Schaltadapter der Laufzeit; der Aufrufer steht in dessen Rahmen */
+  if (fp && !((uint64_t)(uintptr_t)fp & 7) && (uint64_t)(uintptr_t)fp > 0x1000) {
+    uint64_t *f1 = (uint64_t *)(uintptr_t)fp[0];
+    if (f1 && !((uint64_t)(uintptr_t)f1 & 7) && (uint64_t)(uintptr_t)f1 > 0x1000 && (uint64_t)(uintptr_t)f1 - (uint64_t)(uintptr_t)fp < 0x10000) {
+      r1 = f1[1];
+      uint64_t *f2 = (uint64_t *)(uintptr_t)f1[0];
+      if (f2 && !((uint64_t)(uintptr_t)f2 & 7) && (uint64_t)(uintptr_t)f2 > 0x1000 && (uint64_t)(uintptr_t)f2 - (uint64_t)(uintptr_t)f1 < 0x10000) r2 = f2[1];
+    }
+  }
+  rrring[i].obj = (uint64_t)(uintptr_t)obj; rrring[i].ra = r1 ? r1 : (uint64_t)(uintptr_t)ra; rrring[i].ra2 = r2; rrring[i].op = op; rrring[i].n = n;
+}
+PM static void *h_retain(void *o) { rrlog(1, o, 1, __builtin_return_address(0)); return o_retain(o); }
+PM static void *h_retain_n(void *o, uint32_t n) { rrlog(1, o, n, __builtin_return_address(0)); return o_retain_n(o, n); }
+PM static void h_release(void *o) { rrlog(2, o, 1, __builtin_return_address(0)); o_release(o); }
+PM static void h_release_n(void *o, uint32_t n) { rrlog(2, o, n, __builtin_return_address(0)); o_release_n(o, n); }
+PM static void *h_alloc(void *md, size_t sz, size_t al) { void *o = o_alloc(md, sz, al); rrlog(0, o, 0, __builtin_return_address(0)); return o; }
+static void rr_install(void) {
+  rrring = calloc(RRRING, sizeof(rrrec));
+  if (!rrring) return;
+  o_retain = _swift_retain; o_retain_n = _swift_retain_n; o_release = _swift_release; o_release_n = _swift_release_n; o_alloc = _swift_allocObject;
+  _swift_retain = h_retain; _swift_retain_n = h_retain_n; _swift_release = h_release; _swift_release_n = h_release_n; _swift_allocObject = h_alloc;
+  _swift_enableSwizzlingOfAllocationAndRefCountingFunctions_forInstrumentsOnly = 1;
+}
+static void report_rr(uint64_t obj) {
+  if (!rrring) return;
+  uint32_t n = rrpos < RRRING ? rrpos : RRRING, shown = 0;
+  out("    Referenzzähler-Geschichte von "); hex(obj); out(" (neueste zuerst):\n");
+  for (uint32_t k = 0; k < n && shown < 26; k++) {
+    rrrec *r = &rrring[(rrpos - 1 - k) % RRRING];
+    if (r->obj != obj) continue;
+    out(r->op == 0 ? "      alloc   " : r->op == 1 ? "      retain  " : "      release "); hex(r->n); frame("  von", r->ra); if (r->ra2) frame("      und", r->ra2);
+    shown++;
+  }
+}
+
 /* Wer hat den Block freigegeben? Ringpuffer der letzten Freigaben (Adresse, Größe, vier Rücksprungadressen) für CRASHPC_FREELOG=1 */
 #define FREERING (1u << 21)
 typedef struct { uint64_t p, size, ra[4]; } freerec;
@@ -121,6 +172,7 @@ static void report_free_of_n(uint64_t v, uint32_t maxshown) {
     if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1)) {
       out("  freigegeben (Block "); hex(r->p); out(", Größe "); hex(r->size); out(") von:\n");
       for (int j = 0; j < 4; j++) if (r->ra[j]) frame("    frei", r->ra[j]);
+      report_rr(r->p);
       shown++;
     }
   }
@@ -184,7 +236,7 @@ static void *exc_thread(void *arg) {
     }
     { out("  --- Freigaben der Blöcke, auf die Register und Stapel zeigen ---\n");
       static const int regs[] = { 0, 1, 2, 19, 20, 21, 22, 23, 24 };
-      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], regs[q] == 19 ? 4 : 1); }
+      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], 3); }
       for (uint64_t a = st.__sp; a < st.__sp + 0x100; a += 8) { uint64_t v; if (rd64(a, &v) && v > 0x100000000ULL) report_free_of(v); } }
     _exit(139);
   }
@@ -200,6 +252,7 @@ static void install_exception_port(void) {
 }
 __attribute__((constructor)) static void init(void) {
   trace_class = getenv("CRASHPC_TRACE_CLASS");
+  if (getenv("CRASHPC_RRLOG")) rr_install();
   if (getenv("CRASHPC_FREELOG")) { freering = calloc(FREERING, sizeof(freerec)); freelog_on = freering != 0; }
   install_exception_port();
   logfd = open("/tmp/crashpc.log", 0x0001 | 0x0200 | 0x0008, 0644);   /* O_WRONLY|O_CREAT|O_APPEND */

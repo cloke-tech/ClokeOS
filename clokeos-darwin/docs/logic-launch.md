@@ -490,3 +490,24 @@ Next step: trace `swift_release`/`swift_retain` and `objc_release` for exactly t
   mine builds a fresh `URL(string:)` from `absoluteString`. The same split exists for `URLComponents`, `URLQueryItem`, `Data`, `Date`, `UUID`, `Locale`… (everything compiled with `FOUNDATION_FRAMEWORK` in Apple's build and absent from my FoundationEssentials).
   Next step: a small Swift test program (round trip `NSURL → URL → NSURL` and storing `URL?` in a class, under `MallocScribble`) against `fo.dylib`/`fo2.dylib` in the VM to reproduce the over-release without Logic, then change `Bridging.swift` to keep the NSURL
   (store it in a wrapper and bridge back to the same object).
+
+### Round 29: reference-count history of the freed objects (`CRASHPC_RRLOG`)
+
+Test programs against `fo.dylib`/`fo2.dylib` in the VM (`NSURL ↔ URL` round trips ×3000, relative URLs, `URL?` in a class, arrays/dictionaries/sets of URL/Data/Date/UUID through `NSArray`/`NSDictionary`, under `MallocScribble`) **do not
+crash**: my single-value bridging functions are memory safe on their own. So the fault is in how Logic's code uses them (conventions or sequence), not in a missing release inside them.
+
+New tool: `CRASHPC_RRLOG=1` (macapps/crashpc.c). The runtime has a built-in switch for Instruments (`_swift_enableSwizzlingOfAllocationAndRefCountingFunctions_forInstrumentsOnly` plus the function pointers `_swift_retain`,
+`_swift_release`, `_swift_allocObject`, …); the reporter installs `preserve_most` hooks there (this works where dyld interposing does not) and logs every allocation/retain/release into a ring (2 M events: object, caller, caller's caller).
+The crash report then prints the history of each freed block that registers or stack words point to (`LOGIC_ENV="CRASHPC_RRLOG=1 CRASHPC_FREELOG=1 MallocScribble=1" macapps/logicrun.sh 110`; the log is in `/tmp/crashpc.log` in the VM,
+`debugfs -R "dump /tmp/crashpc.log …"` gets it out after `sync` and `vmctl quit`).
+
+What it shows (same crash, `URL.baseURL.getter` reading `0x5555…`):
+* A `_URL` box (0xb0 bytes, `URL(string:)`) is created by `MATower` +0x3a780 (a generic NSURL → `T` → NSURL round trip), destroyed by the same function (`MATower` +0x3a86c, the value-witness destroy of the temporary), freed, **and the address is
+  allocated again** by `URL._unconditionallyBridgeFromObjectiveC` (`fo2.dylib` +0x3fc → `URL(string:)`); Logic.framework (+0x85524 copies with `__swift_initWithCopy_strong`, +0x8553c destroys) then retains/releases that new box in balanced pairs.
+* The string storage inside (`_URLInfo`, 0x80 bytes) has a balanced history as well and is released by `_URL.deinit`.
+* So both histories are internally balanced; the pointer the crashing `URL.baseURL.getter` follows belongs to the *first* life of that address (freed by the temporary's destroy) or points into memory that Logic copied without retaining.
+  That fits a value that was bit-copied out of a `URL` (e.g. `Optional<URL>` or the `URL` handed back by `_bridgeToObjectiveC`'s *round-trip partner* in MATower) while the temporary was destroyed, i.e. an **ownership difference between Apple's URL and mine**
+  (Apple's `URL` made from an `NSURL` wraps that same `NSURL`, so the temporary's destroy only drops a reference to an object the provider also holds).
+
+Next steps: make `URL`'s bridge keep the source `NSURL` (store it in a side field and return it from `_bridgeToObjectiveC`, as Apple's `URL(reference:)` does), rerun; if the corruption persists, log the `URL` value words (box pointer) at
+MATower +0x3a86c and at Logic +0x85524 to see which pointer is copied without a retain.
