@@ -511,3 +511,13 @@ What it shows (same crash, `URL.baseURL.getter` reading `0x5555…`):
 
 Next steps: make `URL`'s bridge keep the source `NSURL` (store it in a side field and return it from `_bridgeToObjectiveC`, as Apple's `URL(reference:)` does), rerun; if the corruption persists, log the `URL` value words (box pointer) at
 MATower +0x3a86c and at Logic +0x85524 to see which pointer is copied without a retain.
+
+### Round 30: keeping the source NSURL did not help (reverted)
+
+Tried: `URL` keeps the `NSURL` it was made from (associated object on the `_URL` box, `_bridgeToObjectiveC()` returns that same NSURL, as Apple's `URL(reference:)`). The crash only moved into the new helper (`swift_unknownObjectRetain` on the box
+with `isa == 0x5555…`): the `URL` value handed to `_bridgeToObjectiveC` already has a dangling box pointer. Reverted (associated objects keyed by address would also return a stale NSURL when an address is reused).
+
+With `CRASHPC_RRLOG` the crashing box (`_URL`, 0xb0) shows two lives at the same address: life A is created by `URL(string:)` inside `MATower` +0x3a780, bridged (my `_bridgeToObjectiveC`, balanced) and destroyed by the value-witness destroy at `MATower` +0x3a86c;
+life B is created later by my `_unconditionallyBridgeFromObjectiveC` for `MAUniversalContent` +0x5c1c and stays alive with a balanced history (no further free is recorded). The memory is nevertheless scribbled when the crash reads it, and three free records for the
+address exist (the ring prints the three newest). So a pointer to life A (or a later unrecorded free of life B) survives somewhere in Logic's async task state. The recorded RR/free rings cannot tell which of the two without ordering between the two rings;
+next step: one ring for both (events carry a global sequence number), additional hooks for `swift_unknownObjectRelease`/`swift_bridgeObjectRelease`/`swift_deallocClassInstance`, and logging the 8-byte `URL` value at `MATower` +0x3a780/+0x3a86c and `Logic` +0x85524.
