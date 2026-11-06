@@ -594,3 +594,22 @@ Untested: x86_64, `Jump.logicx`, audio, rendering; no window is visible yet.
 * Next step: find out which window Logic wants to show at this point (and why it does not appear), then storyboard loading (`NSStoryboard` with the placeholders) or opening `Jump.logicx` directly.
 
 Untested: x86_64, `Jump.logicx`, audio, rendering; no Logic window visible yet.
+
+### Round 37: Logic's first windows on screen
+
+* `macapps/appkit/lenient.m` (with `CLOKE_TRACE=1`): traces nib loads, `-[NSWindowController window/showWindow:]`, `orderFront:`/`makeKeyAndOrderFront:`/`orderWindow:relativeTo:`, a window list after 8 s and 30 s,
+  and every thrown ObjC exception with reason and call chain (image + offset, via `objc_setExceptionPreprocessor`). Hooks are plain C functions: PureDarwin's libobjc has no trampolines for `imp_implementationWithBlock` (it aborts).
+* Startup exceptions found that way and fixed (each one ended a launch step inside the event loop or killed Logic):
+  * nil font for `NSFontAttributeName`: `+[NSFont systemFontOfSize:weight:]` and `+preferredFontForTextStyle:options:` were missing → `macapps/appkit/modern.m` (also `monospaced…SystemFontOfSize:weight:` and the system/label colors, all added only where AppKit has none).
+  * nil key while MACore builds its key-code table (`+[ECKeyCodeConverter translateKeyCode:modifierFlags:]`): `macapps/carbon.c` now has `kTISPropertyUnicodeKeyLayoutData`, `TISGetInputSourceProperty` returning a layout object, `UCKeyTranslate` with a built-in US (ANSI) layout, `LMGetKbdType`.
+  * `-[NSNumberFormatter stringForObjectValue:]` "requires a subclass implementation" (Darling) → `modern.m` maps it (and NSDateFormatter's) to `stringFromNumber:`/`stringFromDate:`.
+  * nil GUI catalog (`-[MAAssetManager uiCatalogFromURL:withContext:]`): Logic's GUI images are TIFFs whose `ImageDescription` holds a plist. Onyx2D now reports `{TIFF}` (ImageDescription, Software, Orientation), reads ASCII tags as UTF-8,
+    and decodes Deflate-compressed TIFFs (compression 8 and 32946, zlib; Logic's are Photoshop TIFFs with the horizontal predictor). `kCGImagePropertyTIFFImageDescription`/`…Software` are defined in ImageIO.
+  * `CGImageCreateWithImageInRect(NULL, …)` crashed in Onyx2D; it returns NULL now, as on macOS (Logic passes a missing @2x image on).
+  * `-[NSColor colorUsingColorSpaceName:]` raised "abstract" (thousands of times per launch); it forwards to `…device:nil` now, which `NSColor_CGColor` implements.
+* `macapps/deploy-files.sh` also takes `source=target` pairs (used for libclokeos_carbon, CoreServices and Carbon from a `macapps/carbon.sh` stage).
+* **Result:** Logic Pro's own windows appear on the ClokeOS desktop: the splash window ("Searching for Audio Unit plug-ins", copyright line) with the "Beta version" alert in front, and "Logic Pro" with File/Window in the menu bar.
+  Logic also creates its Settings panel. The process keeps running (busy). Layout is approximate (`NSLayoutConstraint` is a Cocotron stub; anchors go to the lenient sink).
+* Still thrown: `-[NSAttributeDescription init]` (Cocotron's CoreData is abstract there) on the Audio Unit scan thread.
+
+Untested: clicking through the alert, the project chooser, x86_64, `Jump.logicx`, audio, rendering.

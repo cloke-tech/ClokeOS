@@ -292,7 +292,7 @@ ak=(-I"$src/AppKit")
 for d in nib.subproj NSColorPicker.subproj NSMenu.subproj NSTextView.subproj NSEvent.subproj NSColor.subproj \
          RTF.subproj NSToolbar.subproj NSDrawer.subproj X11.backend; do ak+=(-I"$src/AppKit/$d"); done
 sources AppKit AppKit_sources > "$obj/ak.list"
-printf '%s\n' "$M/appkit/sysstubs.c" "$M/appkit/nibarchive.m" >> "$obj/ak.list"
+printf '%s\n' "$M/appkit/sysstubs.c" "$M/appkit/nibarchive.m" "$M/appkit/modern.m" >> "$obj/ak.list"
 compile_all "$obj/ak" "$src/AppKit" "$obj/ak.list" "${ak[@]}"
 framework AppKit C 45 1499.11 "$obj/ak" -Wl,-reexport_library,"$fnd" -Wl,-reexport_library,"$(fwlib ApplicationServices)" \
   "$(fwlib Onyx2D)" "$(fwlib CoreGraphics)" "$(fwlib CoreText)" "$(fwlib ImageIO)" "$(fwlib QuartzCore)" \
