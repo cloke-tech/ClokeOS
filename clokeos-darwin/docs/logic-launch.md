@@ -613,3 +613,19 @@ Untested: x86_64, `Jump.logicx`, audio, rendering; no Logic window visible yet.
 * Still thrown: `-[NSAttributeDescription init]` (Cocotron's CoreData is abstract there) on the Audio Unit scan thread.
 
 Untested: clicking through the alert, the project chooser, x86_64, `Jump.logicx`, audio, rendering.
+
+### Round 38: Logic's event loop runs; its alert dialog draws and reacts
+
+* `macapps/crashpc.c`: `CRASHPC_SAMPLE=<s>` stops the main thread every *s* seconds and logs its call chain (frame pointers) — shows where a program spins that takes no events.
+* Main thread spun over garbage: `CGSGetSymbolicHotKeyRepresentationList` (private SkyLight, called first with no buffer to get the count) was a generated stub returning 0 without writing the count, so Logic sized its hot-key table from an uninitialized value.
+  `macapps/appkit/cgsprivate.c` (in CoreGraphics) reports 0 system hot keys; `CGSIsSymbolicHotKeyEnabled` returns false.
+* `-[X11Window setAlphaValue:]` (abstract in Cocotron; the exception inside a `dispatch_once` ended in `std::terminate`) sets `_NET_WM_WINDOW_OPACITY` (`macapps/appkit/x11present.m`).
+* `-[NSWindowController windowNibPath]` returned an arbitrary nib when the controller has no nib name (`pathForResource:nil ofType:@"nib"`): Logic's `LgAlertCollector`, which builds its window in code, loaded `Beta.nib` with itself as owner — that was the "Beta version" panel of round 37 whose OK did nothing. Now nil, as on macOS.
+* Unknown nib connector classes (e.g. `NSNibAXAttributeConnector`) no longer raise in `-[NSNibConnector establishConnection]` (which dropped all later connections of the nib); they are skipped and listed with `CLOKE_NIB_LOG=1`. The NIBArchive converter maps unknown `…Connector` classes to `NSNibConnector` and leaves `_NSCornerView`/`NSIBHelpConnector` to NSNib's own class mapping.
+* `CARenderer`: `layer.contents` may be an NSImage (converted via `CGImageForProposedRect:`); anything else that is not an image is skipped instead of crashing in `O2DataProviderCopyData`.
+* **Views draw without layers:** Cocotron renders layer-backed views through OpenGL, which ClokeOS does not have, so they stayed black. `NSViewLayersEnabled` is now off unless `CLOKE_VIEW_LAYERS=1`; every view draws through `drawRect:` into the window.
+* `X11Window` flushes the X connection after unmapping, raising, lowering and restacking; before, an ordered-out window stayed on screen because the event loop then blocks in `poll()` with the request still in Xlib's buffer.
+* **Result:** Logic sits in its normal `-[NSApplication run]` loop. Its startup alert dialog (`LgAlertCollector`, "Continue") draws, clicking Continue runs `closeDialog:` → `stopModal` → order-out. Behind it Logic has an untitled 578×302 window and the Settings panel visible.
+  The dialog's list (a view-based `NSTableView`) stays empty grey. Clicks are not delivered in every run (timing of the first click vs. window activation, not yet understood).
+
+Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`, audio, rendering.

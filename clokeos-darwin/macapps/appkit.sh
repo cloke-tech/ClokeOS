@@ -241,7 +241,7 @@ framework Onyx2D A 1 1 "$obj/o2" "$cf" "$fnd" "${sys[@]}" "$pd/usr/lib/libz.1.dy
 # --- CoreGraphics ------------------------------------------------------------------------------
 echo "Baue CoreGraphics"
 sources CoreGraphics CoreGraphics_sources > "$obj/cg.list"
-echo "$M/appkit/sysstubs.c" >> "$obj/cg.list"
+printf "%s\n" "$M/appkit/sysstubs.c" "$M/appkit/cgsprivate.c" >> "$obj/cg.list"
 compile_all "$obj/cg" "$src/CoreGraphics" "$obj/cg.list" -I"$src/CoreGraphics" -I"$src/CoreText"
 framework CoreGraphics A 64 1070.22 "$obj/cg" "$(fwlib Onyx2D)" "$cf" "$fnd" "${sys[@]}"
 

@@ -253,8 +253,36 @@ static void install_exception_port(void) {
                                port, EXCEPTION_DEFAULT | MACH_EXCEPTION_CODES, ARM_THREAD_STATE64) != KERN_SUCCESS) return;
   pthread_t th; pthread_create(&th, 0, exc_thread, (void *)(uintptr_t)port);
 }
+/* CRASHPC_SAMPLE=<Sekunden>: alle n Sekunden den Hauptfaden kurz anhalten und seine Aufrufkette (Rahmenzeiger) melden; zeigt, woran ein
+ * Programm hängt oder rechnet, das keine Ereignisse mehr annimmt */
+static mach_port_t main_thread;
+static void *sample_thread(void *arg) {
+  unsigned secs = (unsigned)(uintptr_t)arg;
+  for (unsigned round = 1;; round++) {
+    sleep(secs);
+    arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
+    if (thread_suspend(main_thread) != KERN_SUCCESS) return 0;
+    kern_return_t kr = thread_get_state(main_thread, ARM_THREAD_STATE64, (thread_state_t)&st, &n);
+    uint64_t pcs[32]; int np = 0;
+    if (kr == KERN_SUCCESS) {
+      pcs[np++] = __darwin_arm_thread_state64_get_pc(st);
+      pcs[np++] = __darwin_arm_thread_state64_get_lr(st);
+      uint64_t fp = __darwin_arm_thread_state64_get_fp(st), nfp, ra;
+      while (np < 32 && fp && !(fp & 7) && rd64(fp, &nfp) && rd64(fp + 8, &ra) && ra) { pcs[np++] = ra; if (nfp <= fp) break; fp = nfp; }
+    }
+    thread_resume(main_thread);   /* erst danach ausgeben: out() nimmt Sperren, die der Hauptfaden halten könnte */
+    out("\n[crashpc] Probe "); hex(round); out("\n");
+    for (int i = 0; i < np; i++) frame(i == 0 ? "pc" : i == 1 ? "lr" : "bt", pcs[i]);
+  }
+  return 0;
+}
 __attribute__((constructor)) static void init(void) {
   trace_class = getenv("CRASHPC_TRACE_CLASS");
+  if (getenv("CRASHPC_SAMPLE")) {
+    main_thread = mach_thread_self();
+    unsigned secs = (unsigned)atoi(getenv("CRASHPC_SAMPLE")); if (!secs) secs = 5;
+    pthread_t th; pthread_create(&th, 0, sample_thread, (void *)(uintptr_t)secs);
+  }
   if (getenv("CRASHPC_RRLOG")) rr_install();
   if (getenv("CRASHPC_FREELOG")) { freering = calloc(FREERING, sizeof(freerec)); freelog_on = freering != 0; }
   install_exception_port();

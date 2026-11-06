@@ -12,3 +12,9 @@ s|^    _cglWindow = CGLGetWindow\(\(void \*\) _window\);$|    _cglWindow = NULL;
 s|^    \[self openGLFlushBuffer\];$|    ClokeX11Present(\&_clokePresent, _display, _window, _visualInfo, [_context surface]);|
 s|^        XDestroyWindow\(_display, _window\);$|        ClokeX11PresentFree(\&_clokePresent, _display);\
         XDestroyWindow(_display, _window);|
+# ClokeOS: Ausblenden und Umstapeln sofort an den X-Server schicken. Danach wartet die Ereignisschleife in poll(), und Xlibs Ausgabepuffer
+# blieb liegen: ein mit orderOut: geschlossenes Fenster (Logic Pros Hinweisdialog) blieb auf dem Bildschirm und verdeckte die nächsten.
+s/^(    XUnmapWindow\(_display, _window\);)$/\1\n    XFlush(_display);/
+s/^(        XRaiseWindow\(_display, _window\);)$/\1\n        XFlush(_display);/
+s/^(        XLowerWindow\(_display, _window\);)$/\1\n        XFlush(_display);/
+s/^(        XRestackWindows\(_display, w, 1\);)$/\1\n        XFlush(_display);/

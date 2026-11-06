@@ -236,3 +236,25 @@ void ClokeX11PresentFree(void **state, Display *dpy) {
     free(p);
     *state = NULL;
 }
+
+/* -[CGWindow setAlphaValue:] ist in Darlings CGWindow abstrakt, X11Window setzt es nicht um (Logic Pro: Ausnahme in einem dispatch_once,
+ * das endet in std::terminate). Hier über die EWMH-Eigenschaft _NET_WM_WINDOW_OPACITY (0 … 0xffffffff); ein Fenstermanager, der sie nicht
+ * auswertet, zeigt das Fenster weiter deckend. */
+#import "X11Window.h"
+#import <X11/Xatom.h>
+@implementation X11Window (ClokeAlpha)
+- (void) setAlphaValue: (CGFloat) alpha {
+    if (_display == NULL || _window == 0)
+        return;
+    if (alpha < 0) alpha = 0;
+    if (alpha > 1) alpha = 1;
+    Atom a = XInternAtom(_display, "_NET_WM_WINDOW_OPACITY", False);
+    if (alpha >= 1.0) {
+        XDeleteProperty(_display, _window, a);
+    } else {
+        unsigned long v = (unsigned long)(alpha * 0xffffffffu);
+        XChangeProperty(_display, _window, a, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&v, 1);
+    }
+    XFlush(_display);
+}
+@end

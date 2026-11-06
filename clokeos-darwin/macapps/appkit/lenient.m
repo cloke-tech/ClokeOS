@@ -49,6 +49,9 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
 #import <AppKit/NSApplication.h>
 #import <AppKit/NSWindow.h>
 #import <AppKit/NSWindowController.h>
+#import <AppKit/NSEvent.h>
+#import <AppKit/NSControl.h>
+#import <AppKit/NSCell.h>
 @interface CKTrace : NSObject
 @end
 @implementation CKTrace
@@ -82,7 +85,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -117,7 +120,37 @@ static void h_show(id s, SEL c, id a) {
     fprintf(stderr, "[clokeos-trace] %s -showWindow:\n", class_getName(object_getClass(s)));
     ((void (*)(id, SEL, id))o_show)(s, c, a);
 }
+/* Maustasten (NSEventType 1…4, 25/26): wer bekommt das Ereignis */
+static void ck_ev(const char *who, id s, NSEvent *e) {
+    NSUInteger t = [e type];
+    if (t != 1 && t != 2 && t != 3 && t != 4 && t != 25 && t != 26) return;
+    NSPoint p = [e locationInWindow];
+    id w = [e window];
+    fprintf(stderr, "[clokeos-trace] %s type=%lu at %.0f,%.0f window=%s \"%s\" modal=%s\n", who, (unsigned long)t, p.x, p.y,
+            w ? class_getName(object_getClass(w)) : "nil", w ? ck_title(w) : "",
+            [NSApp modalWindow] ? ck_title([NSApp modalWindow]) : "-");
+}
+static void h_appev(id s, SEL c, NSEvent *e) { ck_ev("NSApp sendEvent", s, e); ((void (*)(id, SEL, id))o_appev)(s, c, e); }
+static void h_winev(id s, SEL c, NSEvent *e) { ck_ev("NSWindow sendEvent", s, e); ((void (*)(id, SEL, id))o_winev)(s, c, e); }
+static BOOL h_action(id s, SEL c, SEL a, id to, id from) {
+    fprintf(stderr, "[clokeos-trace] sendAction:%s to:%s from:%s\n", a ? sel_getName(a) : "-", to ? class_getName(object_getClass(to)) : "nil (Responderkette)",
+            from ? class_getName(object_getClass(from)) : "nil");
+    return ((BOOL (*)(id, SEL, SEL, id, id))o_action)(s, c, a, to, from);
+}
+static void h_stop(id s, SEL c) { fprintf(stderr, "[clokeos-trace] stopModal\n"); ((void (*)(id, SEL))o_stop)(s, c); }
+static void h_stopc(id s, SEL c, NSInteger code) { fprintf(stderr, "[clokeos-trace] stopModalWithCode:%ld\n", (long)code); ((void (*)(id, SEL, NSInteger))o_stopc)(s, c, code); }
+static void h_mdown(id s, SEL c, NSEvent *e) {
+    fprintf(stderr, "[clokeos-trace] mouseDown: -> %s (%s)\n", class_getName(object_getClass(s)), [[s cell] respondsToSelector:@selector(title)] ? [[[s cell] title] UTF8String] ?: "" : "");
+    ((void (*)(id, SEL, id))o_mdown)(s, c, e);
+    fprintf(stderr, "[clokeos-trace] mouseDown: <- %s\n", class_getName(object_getClass(s)));
+}
 + (void)hooks {
+    o_action = ck_hook([NSApplication class], @selector(sendAction:to:from:), (IMP)h_action);
+    o_stop = ck_hook([NSApplication class], @selector(stopModal), (IMP)h_stop);
+    o_stopc = ck_hook([NSApplication class], @selector(stopModalWithCode:), (IMP)h_stopc);
+    o_mdown = ck_hook(NSClassFromString(@"NSControl"), @selector(mouseDown:), (IMP)h_mdown);
+    o_appev = ck_hook([NSApplication class], @selector(sendEvent:), (IMP)h_appev);
+    o_winev = ck_hook([NSWindow class], @selector(sendEvent:), (IMP)h_winev);
     o_nib = ck_hook(NSClassFromString(@"NSNib"), @selector(initWithContentsOfFile:), (IMP)h_nib);
     o_front = ck_hook([NSWindow class], @selector(orderFront:), (IMP)h_front);
     o_key = ck_hook([NSWindow class], @selector(makeKeyAndOrderFront:), (IMP)h_key);

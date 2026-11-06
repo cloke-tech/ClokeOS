@@ -10,7 +10,7 @@
  *   NSDictionary (Schlüssel und Werte abwechselnd) -> {NS.keys, NS.objects},  NSDecimalNumberPlaceholder -> NSDecimalNumber
  *   Werte: Ganzzahlen/Gleitkomma -> CFNumber, wahr/falsch -> CFBoolean, Daten -> CFData, nil -> UID 0, Verweis -> UID.
  * Klassen, die es im Prozess nicht gibt (NSClassFromString == nil), ersetzt ein Ersatz nach dem Namen (…View -> NSView, …Cell -> NSCell,
- * …Button -> NSButton, …Control -> NSControl, sonst ClkNibUnknownObject); jede wird einmal auf stderr gemeldet: [clokeos-nib] ... */
+ * …Button -> NSButton, …Control -> NSControl, …Connector -> NSNibConnector, sonst ClkNibUnknownObject); jede wird einmal auf stderr gemeldet: [clokeos-nib] ... */
 #import <Foundation/Foundation.h>
 #include <CoreFoundation/CoreFoundation.h>
 #include <stdio.h>
@@ -47,8 +47,9 @@ static CFTypeRef uid(uint32_t v) { return (CFTypeRef)_CFKeyedArchiverUIDCreate(k
 /* Ersatzklasse für Namen, die es hier nicht gibt (im Prozess nachgesehen) */
 static NSString *substitute(NSString *name) {
     if (NSClassFromString(name)) return name;
+    if ([name isEqualToString:@"_NSCornerView"] || [name isEqualToString:@"NSIBHelpConnector"]) return name;   /* setzt NSNib selbst um (setClass:forClassName:) */
     NSString *sub = @"ClkNibUnknownObject";
-    static const char *suffix[][2] = { {"Cell", "NSCell"}, {"Button", "NSButton"}, {"Control", "NSControl"}, {"View", "NSView"},
+    static const char *suffix[][2] = { {"Connector", "NSNibConnector"}, {"Cell", "NSCell"}, {"Button", "NSButton"}, {"Control", "NSControl"}, {"View", "NSView"},
                                        {"Window", "NSWindow"}, {"Menu", "NSMenu"} };
     for (size_t i = 0; i < sizeof suffix / sizeof *suffix; i++)
         if ([name hasSuffix:[NSString stringWithUTF8String:suffix[i][0]]] && NSClassFromString([NSString stringWithUTF8String:suffix[i][1]])) {

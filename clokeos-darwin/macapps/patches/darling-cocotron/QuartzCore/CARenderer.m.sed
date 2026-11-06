@@ -1,0 +1,4 @@
+# ClokeOS: layer.contents darf wie bei Apple auch ein NSImage sein (Logic Pro); dann dessen CGImage. Was weder das eine noch ein
+# O2Image ist, wird übersprungen statt als CGImage gelesen (Absturz in O2DataProviderCopyData).
+s/^(        CGImageRef image = )\(CGImageRef\)layer.contents;$/        id clk_contents = layer.contents;\n        if ([clk_contents respondsToSelector: @selector(CGImageForProposedRect:context:hints:)])\n            clk_contents = (id)[clk_contents CGImageForProposedRect: NULL context: nil hints: nil];\n        if (clk_contents != nil \&\& ![clk_contents isKindOfClass: NSClassFromString(@"O2Image")])\n            clk_contents = nil;\n\1(CGImageRef)clk_contents;\n        if (image == NULL)\n            return;/
+s/^(    CGDataProviderRef provider = CGImageGetDataProvider\(image\);)$/\1\n    if (provider == NULL)\n        return;/
