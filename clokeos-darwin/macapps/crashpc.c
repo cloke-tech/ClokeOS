@@ -270,6 +270,9 @@ static void sample_one(mach_port_t th, unsigned round, unsigned idx) {
   }
   thread_resume(th);   /* erst danach ausgeben: out() nimmt Sperren, die der angehaltene Faden halten könnte */
   out("\n[crashpc] Probe "); hex(round); out(" Faden "); hex(idx); out(th == main_thread ? " (Haupt)\n" : "\n");
+  if (kr == KERN_SUCCESS && getenv("CRASHPC_SAMPLE_REGS")) {   /* x0…x3 des angehaltenen Fadens (z. B. Länge eines memcpy) */
+    out("  x0 "); hex(st.__x[0]); out(" x1 "); hex(st.__x[1]); out(" x2 "); hex(st.__x[2]); out(" x3 "); hex(st.__x[3]); out("\n");
+  }
   for (int i = 0; i < np; i++) frame(i == 0 ? "pc" : i == 1 ? "lr" : "bt", pcs[i]);
 }
 static void *sample_thread(void *arg) {
