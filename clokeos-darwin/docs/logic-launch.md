@@ -461,3 +461,17 @@ State (arm64 VM): Logic gets through the factories, MAUniversalContent's async t
 Next step: log retain/release of that class (interpose `swift_release` for objects whose class name matches), or compile the bridging functions with `@_effects`/explicit `__owned` to match Apple's conventions, and compare with the disassembly of Logic's callers.
 
 Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
+
+### Round 27: tracking the freed block (`CRASHPC_FREELOG`)
+
+`macapps/crashpc.c` can now answer "who freed this block?": with `CRASHPC_FREELOG=1` it interposes `free`, keeps a ring of the last 2 M frees (address, size, four return addresses) and, in the exception report, lists the most recent frees of
+every block that a register or a stack word points into (`LOGIC_ENV="CRASHPC_FREELOG=1 MallocScribble=1" macapps/logicrun.sh`). Also: `CRASHPC_PEEK=<hex offset>` prints a pointer slot of the crashed image; reads in the reporter are guarded (a dereference
+inside the exception thread had silenced the report several times).
+
+Findings with it (arm64 VM, same crash as round 26: `swift_retain` of `0x5555…` inside `URL.baseURL.getter`, called from `URL._bridgeToObjectiveC`, in a Swift task of MAUniversalContent):
+* The object holding the URL is `Logic.CLgContentPathProvider` (Swift class with `universalContentLibraryBundleURL`, `basicContentBundleName`, `databaseName`, `universalContentLibraryBookmark`); its block (0x30 bytes) was last freed by CoreFoundation's
+  `finalizeCFBurstTrie` / `CFBurstTrieAddUTF8StringWithWeight` (plist parsing), i.e. the address belongs to CF now while Logic still uses it: the provider was released while a reference was still held. Blocks of the `_URL` objects themselves are freed from
+  `_URL.deinit` → `_URLInfo` destroy, as expected when the owner goes away.
+* So the over-release is of the *provider* (or of a reference path leading to it), not of a URL. Candidates: the object is created or released through ObjC (`object_dispose` seen earlier from `Logic.framework`), where a Swift class with ObjC-visible
+  layout is released one time too often; or the Swift async task keeps an unowned/unretained reference to it.
+Next step: trace `swift_release`/`swift_retain` and `objc_release` for exactly this address (interposers in crashpc keyed by the block that the report names, second run), and read the disassembly of the Logic.framework code that creates the provider.

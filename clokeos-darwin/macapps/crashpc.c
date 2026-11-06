@@ -8,6 +8,7 @@
 #define _DARWIN_C_SOURCE 1
 #include <dlfcn.h>
 #include <fcntl.h>
+#include <malloc/malloc.h>
 #include <stdlib.h>
 #include <mach/mach.h>
 #include <pthread.h>
@@ -85,6 +86,43 @@ static void handler(int sig, siginfo_t *si, void *ctx) {
   _exit(128 + sig);
 }
 
+
+/* Wer hat den Block freigegeben? Ringpuffer der letzten Freigaben (Adresse, Größe, vier Rücksprungadressen) für CRASHPC_FREELOG=1 */
+#define FREERING (1u << 21)
+typedef struct { uint64_t p, size, ra[4]; } freerec;
+static freerec *freering;
+static volatile uint32_t freepos;
+static int freelog_on;
+static void report_free_of_n(uint64_t v, uint32_t maxshown);
+static void report_free_of(uint64_t v) { report_free_of_n(v, 1); }
+static void myfree(void *p) {
+  if (freelog_on && p) {
+    uint32_t i = __atomic_fetch_add(&freepos, 1, __ATOMIC_RELAXED) % FREERING;
+    freerec *r = &freering[i];
+    r->p = (uint64_t)(uintptr_t)p; r->size = malloc_size(p);
+    r->ra[0] = (uint64_t)(uintptr_t)__builtin_return_address(0);
+    uint64_t *fp = (uint64_t *)__builtin_frame_address(0);
+    for (int k = 1; k < 4; k++) {
+      if (!fp || ((uint64_t)(uintptr_t)fp & 7) || (uint64_t)(uintptr_t)fp < 0x1000) { r->ra[k] = 0; continue; }
+      fp = (uint64_t *)(uintptr_t)fp[0];
+      r->ra[k] = (fp && !((uint64_t)(uintptr_t)fp & 7) && (uint64_t)(uintptr_t)fp > 0x1000) ? fp[1] : 0;
+    }
+  }
+  free(p);
+}
+static void report_free_of_n(uint64_t v, uint32_t maxshown) {
+  if (!freering) return;
+  uint32_t n = freepos < FREERING ? freepos : FREERING, shown = 0;
+  for (uint32_t k = 0; k < n && shown < maxshown; k++) {
+    freerec *r = &freering[(freepos - 1 - k) % FREERING];
+    if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1)) {
+      out("  freigegeben (Block "); hex(r->p); out(", Größe "); hex(r->size); out(") von:\n");
+      for (int j = 0; j < 4; j++) if (r->ra[j]) frame("    frei", r->ra[j]);
+      shown++;
+    }
+  }
+}
+
 /* Mach-Ausnahmeport für die ganze Aufgabe, bedient von einem eigenen Faden mit gutem Stapel: fängt auch Abstürze, bei denen der Kernel den
  * Signalrahmen nicht mehr auf den kaputten Stapel legen kann (er beendet den Prozess dann mit SIGILL, ohne dass ein Signalhandler läuft). */
 typedef struct {
@@ -106,9 +144,9 @@ static void *exc_thread(void *arg) {
       { uint64_t v, isa;
         if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
         if (rd64(st.__x[0], &isa) && isa && rd64(isa, &v)) { out("  Empfänger-Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[0])); out("\n"); } }
-      for (int r = 19; r <= 22; r++) {   /* Register mit Objekten der aufrufenden Funktion: Klasse, wenn sie lesbar sind */
+      for (int r = 19; r <= 19; r++) {   /* Register mit Objekten der aufrufenden Funktion: Klasse, wenn sie lesbar sind */
         uint64_t isa;
-        if (st.__x[r] > 0x100000000ULL && !(st.__x[r] & 7) && rd64(st.__x[r], &isa) && isa) { out("  x"); hex((uint64_t)r); out(" ist Objekt der Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[r])); out("\n");
+        if (st.__x[r] > 0x100000000ULL && st.__x[r] < 0x160000000ULL && !(st.__x[r] & 7) && rd64(st.__x[r], &isa) && isa > 0x100000000ULL && isa < 0x160000000ULL && rd64(isa, &isa)) { out("  x"); hex((uint64_t)r); out(" ist Objekt der Klasse "); out(object_getClassName((id)(uintptr_t)st.__x[r])); out("\n");
           if (r == 19) {   /* Ivars der Klasse mit Versatz, Typ und Wert */
             unsigned cnt = 0; Ivar *iv = class_copyIvarList(object_getClass((id)(uintptr_t)st.__x[r]), &cnt);
             for (unsigned k = 0; k < cnt; k++) {
@@ -141,6 +179,10 @@ static void *exc_thread(void *arg) {
         fp = next;
       }
     }
+    { out("  --- Freigaben der Blöcke, auf die Register und Stapel zeigen ---\n");
+      static const int regs[] = { 0, 1, 2, 19, 20, 21, 22, 23, 24 };
+      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], regs[q] == 19 ? 6 : 1); }
+      for (uint64_t a = st.__sp; a < st.__sp + 0x100; a += 8) { uint64_t v; if (rd64(a, &v) && v > 0x100000000ULL) report_free_of(v); } }
     _exit(139);
   }
   return 0;
@@ -154,6 +196,7 @@ static void install_exception_port(void) {
   pthread_t th; pthread_create(&th, 0, exc_thread, (void *)(uintptr_t)port);
 }
 __attribute__((constructor)) static void init(void) {
+  if (getenv("CRASHPC_FREELOG")) { freering = calloc(FREERING, sizeof(freerec)); freelog_on = freering != 0; }
   install_exception_port();
   logfd = open("/tmp/crashpc.log", 0x0001 | 0x0200 | 0x0008, 0644);   /* O_WRONLY|O_CREAT|O_APPEND */
   if (logfd >= 0 && logfd < 100) { int hi = fcntl(logfd, 0 /*F_DUPFD*/, 100); if (hi >= 0) { close(logfd); logfd = hi; } }
@@ -216,4 +259,4 @@ static id mydispose(id obj) {
 #define INTERPOSE(r, o) { (const void *)(r), (const void *)(o) }
 __attribute__((used)) static const struct { const void *r, *o; } crashpc_interpose[] __attribute__((section("__DATA,__interpose"))) = {
   INTERPOSE(mysigaction, sigaction), INTERPOSE(mysignal, signal), INTERPOSE(myexit, exit), INTERPOSE(my_exit, _exit), INTERPOSE(myabort, abort),
-  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill), INTERPOSE(mydispose, object_dispose) };
+  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill), INTERPOSE(mydispose, object_dispose), INTERPOSE(myfree, free) };
