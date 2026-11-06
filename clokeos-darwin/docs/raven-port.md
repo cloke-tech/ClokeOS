@@ -194,6 +194,6 @@ not `RAVEN_TRACE_API`, and `RAVEN_TRACE_FILE=/tmp/tr` writes one file per proces
 3. Inno then needs `SHGetImageList` (new in raven-shell, built on comctl32 image lists) and `IPropertyStore` on the shell
    link object (link.c; the store accepts values and answers every key as empty), or it ends in "Interface not supported".
 
-Result: Inno Setup 6.7.4 installs its files (`/VERYSILENT /CURRENTUSER`) under Raven. Still open: the install has not been
-checked to its very end (uninstaller, Start menu links), elevation, and the windows of the non-silent wizard.
+Result: Inno Setup 6.7.4 installs under Raven (`/VERYSILENT /CURRENTUSER`): files, Start menu links, uninstaller (checked in the VM). Still open: elevation (all users) and the
+windows of the non-silent wizard.
 build.sh rebuilds the controls components when `raven-shell.dll` lacks `SHGetImageList`.
