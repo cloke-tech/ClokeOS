@@ -676,3 +676,6 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * `-[NSCell _textAttributes]` (private Apple method that MAToolKit cells call through `super`) returns a mutable dictionary with font, colour and paragraph style.
 * `macapps/deploy-files.sh` quotes paths (spaces in "Logic Pro.app").
 * Next stop: `NSRangeException` (index -1) while the window is built; also ~29 non-fatal nil-in-dictionary exceptions from `-[MAButtonCell setAssetSet:]`.
+* Further fixes in this round: `-[NSSegmentedCell setSelectedSegment:-1]` selects nothing (was an out-of-range index); `-[NSFontDescriptor fontDescriptorWithDesign:]` returns the descriptor (no design variants);
+  `-[NSMenu itemArray]` returns a copy (Logic changes the menu while iterating); `NSIBObjectData` uses only matching key/value pairs when an object in the nib decoded to nil (MALiveLoopsUI nibs).
+* State: with `Jump.logicx` Logic no longer crashes during the project open; the splash's status line goes empty and Logic keeps working. No project window visible yet. Non-fatal: ~250 nil-in-dictionary exceptions from button asset images (Assets.car images are not read), `CAShapeLayer` lacks `strokeColor`/`lineWidth`.
