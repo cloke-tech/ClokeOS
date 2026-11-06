@@ -1,0 +1,4 @@
+# ClokeOS: Abfragen über den Entitätsnamen (+fetchRequestWithEntityName:, -initWithEntityName:, -entityName); die Entität selbst löst
+# -[NSManagedObjectContext executeFetchRequest:error:] beim Ausführen auf. Der Name hängt als zugeordnetes Objekt an der Abfrage.
+s/^(#import <Foundation\/NSRaise.h>)$/\1\n#import <objc\/runtime.h>\nstatic char clk_entity_name;/
+s/^@end$/+ (instancetype) fetchRequestWithEntityName: (NSString *) name {\n    return [[[self alloc] initWithEntityName: name] autorelease];\n}\n\n- (instancetype) initWithEntityName: (NSString *) name {\n    self = [self init];\n    objc_setAssociatedObject(self, \&clk_entity_name, name, OBJC_ASSOCIATION_COPY);\n    return self;\n}\n\n- (NSString *) entityName {\n    NSString *name = objc_getAssociatedObject(self, \&clk_entity_name);\n    return name ? name : [_entity name];\n}\n\n@end/

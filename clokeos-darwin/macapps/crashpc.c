@@ -255,24 +255,37 @@ static void install_exception_port(void) {
 }
 /* CRASHPC_SAMPLE=<Sekunden>: alle n Sekunden den Hauptfaden kurz anhalten und seine Aufrufkette (Rahmenzeiger) melden; zeigt, woran ein
  * Programm hängt oder rechnet, das keine Ereignisse mehr annimmt */
+/* CRASHPC_SAMPLE_ALL=1: alle Fäden des Prozesses statt nur des Hauptfadens (außer dem Probenfaden selbst) */
 static mach_port_t main_thread;
+static void sample_one(mach_port_t th, unsigned round, unsigned idx) {
+  arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
+  if (thread_suspend(th) != KERN_SUCCESS) return;
+  kern_return_t kr = thread_get_state(th, ARM_THREAD_STATE64, (thread_state_t)&st, &n);
+  uint64_t pcs[32]; int np = 0;
+  if (kr == KERN_SUCCESS) {
+    pcs[np++] = __darwin_arm_thread_state64_get_pc(st);
+    pcs[np++] = __darwin_arm_thread_state64_get_lr(st);
+    uint64_t fp = __darwin_arm_thread_state64_get_fp(st), nfp, ra;
+    while (np < 32 && fp && !(fp & 7) && rd64(fp, &nfp) && rd64(fp + 8, &ra) && ra) { pcs[np++] = ra; if (nfp <= fp) break; fp = nfp; }
+  }
+  thread_resume(th);   /* erst danach ausgeben: out() nimmt Sperren, die der angehaltene Faden halten könnte */
+  out("\n[crashpc] Probe "); hex(round); out(" Faden "); hex(idx); out(th == main_thread ? " (Haupt)\n" : "\n");
+  for (int i = 0; i < np; i++) frame(i == 0 ? "pc" : i == 1 ? "lr" : "bt", pcs[i]);
+}
 static void *sample_thread(void *arg) {
   unsigned secs = (unsigned)(uintptr_t)arg;
+  int all = getenv("CRASHPC_SAMPLE_ALL") != 0;
+  mach_port_t self = mach_thread_self();
   for (unsigned round = 1;; round++) {
     sleep(secs);
-    arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
-    if (thread_suspend(main_thread) != KERN_SUCCESS) return 0;
-    kern_return_t kr = thread_get_state(main_thread, ARM_THREAD_STATE64, (thread_state_t)&st, &n);
-    uint64_t pcs[32]; int np = 0;
-    if (kr == KERN_SUCCESS) {
-      pcs[np++] = __darwin_arm_thread_state64_get_pc(st);
-      pcs[np++] = __darwin_arm_thread_state64_get_lr(st);
-      uint64_t fp = __darwin_arm_thread_state64_get_fp(st), nfp, ra;
-      while (np < 32 && fp && !(fp & 7) && rd64(fp, &nfp) && rd64(fp + 8, &ra) && ra) { pcs[np++] = ra; if (nfp <= fp) break; fp = nfp; }
+    if (!all) { sample_one(main_thread, round, 0); continue; }
+    thread_act_array_t ths; mach_msg_type_number_t cnt;
+    if (task_threads(mach_task_self(), &ths, &cnt) != KERN_SUCCESS) continue;
+    for (unsigned i = 0; i < cnt; i++) {
+      if (ths[i] != self) sample_one(ths[i], round, i);
+      mach_port_deallocate(mach_task_self(), ths[i]);
     }
-    thread_resume(main_thread);   /* erst danach ausgeben: out() nimmt Sperren, die der Hauptfaden halten könnte */
-    out("\n[crashpc] Probe "); hex(round); out("\n");
-    for (int i = 0; i < np; i++) frame(i == 0 ? "pc" : i == 1 ? "lr" : "bt", pcs[i]);
+    vm_deallocate(mach_task_self(), (vm_address_t)ths, cnt * sizeof(thread_act_t));
   }
   return 0;
 }

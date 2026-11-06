@@ -6,7 +6,10 @@
  *   NSColor: systemRed/Green/Blue/…/GrayColor, label-, secondaryLabel-, tertiaryLabel-, quaternaryLabelColor, separatorColor, linkColor,
  *            placeholderTextColor, controlAccentColor, … (Werte der hellen Darstellung von macOS)
  *   Foundation (Darling): -[NSNumberFormatter/NSDateFormatter stringForObjectValue:] über stringFromNumber:/stringFromDate:
- *            (sonst wirft NSFormatter "requires a subclass implementation", Logic Pro beim Laden einer Fenster-Nib) */
+ *            (sonst wirft NSFormatter "requires a subclass implementation", Logic Pro beim Laden einer Fenster-Nib)
+ *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
+ *            legt das Ergebnis ungeprüft in ein Wörterbuch) ein leeres Bild 16 × 16 */
+#import <AppKit/NSImage.h>
 #import <Foundation/NSNumberFormatter.h>
 #import <Foundation/NSDateFormatter.h>
 #import <AppKit/NSFont.h>
@@ -70,7 +73,18 @@ static id fmt_date(id self, SEL s, id v) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
+static id img_symbol(Class c, SEL s, id name, id other) {
+    return [[[NSImage alloc] initWithSize: NSMakeSize(16, 16)] autorelease];
+}
+static id img_symbol3(Class c, SEL s, id name, id bundle, double value) {
+    return img_symbol(c, s, name, bundle);
+}
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
+    Class im = object_getClass([NSImage class]);
+    class_addMethod(im, sel_registerName("imageWithSystemSymbolName:accessibilityDescription:"), (IMP)img_symbol, "@@:@@");
+    class_addMethod(im, sel_registerName("imageWithSymbolName:bundle:variableValue:"), (IMP)img_symbol3, "@@:@@d");
+    class_addMethod(im, sel_registerName("imageWithSymbolName:variableValue:"), (IMP)img_symbol, "@@:@d");
     class_addMethod([NSNumberFormatter class], @selector(stringForObjectValue:), (IMP)fmt_number, "@@:@");
     class_addMethod([NSDateFormatter class], @selector(stringForObjectValue:), (IMP)fmt_date, "@@:@");
     Class fm = object_getClass([NSFont class]), cm = object_getClass([NSColor class]);

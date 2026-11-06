@@ -1,0 +1,2 @@
+# ClokeOS: Abfragen, die nur den Entitätsnamen kennen (+[NSFetchRequest fetchRequestWithEntityName:]), hier mit der Entität versehen
+/^- \(NSArray \*\) executeFetchRequest: \(NSFetchRequest \*\) fetchRequest$/,/^\{$/s/^\{$/{\n    if ([fetchRequest entity] == nil \&\& [fetchRequest respondsToSelector: @selector(entityName)]) {\n        NSEntityDescription *e = [NSEntityDescription entityForName: [fetchRequest performSelector: @selector(entityName)] inManagedObjectContext: self];\n        if (e != nil)\n            [fetchRequest setEntity: e];\n    }/

@@ -635,3 +635,16 @@ Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`,
 * Next stop: the splash stays at "Searching for Audio Unit plug-ins". The only exception left is on the Audio Unit scan thread (`MAAudioUnitSupport`, `XAUCache_ThreadFunction`): it builds a CoreData model in code
   (`-[NSAttributeDescription init]`), which Cocotron's CoreData has as an abstract stub. Likely the scan thread ends there and the splash waits for it (not yet verified with the sampler).
   Next step: CoreData model classes that can be created in code (`NSEntityDescription`/`NSAttributeDescription`/`NSRelationshipDescription` setters) plus whatever store the AU cache uses, or a way to let the scan finish without its cache.
+
+### Round 39: CoreData models built in code; the alert's modal loop ends
+
+* Logic's Audio Unit cache (`MAAudioUnitSupport`) builds its CoreData model in code and uses `NSBinaryStoreType`. Cocotron's CoreData could only load models from `.mom` files. Patches in `macapps/patches/darling-cocotron/CoreData/`:
+  `NSPropertyDescription` gets `init`, `setName:`, optional/transient/userInfo (associated objects); `NSAttributeDescription` derives the value class from the attribute type; `NSRelationshipDescription` is to-one when `maxCount == 1` (as on macOS) and keeps `optional`;
+  `NSEntityDescription` gets `init`, `setProperties:` (back-references, accessor methods on the object class, like loading from `.mom`), model back-reference via `-[NSManagedObjectModel setEntities:]`;
+  `+[NSFetchRequest fetchRequestWithEntityName:]`/`-initWithEntityName:`/`-entityName`, resolved in `executeFetchRequest:error:`; `NSBinaryStoreType` and `NSSQLiteStoreType` map to the in-memory store (nothing is written; the AU cache is rebuilt each launch).
+  Result: the scan thread no longer throws; the splash moves on to "Updating information about Audio Unit plug-ins".
+* `+[NSImage imageWithSystemSymbolName:accessibilityDescription:]` and `imageWithSymbolName:…` return an empty 16×16 image instead of nil (no SF Symbols; Logic puts the result into a dictionary unchecked).
+* `macapps/crashpc.c`: `CRASHPC_SAMPLE_ALL=1` samples every thread, not just the main thread. Reading logs: copy them to `/var/root` in the VM, `sync`, stop the VM and `debugfs dump` them (the serial console mangles long output).
+* Modal loops: Cocotron's `stopModal` stopped the session begun last; Logic begins another one while its alert dialog runs, so "Continue" stopped that one and the dialog's loop ran on invisibly. `stopModalWithCode:` now stops the innermost *running* `runModalSession:` (as on macOS).
+  The main thread now gets back to `-[NSApplication run]` after the dialog.
+* `macapps/logicrun.sh`: `LOGIC_ARGS` passes arguments (e.g. a project path). `Jump.logicx` (1.3 MB) is copied into the image as `/var/root/Jump.logicx` with debugfs (not part of the repository).
