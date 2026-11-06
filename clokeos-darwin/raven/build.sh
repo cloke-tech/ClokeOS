@@ -128,6 +128,15 @@ fi
 [ -f "$WORK/raven/components/controls/ucrtbase.dll" ] || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
 # 32-Bit-Komponenten (MinGW i686): Controls und ucrtbase32 (die CMake-Regel dafür hängt an Bedingungen, die hier nicht gelten)
 [ -f "$WORK/raven/components/controls32/comctl32.dll" ] || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$WORK/raven/components/controls32" >/dev/null
+# Installer-Komponenten (msiexec, regsvr32, msxml3, oleaut32, windowscodecs ...): bauen aus den ReactOS-Quellen (ca. 150 MB Archiv),
+# brauchen widl (MinGW, pro Architektur) und bison >= 3.8 (brew)
+bisonbin="$(brew --prefix bison 2>/dev/null)/bin"
+[ -x "$bisonbin/bison" ] || { echo "bison fehlt: brew install bison" >&2; exit 1; }
+for a in x86_64:x64:installer i686:x86:installer32; do
+  triple="${a%%:*}"; rest="${a#*:}"; arch="${rest%%:*}"; dir="${rest#*:}"
+  mkdir -p "$WORK/raven/shim-$arch"; ln -sf "$(command -v $triple-w64-mingw32-widl)" "$WORK/raven/shim-$arch/widl"
+  [ -f "$WORK/raven/components/$dir/msi.dll" ] || PATH="$WORK/raven/shim-$arch:$bisonbin:$PATH" python3 "$src/scripts/provision-installer.py" --arch "$arch" --output "$WORK/raven/components/$dir" >/dev/null
+done
 crt="$src/native/upstream/raven-crt"
 i686-w64-mingw32-gcc -c -O2 -w -ffreestanding -fno-builtin "$crt/ucrtbase.c" -o "$WORK/raven/ucrtbase32.o"
 i686-w64-mingw32-gcc -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp -o "$WORK/raven/ucrtbase32.dll" \
@@ -140,8 +149,9 @@ cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolcha
   -DRAVEN_FONT_DIRECTORY="$text/fonts" -DOPENSSL_INCLUDE_DIR="$sys/ssl/include" -DOPENSSL_CRYPTO_LIBRARY="$sys/lib/libcrypto.a" -DOPENSSL_SSL_LIBRARY="$sys/lib/libssl.a" \
   -DPNG_LIBRARY_RELEASE="$sys/png/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$sys/png/include" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
   -DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0 -DRAVEN_RTL_COMPONENT_PATH="$WORK/raven/components/rtl/raven-rtl.dll" \
-  -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$WORK/raven/components/controls32" >/dev/null
-ninja -C "$build" raven raven-bootstrap >/dev/null
+  -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$WORK/raven/components/controls32" \
+  -DRAVEN_INSTALLER_COMPONENT_DIR="$WORK/raven/components/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$WORK/raven/components/installer32" >/dev/null
+ninja -C "$build" raven raven-bootstrap installer_components_64 installer_components_32 >/dev/null
 
 # PureDarwins libc++ bricht bei std::uncaught_exceptions ab: die Bibliothek wird im Image ersetzt
 read -r root_start _ < <(gpt_part "$PD_IMG" "$GUID_LINUX_FS")

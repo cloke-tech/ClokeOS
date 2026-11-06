@@ -351,10 +351,30 @@ index 7fab6e2..da1b70d 100644
  #else
  			throw std::runtime_error("native execution requires an x86-64 Linux host");
 diff --git a/native/nt/access_token.cpp b/native/nt/access_token.cpp
-index 247b706..3986e94 100644
+index 247b706..422adf9 100644
 --- a/native/nt/access_token.cpp
 +++ b/native/nt/access_token.cpp
-@@ -62,7 +62,7 @@ private:
+@@ -42,11 +42,19 @@ public:
+ 		lock.l_whence = SEEK_SET;
+ 		int result;
+ 		do result = ::fcntl(descriptor, F_SETLKW, &lock); while (result < 0 && errno == EINTR);
++#ifdef __APPLE__
++		// POSIX-Shm kennt unter Darwin keine fcntl-Sperren: ohne Sperre weiterarbeiten
++		if (result < 0)
++			this->descriptor = -1;
++#else
+ 		if (result < 0)
+ 			throw std::runtime_error("cannot lock access token storage");
++#endif
+ 	}
+ 	~TokenLock()
+ 	{
++		if (descriptor < 0)
++			return;
+ 		struct flock lock{};
+ 		lock.l_type = F_UNLCK;
+ 		lock.l_whence = SEEK_SET;
+@@ -62,7 +70,7 @@ private:
  void AccessToken::map()
  {
  	struct stat information{};
@@ -377,10 +397,34 @@ index 5eac567..044eada 100644
  			std::ifstream input(entry.path(), std::ios::binary);
  			const std::string bytes((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 diff --git a/native/nt/child_process.cpp b/native/nt/child_process.cpp
-index d94b3b0..332a91e 100644
+index d94b3b0..1fe77a2 100644
 --- a/native/nt/child_process.cpp
 +++ b/native/nt/child_process.cpp
-@@ -66,6 +66,12 @@ bool runtime_process_alive(pid_t pid)
+@@ -24,6 +24,23 @@
+ #include <sys/socket.h>
+ #include <unistd.h>
+ 
++// Auf Darwin laesst sich POSIX-Shm nicht mit read/write benutzen: kleine Datenbloecke gehen ueber eine sofort geloeschte Tempdatei
++static int blob_file(const char *name)
++{
++#ifdef __APPLE__
++	const char *dir = std::getenv("TMPDIR");
++	std::string path = std::string(dir && *dir ? dir : "/tmp") + "/raven-blob-XXXXXX";
++	const int fd = ::mkstemp(path.data());
++	if (fd < 0)
++		return -1;
++	::unlink(path.c_str());
++	::fcntl(fd, F_SETFD, FD_CLOEXEC);
++	return fd;
++#else
++	return ::memfd_create(name, MFD_CLOEXEC);
++#endif
++}
++
+ extern char **environ;
+ 
+ namespace raven {
+@@ -66,6 +83,12 @@ bool runtime_process_alive(pid_t pid)
  {
  	if (pid <= 0)
  		return false;
@@ -393,7 +437,7 @@ index d94b3b0..332a91e 100644
  	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
  	std::string text;
  	std::getline(stat, text);
-@@ -76,6 +82,7 @@ bool runtime_process_alive(pid_t pid)
+@@ -76,6 +99,7 @@ bool runtime_process_alive(pid_t pid)
  	const auto mine_length = ::readlink("/proc/self/exe", mine, sizeof(mine));
  	const auto theirs_length = ::readlink(("/proc/" + std::to_string(pid) + "/exe").c_str(), theirs, sizeof(theirs));
  	return mine_length > 0 && mine_length == theirs_length && std::equal(mine, mine + mine_length, theirs);
@@ -401,7 +445,7 @@ index d94b3b0..332a91e 100644
  }
  
  void ProcessObject::reap() const
-@@ -127,7 +134,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+@@ -127,7 +151,13 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
  	// The child may write to the terminal too, moving the cursor where this process cannot follow it.
  	TerminalConsole::instance().mark_stale();
  	char self[4096];
@@ -415,6 +459,45 @@ index d94b3b0..332a91e 100644
  	if (length <= 0) {
  		error = 5;
  		return nullptr;
+@@ -169,7 +199,7 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+ 	};
+ 	if (!launch.environment.empty()) {
+ 		// The block travels in an anonymous file the child reads once and closes.
+-		const int file = ::memfd_create("raven-environment", MFD_CLOEXEC);
++		const int file = blob_file("raven-environment");
+ 		if (file < 0) {
+ 			error = 8;
+ 			return nullptr;
+@@ -208,7 +238,7 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+ 		records.push_back(std::move(record));
+ 	}
+ 	if (!records.empty()) {
+-		const int file = ::memfd_create("raven-handles", MFD_CLOEXEC);
++		const int file = blob_file("raven-handles");
+ 		const auto bytes = serialize_inherited(records);
+ 		if (file < 0 || ::write(file, bytes.data(), bytes.size()) != ssize_t(bytes.size())) {
+ 			if (file >= 0)
+@@ -226,7 +256,7 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+ 	// The runtime's messages in the child go where this runtime writes its own, apart from the program's standard error.
+ 	arguments.push_back("--diagnostics-fd=" + std::to_string(pass(2)));
+ 	// The child writes its exit code into a file both share.
+-	const int exit_file = ::memfd_create("raven-exit", MFD_CLOEXEC);
++	const int exit_file = blob_file("raven-exit");
+ 	const int exit_kept = exit_file < 0 ? -1 : ::fcntl(exit_file, F_DUPFD_CLOEXEC, 0);
+ 	if (exit_kept >= 0) {
+ 		owned.push_back(exit_file);
+@@ -289,6 +319,11 @@ std::shared_ptr<ProcessObject> spawn_child(const ChildLaunch &launch, uint32_t &
+ 		::close(descriptor);
+ 	release();
+ 	if (status) {
++		if (std::getenv("RAVEN_TRACE_API")) {
++			size_t bytes = 0;
++			for (auto &a : arguments) bytes += a.size() + 1;
++			fprintf(stderr, "raven: posix_spawn failed %d args=%zu bytes=%zu passes=%zu\n", status, arguments.size(), bytes, passes.size());
++		}
+ 		if (gate_pair[1] >= 0)
+ 			::close(gate_pair[1]);
+ 		if (channel_pair[0] >= 0)
 diff --git a/native/nt/event.cpp b/native/nt/event.cpp
 index e870fd7..f7a1992 100644
 --- a/native/nt/event.cpp
@@ -472,7 +555,7 @@ index 068df1d..aaa3822 100644
  		void *mapped = ::mmap(nullptr, sizeof(MutexState), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
  		if (mapped == MAP_FAILED)
 diff --git a/native/nt/process_info_api.cpp b/native/nt/process_info_api.cpp
-index e19f568..4db0741 100644
+index e19f568..967eea2 100644
 --- a/native/nt/process_info_api.cpp
 +++ b/native/nt/process_info_api.cpp
 @@ -72,6 +72,9 @@ uint64_t filetime_now()
@@ -485,6 +568,22 @@ index e19f568..4db0741 100644
  	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
  	std::string text;
  	std::getline(stat, text);
+@@ -587,6 +590,15 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
+ 			call.store<uint16_t>(call[2], 0x8664);
+ 		call.ret(1);
+ 	});
++	// Als Gast laeuft nur x86 (WOW64); alles andere ist nicht unterstuetzt
++	registry.add("IsWow64GuestMachineSupported", 2, [](ApiCall &call) {
++		if (!call[1]) {
++			call.ret(0x80070057U);
++			return;
++		}
++		call.store<uint32_t>(call[1], uint16_t(call.u32(0)) == 0x14c ? 1 : 0);
++		call.ret(0);
++	});
+ 	// The machine runs x64 programs in user and kernel mode and 32-bit x86 ones in the WOW64 container; nothing else.
+ 	registry.add("GetMachineTypeAttributes", 2, [](ApiCall &call) {
+ 		if (!call[1]) {
 diff --git a/native/nt/providers.cpp b/native/nt/providers.cpp
 index 00fa140..0c3912e 100644
 --- a/native/nt/providers.cpp

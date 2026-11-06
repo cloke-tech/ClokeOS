@@ -13,4 +13,10 @@ case "$1" in
 esac
 program=$1
 shift
+# ein .msi-Paket läuft über msiexec; "msiexec" und andere mitgelieferte Programme findet Raven im eigenen Verzeichnis
+case "$program" in
+  *.msi|*.MSI) set -- /i "$program" "$@"; program=$dir/msiexec.exe ;;
+  */*) ;;
+  *) [ -f "$dir/${program%.exe}.exe" ] && program=$dir/${program%.exe}.exe ;;
+esac
 exec "$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit --desktop=${RAVEN_DESKTOP:-x11} "$program" -- "$@"

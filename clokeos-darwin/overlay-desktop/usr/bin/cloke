@@ -406,8 +406,7 @@ def windows_via_raven(p):
     urllib.request.urlretrieve(url, fn)
     t = typ.lower()
     if fn.lower().endswith(".msi") or t in ("msi", "wix"):
-        print("cloke: Raven cannot run .msi installers yet", file=sys.stderr)
-        return 1
+        cmd = wine + ["/usr/libexec/raven/msiexec.exe", "/i", fn, "/qn"]
     elif t == "inno":
         cmd = wine + [fn, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
     elif t in ("nullsoft", "nsis"):

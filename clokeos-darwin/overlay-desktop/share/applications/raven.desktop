@@ -3,6 +3,6 @@ Type=Application
 Name=Windows Program
 Comment=Run a Windows program with Raven
 Exec=sh -c 'cd "$(dirname "$1")" && exec raven "$1"' raven %f
-MimeType=application/x-ms-dos-executable;application/x-msdownload;
+MimeType=application/x-ms-dos-executable;application/x-msdownload;application/x-msi;
 NoDisplay=true
 Terminal=false

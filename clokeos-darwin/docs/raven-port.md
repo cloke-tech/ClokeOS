@@ -157,3 +157,20 @@ Raven's X11 presentation owns and requests the `CLIPBOARD` selection like any X 
 Notepad++ Ctrl+A, Ctrl+C, then Ctrl+Shift+V in the terminal pasted `Windows-Text fuer Unix`; the other way, `Unix-Text fuer Windows` typed in the
 terminal, Ctrl+Shift+A and Ctrl+Shift+C there, then Ctrl+A and Ctrl+V in Notepad++ replaced the editor text (the whole terminal screen came along, so
 the document has 25 lines). Text only; other formats (images, files) and Drag and drop are untested.
+
+## Status (2026-11-06, night 3): MSI and Inno Setup
+
+* **MSI works.** With Raven's installer components (ReactOS sources built by `scripts/provision-installer.py`, now part of `raven/build.sh`;
+  needs `widl` from MinGW and bison >= 3.8 from brew) `msiexec /i test.msi /qn` installs a package made with `wixl` (msitools):
+  the file lands in `C:\Program Files\RavenTest`, the log shows every standard action, and `msiexec /x` removes it again (both exit 0).
+  The `raven` wrapper runs `.msi` files through `msiexec` (`raven setup.msi`), and Fundus/`cloke` use it for MSI packages.
+* Three Darwin-specific bugs stood between Raven and a real Inno Setup installer: (1) POSIX shared memory cannot be read or written with
+  `read`/`write` on Darwin, which broke the environment/handle blocks passed to child processes (ENXIO, surfaced by Inno as "Error 8: Not enough memory
+  resources"), so those blocks and the exit-code file are now unlinked temp files; (2) `fcntl` locks on a POSIX shm object fail, so the
+  token storage lock is skipped on Darwin; (3) `IsWow64GuestMachineSupported` was missing.
+* **Inno Setup 6.7.4** (the real installer, PE32 stub plus a 64-bit setup process): the stub extracts itself, spawns the setup and its own
+  windows (language and install-mode pages) render and take clicks. After the language page the 64-bit setup process stays busy for more
+  than 15 minutes in the slow emulated VM without showing the wizard; not diagnosed further, so Inno installers are *not* yet usable.
+  Silent installs (`/VERYSILENT`) did not install either. "Install for all users" exits because elevation is not implemented.
+* Test-rig trap: the PureDarwin image has no `pgrep`; use `ps ax | awk '/[r]aven/{print $1}'` to kill stray runs (stray runs make Inno say
+  "Setup is currently running").
