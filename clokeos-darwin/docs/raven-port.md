@@ -100,3 +100,18 @@ Skia (commit `a21aae8`, CPU only, `target_os=mac target_cpu=x64`, `skia_use_font
 PureDarwin) and the Liberation/Raven Sans fonts are part of `raven/build.sh`. Only FreeType is fetched for Skia (`git-sync-deps` would
 download 7 GB, mostly Dawn, ICU and unicodetools); Skia's FreeType needs libpng headers (taken from the image). The GDI test window now shows
 a Windows title bar with its caption and `TextOutA` text on the ClokeOS desktop. The stage grows by about 7 MB for the fonts.
+
+## Status (2026-11-06, night): more programs
+
+* `sqlite3.exe` (the fixture MinGW build of SQLite 3.50.4) runs and answers `select sqlite_version(), 6*7;` with `3.50.4|42`.
+* A 64-bit installer-like program (MinGW, plain Win32: `CreateDirectory` in `%ProgramFiles%`, `CopyFile`, `CreateFile`/`WriteFile`,
+  `RegCreateKeyEx`/`RegSetValueEx` under `Software\Microsoft\Windows\CurrentVersion\Uninstall`, temp file) runs: the files appear in
+  `~/Library/Raven/drive_c/Program Files/RavenTest` and the registry in `registry.dat`.
+* A real NSIS installer does not run: NSIS only makes 32-bit (PE32) stubs, and XNU 20.5 has no 32-bit user mode (Raven's x86 mode needs
+  a compatibility-mode segment through the LDT as Wine's WoW64 does; not ported). Inno Setup is 32-bit as well. MSI needs Raven's installer
+  components (ReactOS sources, `scripts/provision-installer.py`), not fetched.
+* PureDarwin's libSystem has no `swapcontext`: `native/platform/context_darwin.{h,cpp}` is a small x86-64 replacement (guest threads are
+  coroutines).
+* Notepad++ (the fixture's portable build) now starts, reads its configuration and then stops with `__fastfail(7)` after a C++ exception
+  (`0xe06d7363`) whose handler (`handler=140420254`, a language-specific handler in the program) reports "not handled" in Raven's SEH
+  dispatch; this is the next thing to look at (`RAVEN_TRACE_SEH=1`).

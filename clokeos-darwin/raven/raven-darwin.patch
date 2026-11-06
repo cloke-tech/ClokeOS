@@ -14,7 +14,7 @@ index a52e8aa..f1b2ddc 100644
  
  set(CMAKE_CXX_STANDARD 20)
 diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
-index d8c8b46..a5d5de8 100644
+index d8c8b46..641d370 100644
 --- a/native/CMakeLists.txt
 +++ b/native/CMakeLists.txt
 @@ -1,3 +1,7 @@
@@ -45,7 +45,7 @@ index d8c8b46..a5d5de8 100644
          -Wl,-no-pie,-Ttext-segment=0x700000000000,-e,_start,--build-id=none)
 -    add_library(raven_cpu STATIC cpu/native_cpu.cpp nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
 +    endif()
-+    add_library(raven_cpu STATIC cpu/native_cpu.cpp $<$<BOOL:${APPLE}>:platform/mach_guest.cpp> nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
++    add_library(raven_cpu STATIC cpu/native_cpu.cpp $<$<BOOL:${APPLE}>:platform/mach_guest.cpp> $<$<BOOL:${APPLE}>:platform/context_darwin.cpp> nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
      target_include_directories(raven_cpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
      set(NLS_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/reactos-nls)
      file(SHA256 ${NLS_SOURCE}/c_1252.txt NLS_TEXT_HASH)
@@ -83,7 +83,7 @@ index ea39cb0..a7d1add 100644
  .section .note.GNU-stack,"",@progbits
 +#endif
 diff --git a/native/cpu/native_cpu.cpp b/native/cpu/native_cpu.cpp
-index d3abdc2..ff6d0a8 100644
+index d3abdc2..9c69f74 100644
 --- a/native/cpu/native_cpu.cpp
 +++ b/native/cpu/native_cpu.cpp
 @@ -12,7 +12,9 @@
@@ -155,7 +155,18 @@ index d3abdc2..ff6d0a8 100644
  NativeContext NativeProcess::context() const
  {
  	state->require_stopped();
-@@ -1415,7 +1434,7 @@ void NativeProcess::watch_write(uint64_t address)
+@@ -939,6 +958,10 @@ uint64_t NativeProcess::memory_syscall(uint64_t number, uint64_t a1, uint64_t a2
+ 	try {
+ 		result = child.syscall(number, a1, a2, a3, a4, a5, a6);
+ 	} catch (...) {
++#ifdef __APPLE__
++		// the memory operations are made through Mach calls here: the guest's registers were not touched, the error is the real one
++		throw;
++#endif
+ 		try {
+ 			user_regs_struct where{};
+ 			if (child.pid != -1)
+@@ -1415,7 +1438,7 @@ void NativeProcess::watch_write(uint64_t address)
  	state->require_stopped();
  	const pid_t pid = state->child->pid;
  	const auto poke = [&](size_t index, uint64_t value) {
@@ -164,7 +175,7 @@ index d3abdc2..ff6d0a8 100644
  		if (ptrace(PTRACE_POKEUSER, pid, reinterpret_cast<void *>(offset), reinterpret_cast<void *>(value)) == -1)
  			throw std::runtime_error("cannot program the debug registers");
  	};
-@@ -1754,6 +1773,11 @@ NativeResult NativeProcess::begin_call(uint64_t address, std::span<const uint64_
+@@ -1754,6 +1777,11 @@ NativeResult NativeProcess::begin_call(uint64_t address, std::span<const uint64_
  		throw std::runtime_error("native call exceeds initial argument limit");
  	if (!state->covers(address, 1, PROT_EXEC))
  		throw std::runtime_error("native entry is outside executable image memory");
@@ -176,7 +187,7 @@ index d3abdc2..ff6d0a8 100644
  	state->child->set_timeout(timeout);
  	if (state->mode == NativeMode::x86)
  		return begin_x86_call(address, arguments, stack_ceiling, timeout);
-@@ -2032,7 +2056,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
+@@ -2032,7 +2060,7 @@ NativeResult NativeProcess::resume(std::chrono::milliseconds timeout)
  	state->debug_print_fault=signal==SIGSEGV && info.si_code==SI_KERNEL && registers.rax==1;
  	if (signal == SIGTRAP && info.si_code == TRAP_HWBKPT) {
  		// Reading the stop reason is enough; DR6 must be cleared or the next trap reports a stale cause.
@@ -572,19 +583,37 @@ index 437a810..006953d 100644
  
  void NativeThreads::switch_to(GuestThread &next)
 diff --git a/native/nt/threads.h b/native/nt/threads.h
-index 346024d..b657151 100644
+index 346024d..1612f77 100644
 --- a/native/nt/threads.h
 +++ b/native/nt/threads.h
-@@ -14,6 +14,8 @@
+@@ -12,8 +12,14 @@
+ #include <memory>
+ #include <mutex>
  #include <optional>
++#ifdef __APPLE__
++#include "platform/context_darwin.h"
++#else
  #include <ucontext.h>
++#endif
  #include <poll.h>
 +#include <stdexcept>
 +#include <string>
  #include <vector>
  
  namespace raven {
-@@ -88,6 +90,55 @@ struct ThreadExit {
+@@ -27,7 +33,11 @@ struct GuestThread {
+ 	uint64_t teb = 0, stack_low = 0, stack_high = 0;
+ 	State state = State::ready;
+ 	NativeThreadState snapshot;
++#ifdef __APPLE__
++	RavenContext context{};
++#else
+ 	ucontext_t context{};
++#endif
+ 	std::unique_ptr<char[]> host_stack;
+ 	// Wait condition: pure check, evaluated by the scheduler; the thread resumes when it holds or the wake time passes.
+ 	std::function<bool()> ready;
+@@ -88,6 +98,55 @@ struct ThreadExit {
  	uint32_t code;
  };
  
@@ -640,7 +669,7 @@ index 346024d..b657151 100644
  // Cooperative scheduler over one traced process: guest threads switch only inside API calls.
  class NativeThreads {
  public:
-@@ -172,7 +223,7 @@ private:
+@@ -172,7 +231,7 @@ private:
  	bool tearing_down = false;
  	uint32_t next_id = 2;
  	// An exception from a non-main thread is carried to the main thread, which owns the process result.
@@ -747,6 +776,85 @@ index 28f086c..89b6f58 100644
  	if (storage)
  		munmap(storage, size);
  	if (fd >= 0)
+diff --git a/native/platform/context_darwin.cpp b/native/platform/context_darwin.cpp
+new file mode 100644
+index 0000000..ef22819
+--- /dev/null
++++ b/native/platform/context_darwin.cpp
+@@ -0,0 +1,18 @@
++// ClokeOS: see context_darwin.h
++#ifdef __APPLE__
++__asm__(
++	".text\n"
++	".globl _raven_context_switch\n"
++	"_raven_context_switch:\n"
++	"\tpushq %rbp\n\tpushq %rbx\n\tpushq %r12\n\tpushq %r13\n\tpushq %r14\n\tpushq %r15\n"
++	"\tmovq %rsp, (%rdi)\n"
++	"\tmovq (%rsi), %rsp\n"
++	"\tpopq %r15\n\tpopq %r14\n\tpopq %r13\n\tpopq %r12\n\tpopq %rbx\n\tpopq %rbp\n"
++	"\tretq\n"
++	".globl _raven_context_start\n"
++	"_raven_context_start:\n"
++	"\tmovq %r13, %rdi\n"
++	"\tmovq %r14, %rsi\n"
++	"\tcallq *%r12\n"
++	"\tud2\n");
++#endif
+diff --git a/native/platform/context_darwin.h b/native/platform/context_darwin.h
+new file mode 100644
+index 0000000..3c41173
+--- /dev/null
++++ b/native/platform/context_darwin.h
+@@ -0,0 +1,49 @@
++// ClokeOS: PureDarwin's libSystem has no getcontext/makecontext/swapcontext; the guest threads' coroutines use this small x86-64 version
++#pragma once
++#ifdef __APPLE__
++#include <cstddef>
++#include <cstdarg>
++#include <cstdint>
++#include <cstring>
++
++struct RavenContext {
++	void *stack_pointer = nullptr;
++	struct { void *ss_sp = nullptr; size_t ss_size = 0; } uc_stack;
++	RavenContext *uc_link = nullptr;
++};
++
++extern "C" void raven_context_switch(RavenContext *from, RavenContext *to);
++extern "C" void raven_context_start();
++
++static inline int getcontext(RavenContext *context)
++{
++	context->stack_pointer = nullptr;
++	return 0;
++}
++
++static inline void makecontext(RavenContext *context, void (*function)(), int count, ...)
++{
++	va_list arguments;
++	va_start(arguments, count);
++	uint64_t first = count > 0 ? uint64_t(va_arg(arguments, unsigned)) : 0, second = count > 1 ? uint64_t(va_arg(arguments, unsigned)) : 0;
++	va_end(arguments);
++	auto top = reinterpret_cast<uintptr_t>(context->uc_stack.ss_sp) + context->uc_stack.ss_size;
++	top &= ~uintptr_t(15);
++	auto *frame = reinterpret_cast<uint64_t *>(top - 9 * 8);
++	frame[0] = 0;                                        // r15
++	frame[1] = second;                                   // r14: second argument
++	frame[2] = first;                                    // r13: first argument
++	frame[3] = reinterpret_cast<uint64_t>(function);     // r12: function
++	frame[4] = 0;                                        // rbx
++	frame[5] = 0;                                        // rbp
++	frame[6] = reinterpret_cast<uint64_t>(&raven_context_start);
++	frame[7] = frame[8] = 0;
++	context->stack_pointer = frame;
++}
++
++static inline int swapcontext(RavenContext *from, RavenContext *to)
++{
++	raven_context_switch(from, to);
++	return 0;
++}
++#endif
 diff --git a/native/platform/cxx_compat.cpp b/native/platform/cxx_compat.cpp
 new file mode 100644
 index 0000000..79b5b26
