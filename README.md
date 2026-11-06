@@ -1,6 +1,6 @@
 # ClokeOS
 
-ClokeOS is an operating system built on the Darwin kernel (XNU), with a cape as its logo. Its default look is macOS-like, but the goal is one system with three worlds: **Mac** (apps from macOS on Darling's frameworks), **Windows** (a Windows-like interface today, `.exe` programs through Wine, in a tree of their own at `/NT`) and **Linux** (programs in a tree of their own at `/TUX`). What works today and what is still planned is listed under [One system, three worlds](#one-system-three-worlds).
+ClokeOS is an operating system built on the Darwin kernel (XNU), with a cape as its logo. Its default look is macOS-like, but the goal is one system with three worlds: **Mac** (apps from macOS on Darling's frameworks), **Windows** (a Windows-like interface today, `.exe` programs through Raven) and **Linux** (programs in a tree of their own at `/TUX`). What works today and what is still planned is listed under [One system, three worlds](#one-system-three-worlds).
 
 **Download:** the [latest release](https://github.com/cloke-tech/ClokeOS/releases/latest) has USB installers for PCs (offline and online), a ready-made SSD image and installer images for virtual machines (x86_64 and arm64). See [Installing ClokeOS](#installing-clokeos).
 
@@ -291,9 +291,9 @@ found five versions:
 Choose a Version, 2 recommended (default 2):
 ```
 
-Backends used when present: **brew** (macOS and ClokeOS), **dnf / apt / pacman / flatpak / AppImage** (Linux; AppImages come from the appimage.github.io feed and the project's GitHub release) and **winget / choco** (Windows). Live searches run on every backend the system has; a built-in catalog of popular programs adds the versions for the other OSes. Versions for another OS run through a compatibility layer: Windows programs through **Wine** (cloke reads the installer URL from the winget-pkgs manifest, downloads it and runs it silently under Wine), Linux programs through the command in `CLOKE_LINUX_LAYER` (no Linux layer ships yet, so those entries say "not installed"). The recommended version is a native command-line package first, then Linux, then a native GUI cask, then Windows.
+Backends used when present: **brew** (macOS and ClokeOS), **dnf / apt / pacman / flatpak / AppImage** (Linux; AppImages come from the appimage.github.io feed and the project's GitHub release) and **winget / choco** (Windows). Live searches run on every backend the system has; a built-in catalog of popular programs adds the versions for the other OSes. Versions for another OS run through a compatibility layer: Windows programs through **Raven** (cloke reads the installer URL from the winget-pkgs manifest, downloads it and runs it silently under Wine), Linux programs through the command in `CLOKE_LINUX_LAYER` (no Linux layer ships yet, so those entries say "not installed"). The recommended version is a native command-line package first, then Linux, then a native GUI cask, then Windows.
 
-`cloke search|install|remove|list|update|backends`, `-y` takes the recommendation, `--from brew|dnf|...` and `--os macos|linux|windows` narrow the list, `search --json` is machine-readable. Tests: `clokeos-darwin/tools/test_cloke.py`. Not tested yet: dnf, flatpak, winget, choco and the Wine installer path on real systems (only parsers, ranking and the prompt are covered by tests).
+`cloke search|install|remove|list|update|backends`, `-y` takes the recommendation, `--from brew|dnf|...` and `--os macos|linux|windows` narrow the list, `search --json` is machine-readable. Tests: `clokeos-darwin/tools/test_cloke.py`. Not tested yet: dnf, flatpak, winget, choco and the Raven installer path on real systems (only parsers, ranking and the prompt are covered by tests).
 
 ### Architectures
 
