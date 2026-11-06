@@ -103,7 +103,7 @@ swiftui_obj=()
 if [ -f "${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}" ]; then
   python3 -I "$here/swiftui-gen.py" "${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}" "$w/src/SwiftUIPlaceholders.swift" 2>/dev/null
   swiftc -c -O -wmo -parse-as-library -swift-version 5 -enable-library-evolution -module-name SwiftUI -target arm64-apple-macos11.0 -sdk "$sdk" \
-    "$w/src/SwiftUIPlaceholders.swift" -o "$w/out/ovSwiftUI.o" && swiftui_obj=("$w/out/ovSwiftUI.o")
+    "$w/src/SwiftUIPlaceholders.swift" "$here/overlay/SwiftUIFuncs.swift" -o "$w/out/ovSwiftUI.o" && swiftui_obj=("$w/out/ovSwiftUI.o")
 fi
 cp "$here/overlay/CoreData.swift" "$w/src/CoreData.swift"
 ovc CoreData "$w/src/CoreData.swift"

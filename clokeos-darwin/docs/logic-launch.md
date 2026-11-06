@@ -558,3 +558,11 @@ Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
   Views would then also need layout and drawing on top of AppKit. This is the SwiftUI reimplementation that Cutefish describes as the hardest part of their (closed) Mac layer.
 
 Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
+
+### Round 34: frozen layouts, first SwiftUI functions, next stop: protocol requirement layouts
+
+* `swift/swiftui-gen.py` now builds a full index of both interfaces and, for `@frozen` types, emits their stored properties and enum cases (closure over the types they use, private ones as classes; `#if`-duplicate declarations, associated types
+  of generic parameters and closure fields handled). 429 types, typechecks. `swift/swiftui-fields.py` lists the stored fields of frozen types.
+* `swift/overlay/SwiftUIFuncs.swift` (hand-written, same module): `Image(_:bundle:)` (keeps name and bundle) and `NSHostingView<Content: View>`, a real `NSView` subclass holding `rootView` (draws nothing yet).
+* Next stop: a Swift runtime fatal error in `instantiateWitnessTable` while checking a generic requirement — a Logic type's conformance to a SwiftUI protocol (e.g. `View`) has Apple's witness-table layout, my placeholder protocols have no requirements.
+  Next step: generate the protocols with their requirement lists (associated types, `body`, `_makeView…`) from the interfaces so that witness tables line up.
