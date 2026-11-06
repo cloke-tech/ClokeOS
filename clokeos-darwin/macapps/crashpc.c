@@ -20,6 +20,7 @@
 #include <sys/ucontext.h>
 #include <unistd.h>
 
+static const char *trace_class;   /* CRASHPC_TRACE_CLASS */
 static int logfd = -1;   /* Spiegel in /tmp/crashpc.log: manche Programme (Logic Pro) schließen oder ersetzen stderr */
 static void out(const char *s) {
   write(2, s, strlen(s));
@@ -115,6 +116,8 @@ static void report_free_of_n(uint64_t v, uint32_t maxshown) {
   uint32_t n = freepos < FREERING ? freepos : FREERING, shown = 0;
   for (uint32_t k = 0; k < n && shown < maxshown; k++) {
     freerec *r = &freering[(freepos - 1 - k) % FREERING];
+    Dl_info dd;   /* Freigaben aus CoreFoundation (Wiederverwendung des Speichers) überspringen */
+    if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1) && dladdr((void *)(uintptr_t)r->ra[0], &dd) && dd.dli_fname && strstr(dd.dli_fname, "CoreFoundation")) continue;
     if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1)) {
       out("  freigegeben (Block "); hex(r->p); out(", Größe "); hex(r->size); out(") von:\n");
       for (int j = 0; j < 4; j++) if (r->ra[j]) frame("    frei", r->ra[j]);
@@ -181,7 +184,7 @@ static void *exc_thread(void *arg) {
     }
     { out("  --- Freigaben der Blöcke, auf die Register und Stapel zeigen ---\n");
       static const int regs[] = { 0, 1, 2, 19, 20, 21, 22, 23, 24 };
-      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], regs[q] == 19 ? 6 : 1); }
+      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], regs[q] == 19 ? 4 : 1); }
       for (uint64_t a = st.__sp; a < st.__sp + 0x100; a += 8) { uint64_t v; if (rd64(a, &v) && v > 0x100000000ULL) report_free_of(v); } }
     _exit(139);
   }
@@ -196,6 +199,7 @@ static void install_exception_port(void) {
   pthread_t th; pthread_create(&th, 0, exc_thread, (void *)(uintptr_t)port);
 }
 __attribute__((constructor)) static void init(void) {
+  trace_class = getenv("CRASHPC_TRACE_CLASS");
   if (getenv("CRASHPC_FREELOG")) { freering = calloc(FREERING, sizeof(freerec)); freelog_on = freering != 0; }
   install_exception_port();
   logfd = open("/tmp/crashpc.log", 0x0001 | 0x0200 | 0x0008, 0644);   /* O_WRONLY|O_CREAT|O_APPEND */
@@ -256,7 +260,52 @@ static id mydispose(id obj) {
   out("\n"); frame("  von", (uint64_t)(uintptr_t)__builtin_return_address(0));
   return object_dispose(obj);
 }
+
+/* Spur eines Objekts: CRASHPC_TRACE_CLASS=<Teil des Klassennamens> verfolgt jede Instanz dieser Klasse (Anlegen, retain, release, objc_retain/-release)
+ * mit je drei Rücksprungadressen in /tmp/crashpc.log */
+extern void *swift_allocObject(void *metadata, size_t size, size_t alignMask);
+extern void *swift_retain(void *);
+extern void swift_release(void *);
+extern id objc_retain(id);
+extern void objc_release(id);
+#define NTRACK 32
+static uint64_t tracked[NTRACK];
+static volatile uint32_t ntracked;
+static int is_tracked(void *p) {
+  uint32_t n = ntracked;
+  for (uint32_t i = 0; i < n && i < NTRACK; i++) if (tracked[i] == (uint64_t)(uintptr_t)p) return 1;
+  return 0;
+}
+static void trace_event(const char *what, void *p) {
+  out("[trace] "); out(what); out(" "); hex((uint64_t)(uintptr_t)p); out("\n");
+  uint64_t *fp = (uint64_t *)__builtin_frame_address(0);
+  frame("    von", (uint64_t)(uintptr_t)__builtin_return_address(1 > 0 ? 0 : 0));
+  for (int k = 0; k < 3; k++) {
+    if (!fp || ((uint64_t)(uintptr_t)fp & 7) || (uint64_t)(uintptr_t)fp < 0x1000) break;
+    uint64_t ra = fp[1]; fp = (uint64_t *)(uintptr_t)fp[0];
+    if (ra) frame("    und", ra);
+    if (!fp) break;
+  }
+}
+static void *my_allocObject(void *md, size_t size, size_t align) {
+  void *o = swift_allocObject(md, size, align);
+  { static uint32_t nalloc; if (trace_class && ((++nalloc) & 0x3ff) == 0) { out("[trace] swift_allocObject-Aufrufe: "); hex(nalloc); out("\n"); } }
+  if (trace_class && md && !((uint64_t)(uintptr_t)md & 7) && ntracked < NTRACK) {
+    uint64_t isa;
+    uint64_t cls_ro;
+    if (rd64((uint64_t)(uintptr_t)md, &isa) && isa > 0x100000000ULL && rd64(isa, &cls_ro) && rd64((uint64_t)(uintptr_t)md + 0x20, &cls_ro) && cls_ro > 0x100000000ULL) {   /* Klassenmetadaten: isa ist ein Zeiger (bei Boxen u. ä. eine kleine Kennzahl) */
+      const char *nm = class_getName((Class)md);
+      if (nm && strstr(nm, trace_class)) { tracked[ntracked++] = (uint64_t)(uintptr_t)o; trace_event("allocObject", o); out("    Klasse "); out(nm); out("\n"); }
+    }
+  }
+  return o;
+}
+static void *my_retain(void *p) { if (trace_class && p && is_tracked(p)) trace_event("swift_retain", p); return swift_retain(p); }
+static void my_release(void *p) { if (trace_class && p && is_tracked(p)) trace_event("swift_release", p); swift_release(p); }
+static id my_objc_retain(id p) { if (trace_class && p && is_tracked((void *)p)) trace_event("objc_retain", (void *)p); return objc_retain(p); }
+static void my_objc_release(id p) { if (trace_class && p && is_tracked((void *)p)) trace_event("objc_release", (void *)p); objc_release(p); }
 #define INTERPOSE(r, o) { (const void *)(r), (const void *)(o) }
 __attribute__((used)) static const struct { const void *r, *o; } crashpc_interpose[] __attribute__((section("__DATA,__interpose"))) = {
   INTERPOSE(mysigaction, sigaction), INTERPOSE(mysignal, signal), INTERPOSE(myexit, exit), INTERPOSE(my_exit, _exit), INTERPOSE(myabort, abort),
-  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill), INTERPOSE(mydispose, object_dispose), INTERPOSE(myfree, free) };
+  INTERPOSE(my_abort_reason, abort_with_reason), INTERPOSE(mykill, kill), INTERPOSE(myraise, raise), INTERPOSE(mypthread_kill, pthread_kill), INTERPOSE(mydispose, object_dispose), INTERPOSE(myfree, free),
+  INTERPOSE(my_allocObject, swift_allocObject), INTERPOSE(my_retain, swift_retain), INTERPOSE(my_release, swift_release), INTERPOSE(my_objc_retain, objc_retain), INTERPOSE(my_objc_release, objc_release) };

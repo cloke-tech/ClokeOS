@@ -475,3 +475,18 @@ Findings with it (arm64 VM, same crash as round 26: `swift_retain` of `0x5555…
 * So the over-release is of the *provider* (or of a reference path leading to it), not of a URL. Candidates: the object is created or released through ObjC (`object_dispose` seen earlier from `Logic.framework`), where a Swift class with ObjC-visible
   layout is released one time too often; or the Swift async task keeps an unowned/unretained reference to it.
 Next step: trace `swift_release`/`swift_retain` and `objc_release` for exactly this address (interposers in crashpc keyed by the block that the report names, second run), and read the disassembly of the Logic.framework code that creates the provider.
+
+### Round 28: tracing tools, and a structural suspect
+
+* `macapps/swifttrace.c`/`swifttrace.sh`: a wrapper `libswiftCore.dylib` in front of the real runtime (renamed `libswiftCoreReal.dylib`) that logs allocation/retain/release of instances of a class (`SWIFT_TRACE_CLASS`). It loads, but
+  Logic's calls do not go through it: PureDarwin's dyld resolves their binds (chained fixups) straight to the re-exported real library, and its interposing does not apply to such images either (`free` and other classic binds work,
+  `swift_allocObject`/`swift_retain`, `objc_release` called from Logic do not). Not usable as is; patching the entry points inside the runtime build would be the working route. The image must be restored with the original `libswiftCore.dylib`
+  afterwards (done; `swtrace` is not part of the normal deploy).
+* `macapps/crashpc.c`: `CRASHPC_TRACE_CLASS` (interposer based, same limitation), free ring now skips CoreFoundation's reuse of a block, `SWIFTCORE=<path> macapps/crashpc.sh` links the reporter against the runtime.
+* What the free ring does show: the freed block (0xb0 bytes, a `_URL` box) is destroyed by `swift_release` → `doDecrementSlow` → `swift_release_dealloc` from `MATower` +0x3a86c, called by `MAUniversalContent` +0x5c08. That MATower function is a generic
+  Objective-C round trip: it calls `_unconditionallyBridgeFromObjectiveC` into a temporary, `_bridgeToObjectiveC` on it, then runs the value witness `destroy` on the temporary. So the box dies with the temporary while the provider object
+  (`Logic.CLgContentPathProvider`) still points at it.
+* Why my bridging differs from Apple's: in swift-foundation `URL: _ObjectiveCBridgeable` exists only under `#if FOUNDATION_FRAMEWORK` (`_url.bridgeToNSURL()`, `URL(reference:)`); Apple's `URL` created from an `NSURL` **wraps and retains that NSURL**,
+  mine builds a fresh `URL(string:)` from `absoluteString`. The same split exists for `URLComponents`, `URLQueryItem`, `Data`, `Date`, `UUID`, `Locale`… (everything compiled with `FOUNDATION_FRAMEWORK` in Apple's build and absent from my FoundationEssentials).
+  Next step: a small Swift test program (round trip `NSURL → URL → NSURL` and storing `URL?` in a class, under `MallocScribble`) against `fo.dylib`/`fo2.dylib` in the VM to reproduce the over-release without Logic, then change `Bridging.swift` to keep the NSURL
+  (store it in a wrapper and bridge back to the same object).
