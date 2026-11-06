@@ -19,11 +19,12 @@ mkdir -p "$WORK/raven"
 if [ ! -d "$src/.git" ]; then
   git clone -q https://github.com/mirkobrombin/raven.git "$src"
 fi
-if ! git -C "$src" diff --quiet "$REV" -- 2>/dev/null || [ "$(git -C "$src" rev-parse HEAD)" != "$REV" -a ! -f "$src/native/platform/mach_guest.cpp" ]; then
+want=$(shasum "$HERE/raven/raven-darwin.patch" | cut -d' ' -f1)
+if [ "$(cat "$src/.clokeos-patch" 2>/dev/null)" != "$want" ]; then
   git -C "$src" checkout -q -f "$REV"
-fi
-if [ ! -f "$src/native/platform/mach_guest.cpp" ]; then
+  git -C "$src" clean -fdq -- native scripts CMakeLists.txt
   git -C "$src" apply --whitespace=nowarn "$HERE/raven/raven-darwin.patch"
+  echo "$want" > "$src/.clokeos-patch"
 fi
 # die Gast-Komponenten (RTL, ucrtbase, Controls) baut Raven mit MinGW aus den eigenen Quellen
 [ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
