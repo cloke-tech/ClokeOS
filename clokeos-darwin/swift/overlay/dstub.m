@@ -10,3 +10,6 @@ BOOL clk_url_set_resource_values(NSURL *url, NSDictionary *values, NSError **err
 NSData *clk_url_bookmark(NSURL *url, NSUInteger options, NSArray *keys, NSURL *relative, NSError **err) {
   return [url bookmarkDataWithOptions:options includingResourceValuesForKeys:keys relativeToURL:relative error:err];
 }
+NSDirectoryEnumerator *clk_fm_enumerator(NSFileManager *fm, NSURL *url, NSArray *keys, NSUInteger options, BOOL (^handler)(NSURL *, NSError *)) {
+  return [fm enumeratorAtURL:url includingPropertiesForKeys:keys options:options errorHandler:handler];
+}

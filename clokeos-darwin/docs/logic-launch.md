@@ -534,3 +534,15 @@ next step: one ring for both (events carry a global sequence number), additional
 * Cutefish's blog post about Mac apps ("Reef") describes the same approach (own AppKit/Foundation/SwiftUI, Mach-O loader), but Reef is closed source ("not for now"); nothing to reuse.
 
 Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.
+
+### Round 32: Core Data and FileManager done; the wall is SwiftUI
+
+* `swift/overlay/CoreData.swift` (module `CoreData`, in `fo2.dylib`): `NSManagedObjectContext.performAndWait/fetch/count` (empty results, there is no store behind the stub) and `NSManagedObject.objectWillChange` (`ObservableObjectPublisher`, one per object).
+* `swift/overlay/FileManagerEnum.swift`: `FileManager.enumerator(at:includingPropertiesForKeys:options:errorHandler:)`, through an ObjC helper (`clk_fm_enumerator` in `dstub.m`); the file imports only `URL` from FoundationEssentials so that `FileManager` means NSFileManager.
+* Stop now (arm64 VM, MAUniversalContent / Logic async startup): `swift_getGenericMetadata` instantiating `Combine.Published<SwiftUI.Image>`: the type metadata of `SwiftUI.Image` (`$s7SwiftUI5ImageVN`) is a trap label in `sov/107.dylib`,
+  so the runtime reads a `brk #1` word (`0xd4200020`) as metadata and faults in `areAllTransitiveMetadataComplete_cheap`.
+* SwiftUI imports from Logic: 2102 Swift symbols (322 nominal type descriptors, 193 metadata accessors, 48 type metadata symbols, the rest functions, protocol conformances, witnesses). Every type Logic puts into a generic argument or a stored property
+  needs a real Swift type with the right name, generic arity and conformances; views need real layout and drawing on top. Cutefish's own write-up ("Reef") describes SwiftUI as the hard part too and builds it from documentation, comparing pixels against a real Mac (closed source).
+  A first step could generate placeholder structs/classes with the right mangled names for the data symbols only (so metadata exists and instantiation works) and keep functions as traps until they are reached.
+
+Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.

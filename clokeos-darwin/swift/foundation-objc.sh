@@ -19,7 +19,7 @@ get() { [ -s "$w/$2" ] || curl -fsSL "$raw/$1" -o "$w/$2"; }
 FILES="Boxing CharacterSet IndexSet NSIndexSet Notification NSArray NSDictionary NSSet NSString NSError NSObject NSNumber NSRange NSFastEnumeration ReferenceConvertible String NSURL Foundation Publishers+KeyValueObserving Publishers+Locking Publishers+NotificationCenter Publishers+Timer Schedulers+Date Schedulers+RunLoop Schedulers+OperationQueue CombineTypealiases"
 for f in $FILES; do get "Darwin/Foundation/$f.swift" "src/$f.swift"; done
 for h in CoreFoundationOverlayShims CoreFoundationShims FoundationOverlayShims FoundationShimSupport FoundationShims CFCharacterSetShims CFHashingShims NSCalendarShims NSCharacterSetShims NSCoderShims NSDataShims NSDictionaryShims NSErrorShims NSFileManagerShims NSIndexPathShims NSIndexSetShims NSKeyedArchiverShims NSLocaleShims NSTimeZoneShims NSUndoManagerShims ObjectiveCOverlayShims DispatchOverlayShims; do get "SwiftShims/$h.h" "shims/$h.h"; done
-grep -q ClkComparisonResult "$w/shims/FoundationOverlayShims.h" || printf '\n#import <Foundation/Foundation.h>\ntypedef NSComparisonResult ClkComparisonResult;\nNSDictionary * _Nullable clk_url_resource_values(NSURL *url, NSArray *keys, NSError **err);\nBOOL clk_url_set_resource_values(NSURL *url, NSDictionary *values, NSError **err);\nNSData * _Nullable clk_url_bookmark(NSURL *url, NSUInteger options, NSArray * _Nullable keys, NSURL * _Nullable relative, NSError **err);\n' >> "$w/shims/FoundationOverlayShims.h"   # eindeutige Namen für SDK-Typen, die FoundationEssentials gleichnamig hat
+grep -q ClkComparisonResult "$w/shims/FoundationOverlayShims.h" || printf '\n#import <Foundation/Foundation.h>\ntypedef NSComparisonResult ClkComparisonResult;\nNSDictionary * _Nullable clk_url_resource_values(NSURL *url, NSArray *keys, NSError **err);\nBOOL clk_url_set_resource_values(NSURL *url, NSDictionary *values, NSError **err);\nNSDirectoryEnumerator * _Nullable clk_fm_enumerator(NSFileManager *fm, NSURL *url, NSArray * _Nullable keys, NSUInteger options, BOOL (^ _Nullable handler)(NSURL *, NSError *));\nNSData * _Nullable clk_url_bookmark(NSURL *url, NSUInteger options, NSArray * _Nullable keys, NSURL * _Nullable relative, NSError **err);\n' >> "$w/shims/FoundationOverlayShims.h"   # eindeutige Namen für SDK-Typen, die FoundationEssentials gleichnamig hat
 cp "$here/overlay/shims.modulemap" "$w/shims/module.modulemap"
 get Darwin/Foundation/NSValue.swift.gyb src/NSValue.swift.gyb
 get Darwin/ObjectiveC/ObjectiveC.swift src/ObjectiveC.swift
@@ -77,6 +77,7 @@ fileprivate func _clkUserInfo(_ n: NSNotification) -> [AnyHashable: Any]? {
 """)
 PY
 cp "$here/overlay/Bridging.swift" "$w/src/Bridging.swift"
+cp "$here/overlay/FileManagerEnum.swift" "$w/src/FileManagerEnum.swift"
 for n in $FILES Bridging; do f="$w/src/$n.swift"   # FoundationEssentials je Datei einbinden, außer in der NotificationCenter-Datei (dort wäre NotificationCenter doppeldeutig)
   case "$f" in */Publishers+NotificationCenter.swift) continue ;; esac
   grep -q '^import FoundationEssentials' "$f" || { printf 'import FoundationEssentials\n' | cat - "$f" > "$f.tmp" && mv "$f.tmp" "$f"; }
@@ -88,7 +89,7 @@ sed -i '' 's/^import CoreGraphics/import CoreFoundation/' "$w/src/NSValue.swift"
 ocinc="$sw/combine/OpenCombine/Sources/COpenCombineHelpers/include"   # Clang-Modul, von dem das Combine-Modul abhängt
 common=(-Xcc "-fmodule-map-file=$ocinc/module.modulemap" -Xcc "-I$ocinc" -c -Onone -wmo -parse-as-library -swift-version 5 -enable-library-evolution -target arm64-apple-macos26.0 -sdk "$sdk" -Xcc "-I$w/shims" -I "$w/shims"
         -Xfrontend -disable-implicit-concurrency-module-import -Xfrontend -disable-implicit-string-processing-module-import)
-fo=(); for f in $FILES Bridging; do fo+=("$w/src/$f.swift"); done
+fo=(); for f in $FILES Bridging FileManagerEnum; do fo+=("$w/src/$f.swift"); done
 # NSValue/NSNumber brauchen CGFloat aus dem SDK; NSValue wird mit übersetzt, wenn es sich übersetzen lässt
 swiftc "${common[@]}" -module-name Foundation -Xfrontend -import-underlying-module -I "$fb" -I "$sw/combine/out" \
   -Xcc "-I$fs/Sources/_FoundationCShims/include" "${fo[@]}" -o "$w/out/fnov.o"
@@ -97,6 +98,8 @@ ovc ObjectiveC "$w/src/ObjectiveC.swift"
 ovc CoreGraphics "$w/src/CGFloat.swift"
 ovc Dispatch "$w"/src/Disp*.swift
 ovc Darwin "$w/src/MachError.swift"
+cp "$here/overlay/CoreData.swift" "$w/src/CoreData.swift"
+ovc CoreData "$w/src/CoreData.swift"
 # Logics Code importiert z. B. URL._bridgeToObjectiveC unter dem Namen der Typ-eigenen Methode; meine Fassung steht als Erweiterung ("10FoundationE")
 # in einem anderen Modul und heißt deshalb anders. Aliase (ld -alias, gilt auch für Deskriptoren und Metadaten): dieselben Namen zeigen auf meine Fassung.
 imports="${CLOKE_IMPORTS:-${CLOKEOS_WORK:-$HOME/ClokeOS-work}/out/stubgen/imports.json}"
@@ -137,7 +140,7 @@ exports:
     symbols: [ dummy_sym ]
 ...
 T
-ld -arch arm64 -dylib -o "$run/fo2.dylib" "$w"/out/fnov.o "$w"/out/ovObjectiveC.o "$w"/out/ovCoreGraphics.o "$w"/out/ovDispatch.o "$w"/out/ovDarwin.o \
+ld -arch arm64 -dylib -o "$run/fo2.dylib" "$w"/out/fnov.o "$w"/out/ovObjectiveC.o "$w"/out/ovCoreGraphics.o "$w"/out/ovDispatch.o "$w"/out/ovDarwin.o "$w"/out/ovCoreData.o \
   "$w"/out/dstub.o "$w"/out/dstub2.o "${aliasargs[@]}" "$run/fo.dylib" "$run/libswiftCore.dylib" "$run/libswift_Concurrency.dylib" "$run/libswiftDarwin.dylib" "$w/out/sys.tbd" \
   -platform_version macos 11.0 11.0 -install_name /usr/lib/sov/fo2.dylib -rpath /usr/lib/swift -not_for_dyld_shared_cache -undefined dynamic_lookup \
   -L"$sdk/usr/lib" -lobjc 2>&1 | grep -v warning || true
