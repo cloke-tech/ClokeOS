@@ -12,7 +12,7 @@ cmds="$WORK/tmp/deploy-files.cmds"; mkdir -p "$WORK/tmp"; : > "$cmds"
 for p in "$@"; do
   if [[ "$p" == *=* ]]; then src="${p%%=*}" p="${p#*=}"; else src="$R$p"; fi
   [ -f "$src" ] || { echo "fehlt: $src" >&2; exit 1; }
-  echo "rm $p" >> "$cmds"; echo "write $src $p" >> "$cmds"
+  echo "rm \"$p\"" >> "$cmds"; echo "write \"$src\" \"$p\"" >> "$cmds"
 done
 read -r s c < <(gpt_part "$CLOKE_IMG" "$GUID_LINUX_FS")
 "$DEBUGFS" -w -f "$cmds" "$CLOKE_IMG?offset=$((s * 512))" > "$WORK/tmp/deploy-files.log" 2>&1

@@ -50,6 +50,7 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
 #import <AppKit/NSWindow.h>
 #import <AppKit/NSWindowController.h>
 #import <AppKit/NSEvent.h>
+#import <AppKit/NSFont.h>
 #import <AppKit/NSControl.h>
 #import <AppKit/NSCell.h>
 @interface CKTrace : NSObject
@@ -85,7 +86,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -163,7 +164,34 @@ static id h_alerterr(id s, SEL c, NSError *e) {
     ck_bt(2);
     return ((id (*)(id, SEL, id))o_alerterr)(s, c, e);
 }
+/* Logic Pro (MAToolKit): Farben aus Abschnitt/Name; nil-Ergebnisse melden, mit dem Bestandteil davor (Asset) */
+static id h_colsec(id s, SEL c, id section, id name) {
+    id r = ((id (*)(id, SEL, id, id))o_colsec)(s, c, section, name);
+    if (r == nil) fprintf(stderr, "[clokeos-trace] MAKitColor %s/%s -> nil\n", [[section description] UTF8String] ?: "", [[name description] UTF8String] ?: "");
+    return r;
+}
+static id h_asset(id s, SEL c, id name, id set, id family) {
+    id r = ((id (*)(id, SEL, id, id, id))o_asset)(s, c, name, set, family);
+    if (r == nil) fprintf(stderr, "[clokeos-trace] MAAssetManager asset %s set %s family %s -> nil\n", [[name description] UTF8String] ?: "",
+                          [[set description] UTF8String] ?: "", [[family description] UTF8String] ?: "");
+    return r;
+}
+static id h_nsfont(id s, SEL c, NSString *name, CGFloat size) {
+    id r = ((id (*)(id, SEL, id, CGFloat))o_nsfont)(s, c, name, size);
+    if (r == nil) fprintf(stderr, "[clokeos-trace] NSFont %s %.1f -> nil\n", [name UTF8String] ?: "(nil)", size);
+    return r;
+}
+static id h_mafont(id s, SEL c, NSString *name, CGFloat size) {
+    id r = ((id (*)(id, SEL, id, CGFloat))o_mafont)(s, c, name, size);
+    if (r == nil) fprintf(stderr, "[clokeos-trace] MAAssetManager font %s %.1f -> nil\n", [name UTF8String] ?: "(nil)", size);
+    return r;
+}
 + (void)hooks {
+    { Method m = class_getClassMethod([NSFont class], @selector(fontWithName:size:)); if (m) o_nsfont = method_setImplementation(m, (IMP)h_nsfont); }
+    { Class mc = NSClassFromString(@"MAAssetManager"); Method m = class_getClassMethod(mc, @selector(fontWithName:size:));
+      if (!m) m = class_getInstanceMethod(mc, @selector(fontWithName:size:)); if (m) o_mafont = method_setImplementation(m, (IMP)h_mafont); }
+    { Method m = class_getClassMethod(NSClassFromString(@"MAKitColor"), @selector(colorFromSectionUncached:withName:)); if (m) o_colsec = method_setImplementation(m, (IMP)h_colsec); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"MAAssetManager"), @selector(assetWithName:fromAssetSet:fromFamily:)); if (m) o_asset = method_setImplementation(m, (IMP)h_asset); }
     { Method m = class_getClassMethod(NSClassFromString(@"NSAlert"), @selector(alertWithError:)); if (m) o_alerterr = method_setImplementation(m, (IMP)h_alerterr); }
     o_nserr = ck_hook([NSError class], @selector(initWithDomain:code:userInfo:), (IMP)h_nserr);
     o_hide = ck_hook(NSClassFromString(@"X11Window"), @selector(hideWindow), (IMP)h_hide);

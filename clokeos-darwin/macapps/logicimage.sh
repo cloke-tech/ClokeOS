@@ -88,6 +88,10 @@ if os.path.isfile(root + "/Contents/Frameworks/Logic.framework/Versions/A/Resour
     c.append("symlink %s %s" % (q(dst + "/Contents/Resources/MainMenu.nib"), q("../Frameworks/Logic.framework/Versions/A/Resources/MainMenu.nib")))
 open(out, "w").write("\n".join(c) + "\n")
 PY
+# benannte Farben der Assets.car-Dateien (macapps/carcolors.py, Apples assetutil) als Assets.colors.plist daneben
+python3 -I "$HERE/macapps/carcolors.py" "$app" "$tmp/colors" > "$tmp/colors.log" 2>&1 || true
+(cd "$tmp/colors" 2>/dev/null && find . -name Assets.colors.plist | while read -r f; do
+  printf 'write "%s" "/Applications/%s"\n' "$tmp/colors/${f#./}" "${f#./}"; done) >> "$tmp/logic.cmds"
 read -r s c < <(gpt_part "$I" "$GUID_LINUX_FS")
 "$DEBUGFS" -w -f "$tmp/logic.cmds" "$I?offset=$((s * 512))" > "$tmp/logic.log" 2>&1
 echo "Image: $I"

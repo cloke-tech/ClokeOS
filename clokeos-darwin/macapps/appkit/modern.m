@@ -7,11 +7,21 @@
  *            placeholderTextColor, controlAccentColor, … (Werte der hellen Darstellung von macOS)
  *   Foundation (Darling): -[NSNumberFormatter/NSDateFormatter stringForObjectValue:] über stringFromNumber:/stringFromDate:
  *            (sonst wirft NSFormatter "requires a subclass implementation", Logic Pro beim Laden einer Fenster-Nib)
+ *   NSColor: colorWithColorSpace:components:count: (nach Zahl der Anteile: Grau+Alpha, RGB, RGB+Alpha; der Farbraum zählt nicht),
+ *            type (immer NSColorTypeComponentBased)
+ *   NSColor: colorNamed:, colorNamed:bundle: aus Assets.colors.plist neben der Assets.car des Bundles (macapps/carcolors.py erzeugt sie auf
+ *            dem Mac mit Apples assetutil); Namen wie bei Apple, dazu "Colors/A/B" für "A.B" (so fragt Logic Pros MAAssetManager)
+ *   NSFont: copyName, boundingRect (KTFont-Methoden, die CoreTexts CTFont*-Funktionen aufrufen; CTFontCreateWithName liefert NSFonts)
+ *   NSCell: _textAttributes (private Apple-Methode, gibt ein veränderbares Wörterbuch mit Schrift, Farbe und Absatzstil; Logic Pros MAToolKit-
+ *            Zellen rufen sie über super auf und ändern das Ergebnis)
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
  *            legt das Ergebnis ungeprüft in ein Wörterbuch) ein leeres Bild 16 × 16 */
 #import <AppKit/NSImage.h>
+#import <AppKit/NSAttributedString.h>
+#import <AppKit/NSParagraphStyle.h>
+#import <AppKit/NSCell.h>
 #import <Foundation/NSNumberFormatter.h>
 #import <Foundation/NSDateFormatter.h>
 #import <AppKit/NSFont.h>
@@ -82,6 +92,62 @@ static id img_symbol3(Class c, SEL s, id name, id bundle, double value) {
     return img_symbol(c, s, name, bundle);
 }
 
+static id c_space_components(Class c, SEL s, id space, const CGFloat *comp, NSInteger count) {
+    if (comp == NULL || count <= 0) return [NSColor blackColor];
+    if (count <= 2) return [NSColor colorWithCalibratedWhite: comp[0] alpha: count == 2 ? comp[1] : 1];
+    return [NSColor colorWithCalibratedRed: comp[0] green: comp[1] blue: comp[2] alpha: count >= 4 ? comp[3] : 1];
+}
+static NSInteger c_type(id self, SEL s) { return 0; }
+
+static NSDictionary *named_colors(NSBundle *b) {
+    static NSMutableDictionary *cache;
+    if (b == nil) return nil;
+    @synchronized([NSColor class]) {
+        if (!cache) cache = [NSMutableDictionary new];
+        NSString *key = [b bundlePath] ?: @"";
+        id d = cache[key];
+        if (!d) {
+            NSString *p = [b pathForResource: @"Assets.colors" ofType: @"plist"];
+            d = (p ? [NSDictionary dictionaryWithContentsOfFile: p] : nil) ?: (id)[NSNull null];
+            cache[key] = d;
+        }
+        return d == [NSNull null] ? nil : d;
+    }
+}
+static NSArray *lookup_color(NSDictionary *d, NSString *name) {
+    NSArray *c = d[name];
+    if (!c && [name rangeOfString: @"."].location != NSNotFound) {
+        NSString *slash = [name stringByReplacingOccurrencesOfString: @"." withString: @"/"];
+        c = d[[@"Colors/" stringByAppendingString: slash]] ?: d[slash];
+    }
+    if (!c) c = d[[@"Colors/" stringByAppendingString: name]];
+    return [c isKindOfClass: [NSArray class]] && [c count] >= 4 ? c : nil;
+}
+static id c_named_bundle(Class cls, SEL s, NSString *name, NSBundle *bundle) {
+    if (![name isKindOfClass: [NSString class]]) return nil;
+    NSArray *c = lookup_color(named_colors(bundle ?: [NSBundle mainBundle]), name);
+    if (!c && bundle) c = lookup_color(named_colors([NSBundle mainBundle]), name);
+    if (!c) return nil;
+    return [NSColor colorWithCalibratedRed: [c[0] doubleValue] green: [c[1] doubleValue] blue: [c[2] doubleValue] alpha: [c[3] doubleValue]];
+}
+static id c_named_main(Class cls, SEL s, NSString *name) { return c_named_bundle(cls, s, name, nil); }
+
+static id font_copyname(NSFont *self, SEL s) { return [[self fontName] copy]; }
+static NSRect font_bounds(NSFont *self, SEL s) { return [self boundingRectForFont]; }
+
+static id cell_textattrs(NSCell *self, SEL s) {
+    NSMutableDictionary *d = [NSMutableDictionary dictionary];
+    NSFont *f = [self font];
+    d[NSFontAttributeName] = f ? f : [NSFont systemFontOfSize: [NSFont systemFontSize]];
+    NSColor *c = [self respondsToSelector: @selector(textColor)] ? [(id)self textColor] : nil;
+    d[NSForegroundColorAttributeName] = c ? c : ([self isEnabled] ? [NSColor controlTextColor] : [NSColor disabledControlTextColor]);
+    NSMutableParagraphStyle *p = [[[NSParagraphStyle defaultParagraphStyle] mutableCopy] autorelease];
+    [p setAlignment: [self alignment]];
+    [p setLineBreakMode: [self lineBreakMode]];
+    d[NSParagraphStyleAttributeName] = p;
+    return d;
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -102,4 +168,11 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(fm, sel_registerName("preferredFontForTextStyle:options:"), (IMP)f_text_style, "@@:@@");
     for (size_t i = 0; i < sizeof colors / sizeof *colors; i++)
         class_addMethod(cm, sel_registerName(colors[i].sel), (IMP)c_named, "@@:");
+    class_addMethod(cm, sel_registerName("colorWithColorSpace:components:count:"), (IMP)c_space_components, "@@:@^dq");
+    class_addMethod([NSColor class], sel_registerName("type"), (IMP)c_type, "q@:");
+    class_addMethod(cm, sel_registerName("colorNamed:bundle:"), (IMP)c_named_bundle, "@@:@@");
+    class_addMethod(cm, sel_registerName("colorNamed:"), (IMP)c_named_main, "@@:@");
+    class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
+    class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
+    class_addMethod([NSFont class], sel_registerName("boundingRect"), (IMP)font_bounds, "{CGRect={CGPoint=dd}{CGSize=dd}}@:");
 }

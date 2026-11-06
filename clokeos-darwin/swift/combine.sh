@@ -14,6 +14,14 @@ rm -rf "$w/src" "$w/out"; mkdir -p "$w/out"; cp -R "$w/OpenCombine/Sources/OpenC
 find "$w/src" -name "*.gyb" -delete                      # die erzeugten GENERATED-*.swift liegen im Repository
 grep -rl 'OpenCombine\.' "$w/src" | xargs sed -i '' 's/OpenCombine\./Combine./g'    # Modulname im Quelltext (Combine.Subscriber …)
 grep -rl '@inlinable' "$w/src" | xargs sed -i '' 's/@inlinable//g'                   # mit Library Evolution nicht nötig, und einige Initialisierer dürfen es nicht
+# Apples Combine erklärt vier Typen als @frozen; Programme haben deren Speicherlayout und Rückgabeart eingebaut (AnyPublisher kommt direkt in x0
+# zurück, nicht über einen Ergebniszeiger). Mit Library Evolution wären sie hier resilient: Logic Pros MALiveLoops stürzte in
+# AnyPublisher.init ab (Schreiben über x8, das der Aufrufer nie gesetzt hatte). Felder und Reihenfolge stimmen mit Apples .swiftinterface überein.
+sed -i '' -E 's/^public struct AnyPublisher</@frozen public struct AnyPublisher</' "$w/src/AnyPublisher.swift"
+sed -i '' -E 's/^public struct AnySubscriber</@frozen public struct AnySubscriber</' "$w/src/AnySubscriber.swift"
+sed -i '' -E 's/^    public enum Completion</    @frozen public enum Completion</' "$w/src/Subscribers/Subscribers.Completion.swift"
+sed -i '' -E 's/^    public struct Demand:/    @frozen public struct Demand:/' "$w/src/Subscribers/Subscribers.Demand.swift"
+[ "$(grep -l '@frozen public' "$w/src/AnyPublisher.swift" "$w/src/AnySubscriber.swift" "$w/src/Subscribers/Subscribers.Completion.swift" "$w/src/Subscribers/Subscribers.Demand.swift" | wc -l)" -eq 4 ] || { echo "@frozen nicht gesetzt" >&2; exit 1; }
 find "$w/src" -name "*.swift" > "$w/files.txt"
 inc="$w/OpenCombine/Sources/COpenCombineHelpers/include"
 swiftc -c -O -wmo -module-name Combine -swift-version 5 -enable-library-evolution -parse-as-library -target arm64-apple-macos11.0 -sdk "$sdk" \

@@ -662,3 +662,17 @@ Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`,
   * `-[NSView trackingAreas]` returns a copy (MAToolKit removes areas while iterating).
   * `-[NSArray setValue:forKey:]` sets the value on every element (Cocotron's `NSObjectController` selection proxy writes through an array; binding `selection.keySignature`).
 * Now: Logic loads `TemplateAccessoryView.nib` and goes on into project setup; next stop is a crash in OpenCombine's `AnyPublisher.init` called from `MALiveLoops`, plus a nil value put into a dictionary.
+
+### Round 41: building Logic's main window for the project
+
+Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTransportBarView`). Fixes on the way:
+* `swift/combine.sh`: `AnyPublisher`, `AnySubscriber`, `Subscribers.Completion`, `Subscribers.Demand` are `@frozen` as in Apple's Combine (same stored fields). With library evolution they were returned indirectly; Logic (MALiveLoops) expects `AnyPublisher` in `x0` and crashed writing through an unset `x8`.
+* `+[NSColor colorWithColorSpace:components:count:]`, `-[NSColor type]` (`modern.m`).
+* `-[NSPopUpButtonCell]`: Cocotron's own calls of `synchronizeTitleAndSelectedItem` go through a guard; `MAPopUpButtonCell`'s override calls `selectItem:`, which synchronized again (endless recursion, stack overflow).
+* Named colours: `macapps/carcolors.py` reads every `Assets.car` of an app on the Mac with Apple's `assetutil --info` and writes `Assets.colors.plist` next to it (`macapps/logicimage.sh` does this when it copies Logic in);
+  `+[NSColor colorNamed:]`/`colorNamed:bundle:` read it (names as in the catalog, plus `A.B` → `Colors/A/B` as Logic's MAAssetManager asks). Not a general Assets.car reader (images are not covered).
+* CoreText: `CTFontManagerRegisterFontsForURL` adds the font file to Onyx2D's fontconfig configuration (Logic registers its own fonts); `CTFontCreateWithName(AndOptions)` returns an `NSFont` (on macOS CTFont and NSFont are one object), never NULL (system font for unknown names); `CTFontCopyPostScriptName` works on it.
+* `-[NSControl font]` for cell-less controls keeps its own font, default the system font.
+* `-[NSCell _textAttributes]` (private Apple method that MAToolKit cells call through `super`) returns a mutable dictionary with font, colour and paragraph style.
+* `macapps/deploy-files.sh` quotes paths (spaces in "Logic Pro.app").
+* Next stop: `NSRangeException` (index -1) while the window is built; also ~29 non-fatal nil-in-dictionary exceptions from `-[MAButtonCell setAssetSet:]`.
