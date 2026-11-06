@@ -143,3 +143,10 @@ Tested in the x86_64 VM: `hallo32.exe` (MinGW i686) prints `Zeiger 32 Bit` and r
 desktop; a real NSIS installer (`makensis` 3.13: `File`, `WriteUninstaller`, `WriteRegStr`, `CreateShortCut`) ran and installed `payload.exe` and
 `uninst.exe` under `Program Files\RavenTest` (no `.lnk` seen). `raven/build.sh` builds the 32-bit components (`provision-controls.py --arch x86`,
 `ucrtbase32.dll`) and installs `x86/` and `ucrtbase32.dll` beside `raven`.
+
+## Status (2026-11-06, night 3): shortcuts and clipboard
+
+`clokeos-xtest key` (and `vmctl.py xkey`) now takes modifiers: `ctrl+a`, `ctrl+shift+s`, `alt+F4`. In Notepad++: Ctrl+A, Ctrl+C and Ctrl+V work
+(the copied line was pasted again: `length : 26, lines : 4`, text twice). The text went through Notepad++'s own copy and paste inside Raven; copying
+between a Windows program and a Unix program through the X selection was not tested. (A note for the test rig: after the VM starts, wait for
+the login screen before pressing Return, otherwise the typed text lands in the password field.)

@@ -8,7 +8,7 @@
                                          z. B. ret für die Anmeldung des Desktops
   ./vmctl.py click <x> <y> [taste]       Desktop: Mausklick an einer Stelle (1 links, 3 rechts)
   ./vmctl.py move <x> <y>                Desktop: Mauszeiger an eine Stelle
-  ./vmctl.py xkey <name> [...]           Desktop: Tasten über X (Return, Escape, Down, a, ...)
+  ./vmctl.py xkey <name> [...]           Desktop: Tasten über X (Return, Escape, Down, a, ...), auch mit Umschalttasten: ctrl+s, ctrl+shift+s, alt+F4
   ./vmctl.py type '<text>'               Desktop: Text tippen
   ./vmctl.py quit                        VM ausschalten
 

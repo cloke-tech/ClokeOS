@@ -13,6 +13,7 @@
 #include <X11/XKBlib.h>
 #include <X11/extensions/xtestproto.h>
 #include <X11/keysym.h>
+#include <strings.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,6 +38,29 @@ static void fake(Display *dpy, int type, int detail, int x, int y) {
   UnlockDisplay(dpy);
   SyncHandle();
   XSync(dpy, False);
+}
+
+static void key(Display *dpy, KeySym ks);
+// Taste mit Umschalttasten, z. B. ctrl+s, ctrl+shift+s, alt+F4: die Umschalttasten bleiben während der Taste gedrückt
+static void chord(Display *dpy, char *spec) {
+  KeyCode held[4];
+  int count = 0;
+  char *last = spec;
+  for (char *plus; (plus = strchr(last, '+')) && plus[1]; last = plus + 1) {
+    *plus = 0;
+    KeySym m = !strcasecmp(last, "ctrl") ? XK_Control_L : !strcasecmp(last, "shift") ? XK_Shift_L :
+               !strcasecmp(last, "alt") ? XK_Alt_L : !strcasecmp(last, "super") ? XK_Super_L : NoSymbol;
+    if (m == NoSymbol || count == 4) {
+      fprintf(stderr, "clokeos-xtest: unbekannte Umschalttaste %s\n", last);
+      return;
+    }
+    held[count] = XKeysymToKeycode(dpy, m);
+    fake(dpy, KeyPress, held[count++], 0, 0);
+  }
+  KeySym ks = XStringToKeysym(last);
+  if (ks == NoSymbol) fprintf(stderr, "clokeos-xtest: unbekannte Taste %s\n", last);
+  else key(dpy, ks);
+  while (count > 0) fake(dpy, KeyRelease, held[--count], 0, 0);
 }
 
 static void key(Display *dpy, KeySym ks) {
@@ -76,6 +100,10 @@ int main(int argc, char **argv) {
     }
   } else if (argc >= 3 && !strcmp(argv[1], "key")) {
     for (int i = 2; i < argc; i++) {
+      if (strchr(argv[i], '+') && argv[i][strlen(argv[i]) - 1] != '+') {
+        chord(dpy, argv[i]);
+        continue;
+      }
       KeySym ks = XStringToKeysym(argv[i]);
       if (ks == NoSymbol) fprintf(stderr, "clokeos-xtest: unbekannte Taste %s\n", argv[i]);
       else key(dpy, ks);
