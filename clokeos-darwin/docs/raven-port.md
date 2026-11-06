@@ -84,3 +84,12 @@ exceptions, registers and XSTATE go through `thread_get_state`, memory through `
 Not yet: programs with imports (`--run-process` needs Raven's component DLLs: `scripts/provision-*.py`, large downloads), the X11
 desktop (pixman, freetype, xcb for x86_64), non-root users (`task_for_pid`), the guest sandbox, time slicing and parallel threads,
 32-bit programs, `inotify`, `/proc`-based queries (network tables, memory statistics).
+
+## Status (2026-11-06, later): a window on the desktop
+
+`--desktop=x11` works: Raven's xcb presentation (libxcb, xkbcommon and pixman linked statically from a sysroot that `raven/build.sh` makes
+from the PureDarwin image; pixman 0.46.4 is built from source with meson) shows the window of a MinGW GDI test program
+(`CreateWindow`, `WM_PAINT`, `FillRect`) on the CloakServer desktop; the program's title bar and text stay empty because GDI text needs
+Skia and fonts (`scripts/provision-text.py`, a large download that has not been approved yet). The `raven` wrapper passes
+`--desktop=x11` by default (`RAVEN_DESKTOP` overrides). Caveats seen: the guest bootstrap was left suspended once after a killed run, and
+the MinGW GUI start code needs `__p__acmdln`, which Raven's ucrtbase lacks (the test program used its own entry point).
