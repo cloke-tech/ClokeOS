@@ -85,7 +85,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -148,7 +148,24 @@ static void h_hide(id s, SEL c) {
     fprintf(stderr, "[clokeos-trace] X11Window hideWindow %p windowNumber=%ld\n", s, (long)[s windowNumber]);
     ((void (*)(id, SEL))o_hide)(s, c);
 }
+/* NSError mit "Datei fehlt" (POSIX/Cocoa-Code 2, 4, 260): userInfo und Aufrufkette, damit ein Fehlerdialog einer Ursache zuzuordnen ist */
+static void ck_bt(int skip);
+static id h_nserr(id s, SEL c, NSString *domain, NSInteger code, NSDictionary *info) {
+    if (code == 2 || code == 4 || code == 260) {
+        fprintf(stderr, "[clokeos-trace] NSError %s %ld %s\n", [domain UTF8String] ?: "", (long)code, [[info description] UTF8String] ?: "");
+        ck_bt(2);
+    }
+    return ((id (*)(id, SEL, id, NSInteger, id))o_nserr)(s, c, domain, code, info);
+}
+/* Fehlerdialoge: welcher Fehler, von wo */
+static id h_alerterr(id s, SEL c, NSError *e) {
+    fprintf(stderr, "[clokeos-trace] alertWithError: %s %ld %s\n", [[e domain] UTF8String] ?: "", (long)[e code], [[[e userInfo] description] UTF8String] ?: "");
+    ck_bt(2);
+    return ((id (*)(id, SEL, id))o_alerterr)(s, c, e);
+}
 + (void)hooks {
+    { Method m = class_getClassMethod(NSClassFromString(@"NSAlert"), @selector(alertWithError:)); if (m) o_alerterr = method_setImplementation(m, (IMP)h_alerterr); }
+    o_nserr = ck_hook([NSError class], @selector(initWithDomain:code:userInfo:), (IMP)h_nserr);
     o_hide = ck_hook(NSClassFromString(@"X11Window"), @selector(hideWindow), (IMP)h_hide);
     o_action = ck_hook([NSApplication class], @selector(sendAction:to:from:), (IMP)h_action);
     o_stop = ck_hook([NSApplication class], @selector(stopModal), (IMP)h_stop);
@@ -166,6 +183,16 @@ static void h_hide(id s, SEL c) {
 /* CLOKE_TRACE: jede geworfene ObjC-Ausnahme mit Grund und Aufrufkette (Bild + Versatz) melden */
 #include <execinfo.h>
 #include <dlfcn.h>
+static void ck_bt(int skip) {
+    void *bt[24]; int n = backtrace(bt, 24);
+    for (int i = skip; i < n; i++) {
+        Dl_info di; memset(&di, 0, sizeof di);
+        dladdr(bt[i], &di);
+        const char *img = di.dli_fname ? strrchr(di.dli_fname, '/') : NULL;
+        fprintf(stderr, "[clokeos-trace]   %-24s +0x%lx %s\n", img ? img + 1 : "?", (unsigned long)((char *)bt[i] - (char *)di.dli_fbase),
+                di.dli_sname ? di.dli_sname : "");
+    }
+}
 static id ck_exc_pre(id e) {
     fprintf(stderr, "[clokeos-trace] Ausnahme %s: %s\n", [[e name] UTF8String] ?: "?", [[e reason] UTF8String] ?: "");
     void *bt[24]; int n = backtrace(bt, 24);

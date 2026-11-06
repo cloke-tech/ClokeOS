@@ -648,3 +648,17 @@ Untested: what the untitled window is (project chooser?), x86_64, `Jump.logicx`,
 * Modal loops: Cocotron's `stopModal` stopped the session begun last; Logic begins another one while its alert dialog runs, so "Continue" stopped that one and the dialog's loop ran on invisibly. `stopModalWithCode:` now stops the innermost *running* `runModalSession:` (as on macOS).
   The main thread now gets back to `-[NSApplication run]` after the dialog.
 * `macapps/logicrun.sh`: `LOGIC_ARGS` passes arguments (e.g. a project path). `Jump.logicx` (1.3 MB) is copied into the image as `/var/root/Jump.logicx` with debugfs (not part of the repository).
+
+### Round 40: opening Jump.logicx gets into the document setup
+
+* `LOGIC_ARGS="-NSOpen /var/root/Jump.logicx"` hands the project to Cocotron's `-[NSApplication openFiles]` → `-[CLgAppManager application:openFiles:]`.
+* `macapps/vmlogs.sh` copies `/tmp/logic.out` and `/tmp/crashpc.log` out of the VM through the image (sync, stop VM, debugfs dump).
+* `CLOKE_TRACE` now also logs NSErrors for missing files (codes 2/4/260) and every `+[NSAlert alertWithError:]` with its call chain.
+* Fixes found on the way, each one the next stop:
+  * "No such file or directory" when opening: Darling's CoreFoundation dlopens `CoreServices.framework/Frameworks/LaunchServices.framework/LaunchServices` for a URL's type identifier, which PureDarwin lacks.
+    `macapps/launchservices.c` (built by `macapps/carbon.sh`) provides `UTTypeCreatePreferredIdentifierForTag`/`kUTTagClassFilenameExtension`: types the running app declares in its Info.plist, then common system types, else `dyn.ext-<ext>`.
+  * `CFRelease(NULL)` in Darling's `CFURLCreatePropertyForKey` for a URL without extension (`patches/darling-corefoundation/NSURL.m.sed`).
+  * `+[NSString localizedStringWithFormat:]` was a Darling stub returning nil (`patches/darling-foundation/src/NSString.m.sed`).
+  * `-[NSView trackingAreas]` returns a copy (MAToolKit removes areas while iterating).
+  * `-[NSArray setValue:forKey:]` sets the value on every element (Cocotron's `NSObjectController` selection proxy writes through an array; binding `selection.keySignature`).
+* Now: Logic loads `TemplateAccessoryView.nib` and goes on into project setup; next stop is a crash in OpenCombine's `AnyPublisher.init` called from `MALiveLoops`, plus a nil value put into a dictionary.

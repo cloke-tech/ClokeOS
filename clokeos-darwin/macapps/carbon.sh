@@ -61,5 +61,11 @@ cp "$out/CoreServices" "$stage/$fw/CoreServices.framework/Versions/A/CoreService
 cp "$out/Carbon" "$stage/$fw/Carbon.framework/Versions/A/Carbon"
 ln -sfn A "$stage/$fw/Carbon.framework/Versions/Current"
 ln -sfn Versions/Current/Carbon "$stage/$fw/Carbon.framework/Carbon"
-chmod 755 "$stage/usr/lib/libclokeos_carbon.dylib" "$stage/$fw"/*/Versions/A/*
+# LaunchServices (macapps/launchservices.c): CoreFoundation lädt sie für den Typbezeichner einer URL per dlopen von diesem Pfad
+ls="$fw/CoreServices.framework/Frameworks/LaunchServices.framework"
+mkdir -p "$stage/$ls"
+clang -target "$target" -dynamiclib -O2 -Wl,-no_fixup_chains -Wl,-platform_version,macos,11.0,11.5 -Wl,-undefined,dynamic_lookup -Wl,-not_for_dyld_shared_cache -nostdlib \
+  -install_name "/$ls/LaunchServices" -o "$stage/$ls/LaunchServices" "$HERE/macapps/launchservices.c" "$out/libSystem.B.dylib"
+codesign --force -s - "$stage/$ls/LaunchServices" 2>/dev/null || true
+chmod 755 "$stage/usr/lib/libclokeos_carbon.dylib" "$stage/$fw"/*/Versions/A/* "$stage/$ls/LaunchServices"
 echo "Fertig: libclokeos_carbon und Carbon für $CLOKE_ARCH"

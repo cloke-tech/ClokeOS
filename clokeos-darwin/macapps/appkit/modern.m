@@ -7,6 +7,8 @@
  *            placeholderTextColor, controlAccentColor, … (Werte der hellen Darstellung von macOS)
  *   Foundation (Darling): -[NSNumberFormatter/NSDateFormatter stringForObjectValue:] über stringFromNumber:/stringFromDate:
  *            (sonst wirft NSFormatter "requires a subclass implementation", Logic Pro beim Laden einer Fenster-Nib)
+ *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
+ *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
  *            legt das Ergebnis ungeprüft in ein Wörterbuch) ein leeres Bild 16 × 16 */
 #import <AppKit/NSImage.h>
@@ -80,7 +82,13 @@ static id img_symbol3(Class c, SEL s, id name, id bundle, double value) {
     return img_symbol(c, s, name, bundle);
 }
 
+static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
+    for (id obj in self)
+        [obj setValue: value forKey: key];
+}
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
+    class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
     class_addMethod(im, sel_registerName("imageWithSystemSymbolName:accessibilityDescription:"), (IMP)img_symbol, "@@:@@");
     class_addMethod(im, sel_registerName("imageWithSymbolName:bundle:variableValue:"), (IMP)img_symbol3, "@@:@@d");
