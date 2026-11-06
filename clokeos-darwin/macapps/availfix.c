@@ -23,6 +23,10 @@ static void *fixed_os_log_create(const char *subsystem, const char *category) {
   if (o && *(void **)o) objc_retain((id)o);
   return o;
 }
+/* PureDarwins _os_log_impl reicht Apples binäre Logpuffer an fprintf weiter und stürzt in strlen ab (Logic Pro: os_log mit %{public}@ usw.); die Ausgabe entfällt. */
+extern void _os_log_impl(void *dso, void *log, uint8_t type, const char *format, uint8_t *buf, uint32_t size);
+static void quiet_os_log_impl(void *dso, void *log, uint8_t type, const char *format, uint8_t *buf, uint32_t size) { (void)dso; (void)log; (void)type; (void)format; (void)buf; (void)size; }
 __attribute__((used)) static const struct { const void *replacement, *original; } interposers[]
     __attribute__((section("__DATA,__interpose"))) = { { (const void *)always_yes, (const void *)_availability_version_check },
-    { (const void *)fixed_os_log_create, (const void *)os_log_create } };
+    { (const void *)fixed_os_log_create, (const void *)os_log_create },
+    { (const void *)quiet_os_log_impl, (const void *)_os_log_impl } };

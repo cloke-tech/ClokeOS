@@ -521,3 +521,16 @@ With `CRASHPC_RRLOG` the crashing box (`_URL`, 0xb0) shows two lives at the same
 life B is created later by my `_unconditionallyBridgeFromObjectiveC` for `MAUniversalContent` +0x5c1c and stays alive with a balanced history (no further free is recorded). The memory is nevertheless scribbled when the crash reads it, and three free records for the
 address exist (the ring prints the three newest). So a pointer to life A (or a later unrecorded free of life B) survives somewhere in Logic's async task state. The recorded RR/free rings cannot tell which of the two without ordering between the two rings;
 next step: one ring for both (events carry a global sequence number), additional hooks for `swift_unknownObjectRelease`/`swift_bridgeObjectRelease`/`swift_deallocClassInstance`, and logging the 8-byte `URL` value at `MATower` +0x3a780/+0x3a86c and `Logic` +0x85524.
+
+### Round 31: ownership bug found (`__shared`), offline NSURLSession, os_log, next stop CoreData
+
+* **The use-after-free was an ownership mismatch of mine** (found with the combined free/refcount ring, `CRASHPC_RRLOG`): Swift initializer parameters are *owned* (+1) by default, but Apple's `Data.init(contentsOf: __shared URL, …)` and
+  `URL.init(resolvingBookmarkData: __shared Data, …, relativeTo: __shared URL?, …)` take them guaranteed (+0). Logic passed its `URL` at +0, my initializer released it once too often. Fixed with `__shared` in `swift/overlay/Bridging.swift`.
+  Rule for every bridging function: copy `__shared` from the demangled Apple signature.
+* `URLSession.data(from:delegate:)` (async) fails with `NSURLErrorNotConnectedToInternet`; `macapps/availfix.c` now also silences PureDarwin's `_os_log_impl` (it crashed in `strlen` on Apple's binary log buffers).
+  `macapps/crashpc.c` symbolizes registers (`x<n> -> symbol`).
+* Logic now runs past its URL/Data/Combine/Network/Dispatch/os code and stops at **Core Data**: `NSManagedObjectContext.performAndWait` (`sov/20.dylib`, trap). CoreData imports: 35 symbols, 4 of them Swift
+  (`performAndWait`, `fetch`, `count`, `NSManagedObject.objectWillChange`); Darling's tree has a CoreData directory to start from.
+* Cutefish's blog post about Mac apps ("Reef") describes the same approach (own AppKit/Foundation/SwiftUI, Mach-O loader), but Reef is closed source ("not for now"); nothing to reuse.
+
+Untested: x86_64, windows or menus of Logic, `Jump.logicx`, audio, rendering.

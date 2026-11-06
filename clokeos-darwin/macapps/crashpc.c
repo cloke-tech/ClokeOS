@@ -129,13 +129,13 @@ static void rr_install(void) {
 }
 static void report_rr(uint64_t obj) {
   if (!rrring) return;
-  uint32_t n = rrpos < RRRING ? rrpos : RRRING, shown = 0;
-  out("    Referenzzähler-Geschichte von "); hex(obj); out(" (neueste zuerst):\n");
-  for (uint32_t k = 0; k < n && shown < 26; k++) {
-    rrrec *r = &rrring[(rrpos - 1 - k) % RRRING];
-    if (r->obj != obj) continue;
-    out(r->op == 0 ? "      alloc   " : r->op == 1 ? "      retain  " : "      release "); hex(r->n); frame("  von", r->ra); if (r->ra2) frame("      und", r->ra2);
-    shown++;
+  uint32_t n = rrpos < RRRING ? rrpos : RRRING, cnt = 0, idx[48];
+  for (uint32_t k = 0; k < n && cnt < 48; k++) { uint32_t q = (rrpos - 1 - k) % RRRING; if (rrring[q].obj == obj) idx[cnt++] = q; }
+  out("    Ereignisse an "); hex(obj); out(" (älteste zuerst, letzte "); hex(cnt); out("):\n");
+  for (uint32_t c = cnt; c-- > 0; ) {
+    rrrec *r = &rrring[idx[c]];
+    out(r->op == 0 ? "      alloc   " : r->op == 1 ? "      retain  " : r->op == 2 ? "      release " : "      FREE    "); hex(r->n); frame("  von", r->ra);
+    if (r->ra2) frame("      und", r->ra2);
   }
 }
 
@@ -149,6 +149,7 @@ static void report_free_of_n(uint64_t v, uint32_t maxshown);
 static void report_free_of(uint64_t v) { report_free_of_n(v, 1); }
 static void myfree(void *p) {
   if (freelog_on && p) {
+    if (rrring) rrlog(3, p, (uint32_t)malloc_size(p), __builtin_return_address(0));
     uint32_t i = __atomic_fetch_add(&freepos, 1, __ATOMIC_RELAXED) % FREERING;
     freerec *r = &freering[i];
     r->p = (uint64_t)(uintptr_t)p; r->size = malloc_size(p);
@@ -172,7 +173,7 @@ static void report_free_of_n(uint64_t v, uint32_t maxshown) {
     if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1)) {
       out("  freigegeben (Block "); hex(r->p); out(", Größe "); hex(r->size); out(") von:\n");
       for (int j = 0; j < 4; j++) if (r->ra[j]) frame("    frei", r->ra[j]);
-      report_rr(r->p);
+      if (shown == 0) report_rr(r->p);
       shown++;
     }
   }
@@ -194,6 +195,7 @@ static void *exc_thread(void *arg) {
     arm_thread_state64_t st; mach_msg_type_number_t n = ARM_THREAD_STATE64_COUNT;
     if (thread_get_state(m.thread.name, ARM_THREAD_STATE64, (thread_state_t)&st, &n) == KERN_SUCCESS) {
       frame("pc", st.__pc); frame("lr", st.__lr);
+      for (int r = 0; r < 29; r++) { Dl_info dq; if (st.__x[r] > 0x100000000ULL && dladdr((void *)(uintptr_t)st.__x[r], &dq) && dq.dli_sname) { out("  x"); hex((uint64_t)r); frame(" ->", st.__x[r]); } }
       out("  sp "); hex(st.__sp); out("  fp "); hex(st.__fp); out("\n");
       for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
       { uint64_t v, isa;

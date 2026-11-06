@@ -1,5 +1,6 @@
 // _ObjectiveCBridgeable-Konformanzen für die Typen aus FoundationEssentials (dort fehlt die ObjC-Schicht)
 import ObjectiveC
+import _Concurrency
 import Darwin
 import _SwiftFoundationOverlayShims
 
@@ -88,7 +89,7 @@ extension URL {
         guard let d = clk_url_bookmark(_bridgeToObjectiveC(), UInt(options.rawValue), keys.map { Array($0) }, url?._bridgeToObjectiveC(), &err) else { throw err ?? NSError(domain: NSCocoaErrorDomain, code: 256, userInfo: nil) }
         return Data._unconditionallyBridgeFromObjectiveC(d)
     }
-    public init(resolvingBookmarkData data: Data, options: NSURL.BookmarkResolutionOptions = [], relativeTo url: URL? = nil, bookmarkDataIsStale: inout Bool) throws {
+    public init(resolvingBookmarkData data: __shared Data, options: NSURL.BookmarkResolutionOptions = [], relativeTo url: __shared URL? = nil, bookmarkDataIsStale: inout Bool) throws {
         var stale: ObjCBool = false
         let n = try NSURL(resolvingBookmarkData: data._bridgeToObjectiveC(), options: options, relativeTo: url?._bridgeToObjectiveC(), bookmarkDataIsStale: &stale)
         bookmarkDataIsStale = stale.boolValue
@@ -111,7 +112,8 @@ public struct URLResourceValues {
 }
 
 extension Data {
-    public init(contentsOf url: URL, options: NSData.ReadingOptions = []) throws {
+    // __shared wie in Apples Signatur: Initialisatoren nehmen Parameter sonst als "owned" (+1), Logic übergibt aber +0 und der überzählige Release gäbe die URL des Aufrufers frei
+    public init(contentsOf url: __shared URL, options: NSData.ReadingOptions = []) throws {
         self = Data._unconditionallyBridgeFromObjectiveC(try NSData(contentsOf: url._bridgeToObjectiveC() as NSURL, options: options))
     }
     public func write(to url: URL, options: NSData.WritingOptions = []) throws {
@@ -252,5 +254,12 @@ extension URLQueryItem: _ObjectiveCBridgeable {
     }
     public static func _unconditionallyBridgeFromObjectiveC(_ source: NSURLQueryItem?) -> URLQueryItem {
         return URLQueryItem(name: source?.name ?? "", value: source?.value)
+    }
+}
+
+// URLSession.data(from:delegate:): es gibt kein Netz in der VM; die Anfrage scheitert wie auf einem Rechner ohne Verbindung (NSURLErrorNotConnectedToInternet)
+extension URLSession {
+    public func data(from url: URL, delegate: (any URLSessionTaskDelegate)? = nil) async throws -> (Data, URLResponse) {
+        throw NSError(domain: NSURLErrorDomain, code: -1009, userInfo: [NSLocalizedDescriptionKey: "Die Internetverbindung scheint offline zu sein."])
     }
 }
