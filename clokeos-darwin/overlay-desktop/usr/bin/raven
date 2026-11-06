@@ -13,4 +13,4 @@ case "$1" in
 esac
 program=$1
 shift
-exec "$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit --desktop=x11 "$program" -- "$@"
+exec "$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit "$program" -- "$@"
