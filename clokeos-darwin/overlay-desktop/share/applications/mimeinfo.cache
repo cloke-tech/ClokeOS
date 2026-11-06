@@ -1,4 +1,3 @@
 [MIME Cache]
-application/x-ms-dos-executable=wine.desktop;
-application/x-msdownload=wine.desktop;
-application/x-msi=wine-msi.desktop;
+application/x-ms-dos-executable=raven.desktop;
+application/x-msdownload=raven.desktop;

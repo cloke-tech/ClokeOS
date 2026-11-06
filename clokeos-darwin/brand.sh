@@ -152,7 +152,6 @@ hb_cmds=
 if [ "$CLOKE_FLAVOR" = desktop ]; then
   "$HERE/libcompat/build.sh" "$tmp/stage"
   "$HERE/macapps/carbon.sh" "$tmp/stage"   # Carbon-Hülle und Carbon-Funktionen in CoreServices (Logic Pros OMF)
-  "$HERE/wine/build.sh" "$tmp/stage"
   "$HERE/raven/build.sh" "$tmp/stage"   # Windows-Programme: Raven (nur x86_64), siehe docs/raven-port.md
   for n in curl date false find grep openssl printf readlink sed stat sw_vers tail true whoami xargs tar gzip \
            gunzip xz uname id ls mkdir rm cp mv ln chmod chown touch cat head sort uniq tr wc cut tee basename \
@@ -219,8 +218,8 @@ if [ "$CLOKE_FLAVOR" = desktop ]; then
   # /Applications wie bei macOS für Administratoren beschreibbar; hier die Gruppe staff, damit
   # der Benutzer Programme durch Hineinziehen installieren kann
   printf 'set_inode_field /Applications mode 040775\nset_inode_field /Applications gid 20\n' >> "$tmp/extra.cmds"
-  # /NT = Laufwerk C: für Windows-Programme (Wine, x86_64): Windows, Program Files usw. legt Wine beim
-  # ersten Start an (/usr/bin/wine); Gruppe staff darf schreiben, Users hat das Sticky-Bit wie /tmp
+  # /NT = Windows-Baum des Systems (NT-Oberfläche): Windows, Program Files usw. legt Raven (x86_64) beim
+  # ersten Start an (/usr/bin/raven); Gruppe staff darf schreiben, Users hat das Sticky-Bit wie /tmp
   {
     echo "mkdir /NT"
     echo "mkdir /NT/Windows"

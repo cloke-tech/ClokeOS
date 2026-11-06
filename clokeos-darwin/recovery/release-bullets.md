@@ -2,9 +2,9 @@
 - Groundwork for big Mac apps such as Logic Pro (it does not start yet): more libSystem functions in the compatibility library, 33 stub frameworks for closed-source imports, an installer for .pkg packages (`clokeos-pkginstall`), C libraries (sqlite3, xml2, bz2, pcre, xar) with Apple install names, a CoreAudio shim, AudioToolbox and Accelerate subsets, and a Swift runtime study
 - Programs of the other CPU, a first version (a translation layer based on Unicorn, GPL-2.0): x86_64 Mac programs run on arm64 (`ucrun`) and arm64 Mac programs run on x86_64 (`a64run`), started by a double-click or from the Terminal. It is an interpreter, so it is slow; a faster block translator (`UCRUN_JIT=1`) is in an early state and only for simple programs
 - Linux programs (`tux`) are much further along: threads, `epoll`, `inotify`, sockets including `SOCK_SEQPACKET`, `/proc`, name resolution; BusyBox and Debian command line tools run on arm64 and x86_64. Linux.app has a penguin icon
-- Windows: Wine has its own icon; the Wine prefix still needs work, so Windows programs are not reliable yet
+- Windows programs now run through Raven instead of Wine (x86_64): 64-bit console programs work, windows and installers do not yet; Raven has its own icon
 - Sound on x86_64 (Intel HDA, measured in QEMU); first parts of the Mac audio and math frameworks (CoreAudio, AudioToolbox, Accelerate) for Mac programs
 - Files are recognized by their content (ELF, Mach-O, .exe, .dmg) and opened with the right program
 - Optional Darwin 20.6.0 kernel for arm64 (build option, not the default)
-- Everything from 2.6 and 2.7: Disk Utility with partitioning and .dmg, the NT interface, the whole disk after the install, Wine, Linux programs, bash and Homebrew
+- Everything from 2.6 and 2.7: Disk Utility with partitioning and .dmg, the NT interface, the whole disk after the install, Linux programs, bash and Homebrew
 - Everything from 2.4 and 2.5 as well: all CPU cores, I²C touchpads, the updater, the new design

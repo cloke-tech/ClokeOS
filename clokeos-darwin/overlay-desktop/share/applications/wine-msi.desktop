@@ -1,8 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Windows Installer
-Comment=Install a Windows package with Wine
-Exec=sh -c 'cd "$(dirname "$1")" && exec wine msiexec /i "$1"' wine %f
-MimeType=application/x-msi;
-NoDisplay=true
-Terminal=false

@@ -164,7 +164,7 @@ $bullets
 
 - CloakServer, ClokeOS' window server: menu bar, Dock, Launchpad, login, light and dark mode, windows with shadows and glass
 - Global menu bar as on macOS: apps' menus are at the top of the screen instead of in the window, for GTK apps like Fundus and Terminal as well as for Mac apps
-- Wine for Windows programs (x86_64 desktop only; the recovery leaves it out)
+- Raven for Windows programs (x86_64 desktop only; the recovery leaves it out)
 - Recovery with installer, online help, Disk Utility and Terminal
 - $macnote
 

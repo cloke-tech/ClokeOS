@@ -13,7 +13,7 @@ ClokeOS starts as a macOS-like system and grows towards running software from ot
 | World | Works today | Planned |
 |---|---|---|
 | **Mac** (default interface "ClokeOS") | macOS-like desktop (CloakServer), Mac apps on Darling's frameworks (with many gaps), Fundus, Launchpad, Spotlight, System Settings, recovery and installer | bash and Homebrew, a modern browser |
-| **Windows** | the **NT interface**: a Windows-like desktop with taskbar, Start menu, tray and desktop icons (System Settings > Appearance > Interface) | `.exe` programs through Wine 11.0 (x86_64 only): own tree `/NT` as drive C:, `wine` on the PATH, double-click in Fundus, "Wine" app; 64-bit and 32-bit console programs and notepad run in the VM | Windows programs on arm64 (needs the translation layer), more tested programs |
+| **Windows** | the **NT interface**: a Windows-like desktop with taskbar, Start menu, tray and desktop icons (System Settings > Appearance > Interface) | `.exe` programs through **Raven** (x86_64 only, no Wine): `raven` on the PATH, double-click in Fundus, "Raven" app; a 64-bit console program runs in the VM | windows and installers (Raven's graphics components), 32-bit programs, arm64 (needs the translation layer) |
 | **Linux** | first version (arm64 and x86_64) | programs in their own tree `/TUX` (Alpine: musl, BusyBox) run through `tux`, a user-space loader that translates Linux system calls; BusyBox `sh`, `ls`, `cat` work on both, and so do threads, sockets, epoll and `/proc`; Debian's glibc programs run on both (see [Linux programs](#linux-programs-tux)) |
 | **Other CPU** | images for x86_64 and arm64; **x86_64 programs on arm64** through the translator `ucrun` (see [x86_64 programs on arm64](#x86_64-programs-on-arm64-ucrun)) | a translation layer between arm64 and x86_64 in both directions, like Rosetta 2; see the [feasibility study](clokeos-darwin/docs/translation-study.md) |
 
@@ -265,17 +265,14 @@ Not there yet: `io_uring` (programs fall back), netlink that changes things, pac
 
 The arm64 desktop image can run x86_64 Mac programs (Mach-O) with `ucrun`, an emulator built on [Unicorn](https://www.unicorn-engine.org/) (QEMU's CPU core, GPL-2.0) with its own Darwin system-call layer. It loads PureDarwin's x86_64 `dyld` and `libSystem` from `/Library/ClokeOS/x86` and runs them like the kernel would. A library `libxlat-exec.dylib` hooks `execve`, `posix_spawn` and friends, so `./program` in a terminal, a script, or a double click in Fundus (`xlat-open`, in a terminal window) starts an x86_64 program through `ucrun` automatically; the hook is loaded through `DYLD_INSERT_LIBRARIES` from `/etc/profile`, and interactive zsh restarts itself once at startup to pick it up. Works so far: static and dynamic programs, `fork`/`exec`/`posix_spawn`, pipes, signals, threads, mutexes, condition variables, semaphores. Not yet: `pthread_rwlock` under contention, GUI/Mach services/Objective-C frameworks, bash (only zsh gets the hook at startup), speed (about 20x slower than Rosetta 2; a JIT is the planned next step), arm64 programs on x86_64. Details, measurements and open points: [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). It is built into the arm64 desktop image only if `~/ClokeOS-work/download/unicorn/src` (Unicorn 2.1.4 source) and the x86_64 PureDarwin image are present.
 
-### Windows programs (Wine)
+### Windows programs (Raven)
 
-The x86_64 desktop image runs Windows programs (`.exe`, `.msi`) with **Wine 11.0**. Nothing had to be built: PureDarwin's preview image `puredarwin.img` already ships Wine as a WoW64 build (64-bit `wine`, 32-bit programs run through WoW64, so no 32-bit libraries are needed) with the X11 driver `winex11` on the guest's own Xorg, libX11, freetype and fontconfig (`/usr/lib/wine`, `/usr/share/wine`; the build logs are in `/usr/share/wine-build`). There is no `winemac` because that needs Cocoa. XNU in the image allows Wine's preloader to reserve the address space (`wine --version`, wineserver, services, explorer and wineboot start). ClokeOS adds the layout around it:
+The x86_64 desktop image runs Windows programs with [Raven](https://github.com/mirkobrombin/raven) (GPL-3.0), which replaces Wine here (PureDarwin's Wine 11.0 crashes `wineboot` on every start in the VM). Raven does not emulate Windows around a Linux-like system: it runs the program's x86-64 code natively in a child process and answers every NT call itself (files, registry, threads, windows). ClokeOS ported it from Linux to XNU (`raven/`, a patch set on a pinned upstream commit, built on the Mac by `raven/build.sh`; details and measurements in `docs/raven-port.md`):
 
-- **`/NT` is drive C:** (`/NT/Windows`, `/NT/Program Files`, `/NT/Users`), one Windows tree for the whole system, group `staff` may write. Wine fills it at the first start.
-- **`/usr/bin/wine`** (`overlay-desktop/usr/bin/wine`) is a small script in front of PureDarwin's binary: the prefix is per user in `~/Library/Wine` with `drive_c` and `dosdevices/c:` pointing to `/NT`, `DISPLAY=:0`, no `winemenubuilder`, no Mono/Gecko download. `wineboot`, `winecfg`, `winefile`, ... are links to it.
-- **Fundus** opens `.exe` and `.msi` with Wine by double-click. PureDarwin has no shared-mime-info, so `/share/mime/globs2`, `/share/applications/wine*.desktop`, `mimeinfo.cache` and `mimeapps.list` are written by hand (`overlay-desktop/share`).
-- **"Wine"** is an app in `/Applications` (Launchpad, NT start menu): it opens Wine's file manager `winefile` on C:.
-- **arm64 cannot run Windows programs**: there is no x86 translation layer yet (the arm64 image has neither `wine` nor the script).
-
-Try it in a terminal: `wine program.exe`, `wine cmd`, `wine notepad`, `winecfg`. The first start of a user creates the prefix (`wineboot` imports `wine.inf`), which takes a few minutes in the emulated x86_64 VM and well under a minute on a PC.
+- **Mach instead of ptrace:** the guest is a task whose exception port the runtime owns (`task_for_pid`); API traps (`int3`), faults and the NT service calls (`EXC_SYSCALL`, because the stubs of Raven's ntdll use a Mach trap number XNU does not have) arrive as Mach exceptions; registers and XSTATE through `thread_get_state`, memory through `mach_vm_*`. No sandbox yet (a raw `syscall` of the guest would reach XNU).
+- **`raven`** (`overlay-desktop/usr/bin/raven`) starts a program: `raven setup.exe`, `raven --inspect program.exe`. The Windows prefix of each user is `~/Library/Raven`. Fundus opens `.exe` with it by double-click (`/share/applications/raven.desktop`, `mimeapps.list`), and "Raven" is an app in `/Applications`.
+- **PureDarwin workarounds:** PE images are copied into guest pages (shared memory cannot be mapped executable) and the host's view is re-pointed with `vm_remap`; `/usr/lib/libc++.1.dylib` is replaced by a copy with a working `std::uncaught_exceptions()`.
+- **Works:** 64-bit console programs (MinGW/ucrt: `printf`, system information, exit codes), tested in the x86_64 VM. **Not yet:** programs with windows (needs the X11 desktop component and its libraries for x86_64), installers, 32-bit programs, `.msi`, arm64 (needs the translation layer).
 
 ### cloke: one package manager for everything
 
@@ -288,8 +285,8 @@ found five versions:
 1. Steam-macOS (brew, cask)
 2. Steam-Linux (dnf)  [via linux, not installed]
 3. Steam-Linux (flatpak)  [via linux, not installed]
-4. Steam-Windows (winget)  [via wine]
-5. Steam-Windows (choco)  [via wine]
+4. Steam-Windows (winget)  [via raven]
+5. Steam-Windows (choco)  [via raven]
 
 Choose a Version, 2 recommended (default 2):
 ```
@@ -303,7 +300,7 @@ Backends used when present: **brew** (macOS and ClokeOS), **dnf / apt / pacman /
 | Target | State | Base |
 |---|---|---|
 | x86_64 (QEMU q35, UEFI) | built, booted, released | PureDarwin 20.5, `puredarwin-minimal.img` |
-| x86_64 desktop | built, booted, released (installer, USB sticks, SSD image), runs Windows programs with Wine | PureDarwin's preview image `puredarwin.img` |
+| x86_64 desktop | built, booted, released (installer, USB sticks, SSD image), runs Windows console programs with Raven | PureDarwin's preview image `puredarwin.img` |
 | x86_64 on real PCs | tested on an HP 15s-fq5655ng: boot from USB, recovery | the same |
 | arm64 (QEMU virt) | built, booted with Apple's hypervisor and emulated | `puredarwin-arm64-virt-minimal.img` |
 | arm64 desktop | built, booted with HVF, released (installer) | `puredarwin-arm64-virt.img` |
@@ -411,7 +408,7 @@ The kernel is the smaller problem, since XNU is open source (Apple Public Source
 4. **Port the shell.** Menu bar, Dock, Launchpad and System Settings are native in CloakServer, apps are `.app` bundles, Mac apps run through Darling's AppKit. Open: Fundus, Search and the other prototype apps as native programs.
 5. ~~**Installer.**~~ Done: installer, recovery, USB sticks and SSD image (see [Recovery and installation](#recovery-and-installation)).
 6. **Real hardware.** Started: USB installers, SATA detection, PS/2 keyboard and touchpad (ClokePS2), I²C touchpads, several CPU cores. Next: Wi-Fi (Realtek RTL8821CE in development), graphics.
-7. **Windows.** The NT interface and Wine for `.exe` programs on x86_64 exist (Windows tree in `/NT`). Next: a baked prefix so the first start is fast, more programs tested, arm64 through the translation layer.
+7. **Windows.** The NT interface exists, and Raven (a Linux Windows-compatibility runtime ported to XNU) runs 64-bit console `.exe` programs on x86_64. Next: windows and installers (Raven's X11 desktop, fonts), more programs tested, arm64 through the translation layer.
 8. **Linux.** First version done on arm64 and x86_64 (`tux`, see [Linux programs](#linux-programs-tux)); still to do: graphical Linux programs, `inotify`, programs of the other architecture.
 9. **Other CPU.** Done: x86_64 programs on arm64 (`ucrun`, Unicorn-based, about 20x slower than Rosetta 2; own block JIT started) and arm64 programs on x86_64 (`a64run`), see [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). Next: JIT for SSE/dynamic programs and threads, Windows programs on arm64 through the translated Wine, x86_64 Linux programs through `tux`.
 10. **iOS apps.** Run iOS apps (arm64 Mach-O) on ClokeOS, on top of the Mac frameworks and the translation layer, with UIKit shims. Not started.

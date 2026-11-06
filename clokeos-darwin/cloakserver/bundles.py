@@ -62,8 +62,8 @@ APPS = [
      None, '', 'diskutil'),
     ('System/Applications', 'System Settings', 'Systemeinstellungen', 'com.clokeos.systemeinstellungen', 'einstellungen',
      None, '', 'settings'),
-    # Windows-Programme (Wine, nur x86_64): Dateimanager von Wine mit C: = /NT; .exe öffnet Fundus direkt
-    ('Applications', 'Wine', 'Wine', 'org.winehq.wine', 'wine', 'exec wine winefile "$@"', 'winefile* wine* explorer* notepad* *.exe', ''),
+    # Windows-Programme (Raven, nur x86_64): öffnet ein Programm über das Dateiauswahl-Fenster von Fundus; .exe öffnet Fundus direkt
+    ('Applications', 'Raven', 'Raven', 'org.raven.raven', 'raven', 'exec raven "$@"', '', ''),
     # nachinstalliert wie ein Programm aus dem Netz: liegt in /Applications
     ('Applications', 'Dillo', 'Dillo', 'org.dillo.dillo', None, 'exec dillo "$@"', 'Dillo', ''),
 ]
