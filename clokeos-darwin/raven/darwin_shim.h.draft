@@ -1,0 +1,7 @@
+#pragma once
+#include <sys/types.h>
+#include <unistd.h>
+struct user_regs_struct { unsigned long long r15,r14,r13,r12,rbp,rbx,r11,r10,r9,r8,rax,rcx,rdx,rsi,rdi,orig_rax,rip,cs,eflags,rsp,ss,fs_base,gs_base,ds,es,fs,gs; };
+inline int memfd_create(const char *, unsigned) { return -1; }
+#define MFD_CLOEXEC 1
+#define MFD_ALLOW_SEALING 2
