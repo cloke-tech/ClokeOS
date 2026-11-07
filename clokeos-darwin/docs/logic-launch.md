@@ -740,3 +740,7 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * CoreAudio shim additions: `kAudioDevicePropertyIOThreadOSWorkgroup` ('oswg', from libcompat's `os_workgroup_interval_create`, the IO thread joins it and runs one interval
   per cycle), clock domain, byte-based buffer sizes, stream ranged formats; file output appends after the first start; `CLOKE_CA_WATCH=<hex offsets>` logs fields of the IOProc
   client (Logic's MD object) every 2 s; `AudioDeviceStop` traces its caller.
+* `libclogictrace` hooks MDCA's vtable (Prime +0x88, PrepareForStart +0xa0, Start +0xa8; image base from the dyld list, checked against `MDCA::Start` = 0x71f210)
+  and prints the caller chain. On Space: Logic +0x39b9f4 → +0x2c0020 calls `Prime` (+0x2bfccc) and `PrepareForStart` (+0x2c032c) on the main thread (via
+  `performSelectorOnMainThread`, chain +0x858684 … +0x10fae08) and returns; **`Start` is never called** in the run. Start is expected later from another place (sequencer/sync
+  thread or a callback) – that is the open point.

@@ -4,6 +4,9 @@
  * Nur für Logic: ohne die Symbole lässt sich die Bibliothek in anderen Programmen nicht laden. */
 #include <stdio.h>
 #include <dlfcn.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <mach-o/dyld.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
 
@@ -64,7 +67,49 @@ static void my_setDelegate(id self, SEL _cmd, id d) {
     fprintf(stderr, "[clogic] -[%s setDelegate:] %s\n", class_getName(object_getClass(self)), d ? class_getName(object_getClass(d)) : "nil");
     ((void (*)(id, SEL, id))orig_setDelegate)(self, _cmd, d);
 }
+/* Vtable von MDCA (MAAudioEngine, Logic 12.3 arm64: __ZTV4MDCA+0x10 = 0xe02070): Prime (+0x88), PrepareForStart (+0xa0) und Start (+0xa8)
+ * mit Aufrufkette melden. Die Einträge liegen in __DATA_CONST; die Seite wird dafür beschreibbar gemacht. */
+static u64 (*o_prime)(void *), (*o_prep)(void *, u64, u64), (*o_start)(void *, u64);
+static void vt_bt(const char *what, void *self) {
+    fprintf(stderr, "[clogic] MDCA::%s(%p)\n", what, self);
+    void **fp = (void **)__builtin_frame_address(0);
+    for (int i = 0; i < 14 && fp && !((unsigned long)fp & 7); i++) {
+        void *ra = fp[1]; Dl_info di;
+        if (!ra) break;
+        if (dladdr(ra, &di) && di.dli_fname) {
+            const char *b = strrchr(di.dli_fname, '/');
+            fprintf(stderr, "[clogic]   %s +%#lx %s\n", b ? b + 1 : di.dli_fname, (unsigned long)((char *)ra - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : "");
+        }
+        void **next = (void **)fp[0];
+        if (next <= fp) break;
+        fp = next;
+    }
+}
+static u64 my_prime(void *self) { vt_bt("Prime", self); u64 r = o_prime(self); fprintf(stderr, "[clogic] MDCA::Prime -> %#llx\n", r); return r; }
+static u64 my_prep(void *self, u64 a, u64 b) { vt_bt("PrepareForStart", self); u64 r = o_prep(self, a, b); fprintf(stderr, "[clogic] MDCA::PrepareForStart(%llu, %llu) -> %#llx\n", a, b, r); return r; }
+static u64 my_start(void *self, u64 a) { vt_bt("Start", self); u64 r = o_start(self, a); fprintf(stderr, "[clogic] MDCA::Start(%llu) -> %#llx\n", a, r); return r; }
+static void hook_mdca_vtable(void) {
+    const char *base = NULL;   /* Bildanfang aus der dyld-Liste (dlsym traf ein anderes Bild) */
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) {
+        const char *n = _dyld_get_image_name(i);
+        if (n && strstr(n, "/MAAudioEngine.framework/")) { base = (const char *)_dyld_get_image_header(i); break; }
+    }
+    if (!base) { fprintf(stderr, "[clogic] MAAudioEngine nicht gefunden\n"); return; }
+    void **vt = (void **)(base + 0xe02070);
+    Dl_info chk;   /* Probe: Eintrag +0xa8 muss in MAAudioEngine auf MDCA::Start zeigen */
+    if (!dladdr(vt[0xa8 / 8], &chk) || (const char *)chk.dli_fbase != base || (char *)vt[0xa8 / 8] - base != 0x71f210) {
+        fprintf(stderr, "[clogic] MDCA-Vtable passt nicht (%p), nicht gehakt\n", vt[0xa8 / 8]); return; }
+    long pg = (long)vt & ~0x3fffL;
+    if (mprotect((void *)pg, 0x4000, PROT_READ | PROT_WRITE)) { perror("[clogic] mprotect"); return; }
+    o_prime = vt[0x88 / 8]; vt[0x88 / 8] = (void *)my_prime;
+    o_prep = vt[0xa0 / 8]; vt[0xa0 / 8] = (void *)my_prep;
+    o_start = vt[0xa8 / 8]; vt[0xa8 / 8] = (void *)my_start;
+    mprotect((void *)pg, 0x4000, PROT_READ);
+    fprintf(stderr, "[clogic] MDCA-Vtable gehakt (%p)\n", (void *)vt);
+}
+
 __attribute__((constructor)) static void init(void) {
+    hook_mdca_vtable();
     fprintf(stderr, "[clogic] trace loaded\n");
     Class c = objc_getClass("NSApplication");
     Method m = c ? class_getInstanceMethod(c, sel_registerName("setDelegate:")) : NULL;
