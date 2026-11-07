@@ -314,3 +314,17 @@ parts: CloakServer builds with it (`cloakserver/build.sh`), the `setup.c` block 
 `brand.sh` debugfs commands made the same on a scratch ext4 image. Image build (brand.sh for the desktop image, with the Raven part taken from the tested binaries instead of
 rebuilt): `/NT` (775 staff, `Users` 1777) and `/NT/Users/guest` with `AppData` and the six links are in the image; a first Raven run
 filled `/NT/Windows`, `Program Files` ... (775) and `dir C:\` listed them. Not done: account creation through the setup assistant.
+
+### Window class per program, and the title bar answer (2026-11-07)
+
+Every Raven window now has the X11 class `<program name>` (the stem of the .exe, blanks as `_`; `RAVEN_WM_CLASS`, set by Raven for each
+program, `raven.native` without one), and the app bundles from `--install-menu` carry `CLWindowClasses` with the same name, so the global menu
+bar shows the program's name (checked: a test program shows "em32" instead of "raven.native").
+
+The title-bar session answered (docs/titlebar.md in main): CloakServer draws the new bar for every X window without
+`_MOTIF_WM_HINTS` decorations=0 (Raven sets 0 today and so gets only edge, corners and shadow); `_CLOKE_TITLEBAR` (CARDINAL[6]) sets who
+draws the top area; title from `_NET_WM_NAME`; no icon in the bar; dialogs without zoom via bit 5 of [4] and min=max size hints; move,
+resize, zoom and close are the window manager's (ConfigureNotify, WM_DELETE_WINDOW, `_NET_WM_MOVERESIZE`). So the frame can leave
+Raven: the X window would be exactly the client area, Raven would stop painting caption, border and caption buttons and handling
+their hits, and give CloakServer the title, style (dialog, tool window, no maximize box) and fixed-size hints; the menu bar stays inside
+the client area. Not started: it touches frame.cpp, hit testing, window sizing (outer vs client rectangles) and every caption-related path.

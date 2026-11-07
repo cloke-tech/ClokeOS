@@ -470,8 +470,26 @@ index 0616ece..7be193b 100644
  	// Without a display the frame has nowhere to go and is dropped; the window lives on as on a screen that is switched off.
  	if (!presentation.present) return;
  	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
+diff --git a/native/desktop/xcb.cpp b/native/desktop/xcb.cpp
+index 684ba7e..4e5a1d0 100644
+--- a/native/desktop/xcb.cpp
++++ b/native/desktop/xcb.cpp
+@@ -390,8 +390,11 @@ struct XcbPresentation::State {
+ 		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
+ 			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
+ 			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
+-		static constexpr char name[]="raven.native\0raven.native";
+-		property(id,atoms[wm_class],atoms[string_type],8,sizeof name,name);
++		// The class of the window is the name of the program (RAVEN_WM_CLASS), raven.native without one.
++		const char *program=std::getenv("RAVEN_WM_CLASS");
++		std::string name=program && *program ? program : "raven.native";
++		name.push_back('\0'); name+=program && *program ? program : "raven.native"; name.push_back('\0');
++		property(id,atoms[wm_class],atoms[string_type],8,uint32_t(name.size()),name.data());
+ 		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
+ 		return id;
+ 	}
 diff --git a/native/main.cpp b/native/main.cpp
-index 7fab6e2..5a105ba 100644
+index 7fab6e2..d22fc4a 100644
 --- a/native/main.cpp
 +++ b/native/main.cpp
 @@ -39,6 +39,7 @@
@@ -576,7 +594,23 @@ index 7fab6e2..5a105ba 100644
  										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
  											server, static_cast<char *>(nullptr));
  										::_exit(127);
-@@ -385,7 +401,7 @@ int main(int argc, char **argv)
+@@ -376,6 +392,15 @@ int main(int argc, char **argv)
+ 					// like an installer and that no other program started. The ten newest of these snapshots are kept.
+ 					const bool started_alone = !command_line_text && handle_channel_fd < 0;
+ 					const auto program_name = std::filesystem::path(argv[first_file]).filename().string();
++					// ClokeOS: the windows of the program carry its name as the X11 window class (the menu bar and the Dock know it by that name)
++					{
++						std::string window_class = std::filesystem::path(argv[first_file]).stem().string();
++						for (auto &character : window_class)
++							if (character == ' ' || character == '\t')
++								character = '_';
++						if (!window_class.empty())
++							setenv("RAVEN_WM_CLASS", window_class.c_str(), 1);
++					}
+ 					if (started_alone && !std::getenv("RAVEN_PREFIX_SETUP") && !std::getenv("RAVEN_NO_SNAPSHOT") && raven::installer_like(entry->image, program_name)) {
+ 						try {
+ 							raven::take_snapshot(prefix.root(), "install-" + std::filesystem::path(program_name).stem().string());
+@@ -385,7 +410,7 @@ int main(int argc, char **argv)
  						}
  					}
  					// The libraries installed for every program, in the system directory of the program's width.
@@ -585,7 +619,7 @@ index 7fab6e2..5a105ba 100644
  					// The program's own manifest names the side-by-side assemblies its libraries come from; it is read from the file, as the
  					// first libraries are found before the process exists.
  					{
-@@ -396,7 +412,7 @@ int main(int argc, char **argv)
+@@ -396,7 +421,7 @@ int main(int argc, char **argv)
  								manifest.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
  								break;
  							}
@@ -594,7 +628,7 @@ index 7fab6e2..5a105ba 100644
  							std::filesystem::absolute(argv[first_file]).parent_path());
  					}
  					// A library of the other width is passed over, as the Windows loader goes on searching past it.
-@@ -428,7 +444,7 @@ int main(int argc, char **argv)
+@@ -428,7 +453,7 @@ int main(int argc, char **argv)
  					// known once the program's launch is (below), before its libraries are loaded.
  					std::vector<std::filesystem::path> later_folders;
  					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
@@ -603,7 +637,7 @@ index 7fab6e2..5a105ba 100644
  					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
  #ifdef RAVEN_OPENGL
  						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
-@@ -451,7 +467,7 @@ int main(int argc, char **argv)
+@@ -451,7 +476,7 @@ int main(int argc, char **argv)
  						// A 64-bit program built against msvcrt.dll gets the C runtime component as that library too: a runtime of its own, as
  						// msvcrt is beside ucrtbase on Windows.
  						if (!selected && name=="msvcrt.dll" && entry->image.is_64) {
@@ -612,7 +646,7 @@ index 7fab6e2..5a105ba 100644
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
  						}
-@@ -461,13 +477,13 @@ int main(int argc, char **argv)
+@@ -461,13 +486,13 @@ int main(int argc, char **argv)
  								return read_module(component.c_str());
  						if (!selected && name=="ucrtbase.dll") {
  							// A 32-bit program gets the 32-bit build of the component.
@@ -628,7 +662,7 @@ index 7fab6e2..5a105ba 100644
  								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
-@@ -484,7 +500,7 @@ int main(int argc, char **argv)
+@@ -484,7 +509,7 @@ int main(int argc, char **argv)
  										places.emplace_back(std::string(part));
  									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
  								}
@@ -637,7 +671,7 @@ index 7fab6e2..5a105ba 100644
  							for (const auto &place : places)
  								if (std::filesystem::exists(place / name))
  									return read_module((place / name).c_str());
-@@ -516,7 +532,7 @@ int main(int argc, char **argv)
+@@ -516,7 +541,7 @@ int main(int argc, char **argv)
  					};
  					// The guest heap component ships beside the runtime when the build provisioned it.
  					if (entry->image.is_64 && !modules.all().contains("raven-rtl.dll")) {
@@ -646,7 +680,7 @@ index 7fab6e2..5a105ba 100644
  						if (std::filesystem::exists(component))
  							modules.add("raven-rtl.dll", read_file(component.c_str()));
  					}
-@@ -752,7 +768,7 @@ int main(int argc, char **argv)
+@@ -752,7 +777,7 @@ int main(int argc, char **argv)
  		if (run_entry) {
  #ifdef RAVEN_NATIVE_CPU
  			raven::LoadedImage loaded(image, image.image_base);
@@ -657,10 +691,10 @@ index 7fab6e2..5a105ba 100644
  			throw std::runtime_error("native execution requires an x86-64 Linux host");
 diff --git a/native/menu.h b/native/menu.h
 new file mode 100644
-index 0000000..84ec0e6
+index 0000000..1e73eb6
 --- /dev/null
 +++ b/native/menu.h
-@@ -0,0 +1,388 @@
+@@ -0,0 +1,394 @@
 +// ClokeOS: installed Windows programs in the application menu.
 +// `raven --install-menu [Applications folder]` reads the shortcuts (.lnk) the installers left in the Start Menu folders of the prefix
 +// and writes one Name.app bundle per program: a start script, an Info.plist and the program's icon as PNG. CloakServer lists bundles
@@ -1022,6 +1056,12 @@ index 0000000..84ec0e6
 +		item("CFBundleExecutable", "launch");
 +		if (has_icon) item("CFBundleIconFile", "icon");
 +		item("CFBundlePackageType", "APPL");
++		{
++			// The window class Raven gives the program's windows (the stem of the file, no blanks): ties the windows to this app
++			std::string window_class = host->stem().string();
++			for (auto &c : window_class) if (c == ' ' || c == '\t') c = '_';
++			item("CLWindowClasses", window_class);
++		}
 +		item("RavenShortcut", link->target);
 +		plist << "</dict>\n</plist>\n";
 +		plist.close();
