@@ -755,3 +755,15 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   (RMS 3000–7000, no clipping, stereo, zero-crossing rates of tonal material). The file is not in the repo (it is derived from Logic content).
 * Not yet: the whole song (the run ends when the VM is stopped), comparing the audio with a bounce on the Mac, which tracks actually sound (Sampler patches need the sound
   library), offline bounce (File > Bounce), x86_64.
+
+### Round 44: whole song, compared with a bounce on the Mac
+
+* ClokeOS (arm64 VM, real time, CoreAudio shim → WAV): Jump.logicx plays from bar 1 to the end, **291 s of audio without a single dropout** (no silent gap ≥ 10 ms).
+  The beat period is 0.230 s throughout (= the project's 260 BPM), identical to the Mac.
+* Reference: Logic Pro 12.3 on the Mac, File > Bounce > Project or Section, bars 1–149 (the project end marker; the regions continue after it, hence the longer ClokeOS run).
+* Neither machine has the sound library: the 125 Sampler sample files and 4 Space Designer impulse responses the project names are missing on both, so the
+  Sampler/reverb parts are missing in the same way.
+* Comparison (log level envelope, octave bands): first 20 s envelope correlation 0.73–0.90; afterwards the coarse structure matches (offsets ±3 s, r 0.4–0.8 on
+  10 s windows) but fine detail does not. Spectrum: ClokeOS +5…7 dB at 62 Hz, −5…10 dB from 250 Hz up. So one instrument or effect behaves differently on ClokeOS
+  (not yet found; candidates: plug-ins that fail to load or run differently, e.g. Space Designer without IR, Drum Kit / Sampler fallbacks).
+* Not done: listening comparison per track (solo each track on both systems), offline bounce on ClokeOS (File > Bounce), installing the sound library, x86_64.
