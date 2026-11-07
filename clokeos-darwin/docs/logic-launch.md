@@ -811,3 +811,20 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   rounds 44–46. Open: what the drum instrument plays on ClokeOS without its samples; tracks 3–8 not exported yet (remote control of the export was flaky:
   X focus stays on the closed panel, error alert NSCocoaErrorDomain 4 on the third export).
 * Tools: `CRASHPC_DUMPREG=<n>` (memory around a register as text), crashpc free log skips libc++/CF reuse; F12 in Logic dumps the view tree (`[viewdump]`).
+
+### Round 48: the drum track and Logic's sound library
+
+* The Mac render has real drums: the sound library is not missing there, it lives relocated in `~/Music/Logic Pro Library.bundle` (45 GB), found through
+  `~/Library/Application Support/com.apple.musicapps.content/Logic Pro Library.bookmark`. On ClokeOS the drum track (Drum Kit Designer, SoCal kit) plays a
+  substitute: a pure ~92 Hz tone per hit (spectral flatness 0.004), identical in every bounce.
+* **Bookmarks in CoreFoundation:** Darling's `CFURLCreateBookmarkData`, `CFURLCreateByResolvingBookmarkData`, `CFURLCreateBookmarkDataFromFile`,
+  `CFURLWriteBookmarkDataToFile` and `CFURLResourceIsReachable` were stubs (NULL/false). `macapps/cfcompat.m` implements them in Apple's binary format
+  ("book" header, TOC key 0x1004 = path components; reads bookmarks made on a Mac), the stubs are renamed by `darling-corefoundation/NSURL.m.sed`.
+  With it Logic reads its library bookmark (before: "cannot find the Logic Pro Library.bundle"; then the one-time "copy your existing sounds" migration,
+  skipped by the library's `Application Support/TransitionDone` marker).
+* Image (not in the repo): `/var/root/Music/Logic Pro Library.bundle` with the 128 sample files Jump's instruments reference (458 MB: Drum Kit Designer,
+  Vintage Strat, Fingerstyle Bass), the Drum Kit Designer plug-in settings and the library's `Application Support`; content metadata in
+  `~/Library/Application Support/com.apple.musicapps.content`; bookmarks (both places Logic looks) pointing to the library.
+* Still open: Logic does not open any `.caf` (traced with `CLOKE_LOGIC_PATHS=.caf` in `libclogictrace`, which logs open/stat/lstat/access/getattrlist),
+  so the drum kit is decided "not available" before any sample access; the drum track stays the substitute tone.
+* `macapps/deploy-tree.sh` now creates the target folder and its missing parents (before, a missing target silently wrote nothing) and reports debugfs errors.

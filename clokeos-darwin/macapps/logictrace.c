@@ -9,6 +9,10 @@
 #include <mach-o/dyld.h>
 #include <stdlib.h>
 #include <libkern/OSCacheControl.h>
+#include <fcntl.h>
+#include <stdarg.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
 
@@ -53,7 +57,20 @@ AE_TRACE("DriverDeviceID", _Z14DriverDeviceIDi22MDAudioDriverDirection)
 AE_TRACE("MDInitDDS", _Z9MDInitDDSv)
 AE_TRACE("MSuperclass::SetLaunchingAudioDevice", _ZN11MSuperclass23SetLaunchingAudioDeviceEb)
 
+/* CLOKE_LOGIC_PATHS=<Teilstring>: Dateizugriffe (open/stat/lstat/access/getattrlist), deren Pfad den Teilstring enthält, mit Ergebnis melden
+ * (z. B. ".caf", um zu sehen, wo Logic Samples sucht) */
+static const char *path_watch(void) { static const char *w = (const char *)1; if (w == (const char *)1) w = getenv("CLOKE_LOGIC_PATHS"); return w; }
+static void path_log(const char *fn, const char *p, int r) { const char *w = path_watch(); if (w && p && strstr(p, w)) fprintf(stderr, "[clogic] %s(%s) -> %d\n", fn, p, r); }
+static int my_open(const char *p, int fl, ...) { va_list ap; va_start(ap, fl); int mode = va_arg(ap, int); va_end(ap); int r = open(p, fl, mode); path_log("open", p, r); return r; }
+static int my_stat(const char *p, struct stat *st) { int r = stat(p, st); path_log("stat", p, r); return r; }
+static int my_lstat(const char *p, struct stat *st) { int r = lstat(p, st); path_log("lstat", p, r); return r; }
+static int my_access(const char *p, int m) { int r = access(p, m); path_log("access", p, r); return r; }
+extern int getattrlist(const char *, void *, void *, size_t, unsigned int);
+static int my_getattrlist(const char *p, void *a, void *b, size_t n, unsigned int o) { int r = getattrlist(p, a, b, n, o); path_log("getattrlist", p, r); return r; }
+
 __attribute__((used, section("__DATA,__interpose"))) static struct { void *n, *o; } interposers[] = {
+    { (void *)my_open, (void *)open }, { (void *)my_stat, (void *)stat }, { (void *)my_lstat, (void *)lstat },
+    { (void *)my_access, (void *)access }, { (void *)my_getattrlist, (void *)getattrlist },
     { (void *)my_set, (void *)SetSetupAppFactoryCB },
     { (void *)my_setup, (void *)setupAppFactorySharedInstance },
     { (void *)my_MDCoreAudioNewDriver, (void *)MDCoreAudioNewDriver },
