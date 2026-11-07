@@ -4,7 +4,8 @@
  * (-[NSBundle imageForResource:] des Bundles, zu dem die Assets.car gehört). Geschrieben wird in einen Spiegelordner:
  *   <Ziel>/<Pfad der Resources relativ zum Programm>/Assets.images/<Name>.png (mit CARIMAGES_2X=1 auch <Name>@2x.png)
  * (Namen mit "/" ergeben Unterordner). ClokeOS' AppKit (macapps/appkit/modern.m) sucht dort, wenn imageForResource:/imageNamed: im
- * Bundle nichts finden. Vorlagenbilder (Template) bleiben schwarz mit Alpha, so wie sie gezeichnet werden.
+ * Bundle nichts finden. Vorlagenbilder (Template, auch die Symbole der Art "Vector Glyph") bleiben schwarz mit Alpha, so wie sie gezeichnet
+ * werden, und bekommen eine leere Datei <Name>.template daneben.
  *
  *   clang -fobjc-arc -framework AppKit macapps/carimages.m -o carimages && ./carimages "/Applications/Logic Pro.app" <Ziel>
  * macapps/logicimage.sh baut und ruft es auf. Nichts davon landet im Repository (abgeleitet aus den Dateien des Herstellers). */
@@ -22,7 +23,11 @@ static NSArray<NSString *> *imageNames(NSString *car) {
     [t waitUntilExit];
     NSArray *items = [NSJSONSerialization JSONObjectWithData: d options: 0 error: nil];
     NSMutableOrderedSet *names = [NSMutableOrderedSet orderedSet];
-    NSSet *types = [NSSet setWithArray: @[ @"Image", @"Vector", @"MultiSized Image", @"Icon Image", @"PackedImage" ]];
+    /* "Vector Glyph": eigene Symbole des Programms (Apples AppKit liefert ein NSSymbolImageRep, ein Vorlagenbild); CARIMAGES_TYPES schränkt
+     * auf einzelne Arten ein (durch Kommas getrennt, z. B. "Vector Glyph"), damit Nachträge nicht alles neu schreiben */
+    NSSet *types = [NSSet setWithArray: @[ @"Image", @"Vector", @"MultiSized Image", @"Icon Image", @"PackedImage", @"Vector Glyph" ]];
+    if (getenv("CARIMAGES_TYPES"))
+        types = [NSSet setWithArray: [@(getenv("CARIMAGES_TYPES")) componentsSeparatedByString: @","]];
     for (NSDictionary *it in items)
         if ([it isKindOfClass: [NSDictionary class]] && [types containsObject: it[@"AssetType"]] && it[@"Name"])
             [names addObject: it[@"Name"]];
@@ -69,6 +74,8 @@ int main(int argc, char **argv) {
                 NSImage *img = [b imageForResource: name];
                 if (!img) continue;
                 BOOL ok = writePNG(img, 1, [out stringByAppendingPathComponent: [name stringByAppendingString: @".png"]]);
+                if (ok && img.isTemplate)   /* Vorlagenbild: leere Markierungsdatei daneben, ClokeOS' AppKit setzt isTemplate */
+                    [[NSData data] writeToFile: [out stringByAppendingPathComponent: [name stringByAppendingString: @".template"]] atomically: NO];
                 if (getenv("CARIMAGES_2X"))   /* ClokeOS zeichnet mit Faktor 1; @2x nur auf Wunsch (verdreifacht den Platz) */
                     writePNG(img, 2, [out stringByAppendingPathComponent: [name stringByAppendingString: @"@2x.png"]]);
                 if (ok) n++;

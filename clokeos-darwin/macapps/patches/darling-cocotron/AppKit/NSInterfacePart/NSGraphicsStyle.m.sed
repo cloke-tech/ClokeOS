@@ -1,0 +1,3 @@
+# ClokeOS: Vorlagenbilder in Knöpfen in der Schriftfarbe (aktiv controlTextColor, sonst disabledControlTextColor), wie bei Apple; vorher
+# schwarz (in der dunklen Darstellung unsichtbar). -[NSImage _clkTintedWithColor:] steht in macapps/appkit/modern.m.
+/^- \(void\) drawButtonImage: \(NSImage \*\) image$/,/^\}$/s/^    CGFloat fraction = enabled \? 1.0 : 0.5;$/    CGFloat fraction = enabled ? 1.0 : 0.5;\n    if ([image isTemplate] \&\& [image respondsToSelector: @selector(_clkTintedWithColor:)]) {\n        image = [image performSelector: @selector(_clkTintedWithColor:)\n                            withObject: enabled ? [NSColor controlTextColor] : [NSColor disabledControlTextColor]];\n        fraction = 1.0;\n    }/

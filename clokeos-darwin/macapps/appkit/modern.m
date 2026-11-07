@@ -32,6 +32,7 @@
  *            strokeEnd, lineDashPhase (CGFloat) als gespeicherte Werte mit KVC-tauglichen Zugriffsmethoden (Cocotrons Klasse ist leer; Logic Pro
  *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird in softlayers.m.
  *   NSImage: CGImageForProposedRect:context:hints: (zeichnet in ein Bitmap), bestRepresentationForRect:context:hints:;
+ *            _clkTintedWithColor: (eingefärbte Kopie für Vorlagenbilder in Zellen);
  *            NSBitmapImageRep colorSpace (Gerät-RGB)
  *   NSColor: colorWithCGColor:, colorWithHue:saturation:brightness:alpha:, colorWithDisplayP3Red:green:blue:alpha: (fehlten: nil, daraus
  *            machte Logic Pro Farben mit Anteilen 0, also durchsichtige Schrift im Lineal und in den Spurköpfen)
@@ -231,7 +232,10 @@ static NSImage *asset_png(NSBundle *b, NSString *name) {
     if (res == nil) return nil;
     NSString *p = [[[res stringByAppendingPathComponent: @"Assets.images"] stringByAppendingPathComponent: name] stringByAppendingPathExtension: @"png"];
     if (![[NSFileManager defaultManager] fileExistsAtPath: p]) return nil;
-    return [[[NSImage alloc] initWithContentsOfFile: p] autorelease];
+    NSImage *img = [[[NSImage alloc] initWithContentsOfFile: p] autorelease];
+    if ([[NSFileManager defaultManager] fileExistsAtPath: [[p stringByDeletingPathExtension] stringByAppendingPathExtension: @"template"]])
+        [img setTemplate: YES];   /* Vorlagenbild (carimages.m) */
+    return img;
 }
 static id image_named(Class c, SEL s, NSString *name) {
     id r = o_image_named ? ((id (*)(id, SEL, id)) o_image_named)(c, s, name) : nil;
@@ -428,6 +432,23 @@ static BOOL rep_draw_full(NSImageRep *self, SEL s, NSRect dst, NSRect src, NSCom
                   (long)[self pixelsHigh], NSStringFromRect(src), NSStringFromRect(dst), (long)op, (int)respectFlipped);
     }
     if (sz.width <= 0 || sz.height <= 0) return NO;
+    {   /* CLOKE_DUMP_REP=<B>x<H>: die erste so große Darstellung als PNG (hex) in die Ausgabe (Fehlersuche) */
+        static int dumped;
+        const char *want = getenv("CLOKE_DUMP_REP");
+        if (want && !dumped && [[NSString stringWithFormat: @"%.0fx%.0f", sz.width, sz.height] isEqualToString: @(want)]) {
+            dumped = 1;
+            NSImage *tmp = [[[NSImage alloc] initWithSize: sz] autorelease];
+            [tmp addRepresentation: self];
+            NSBitmapImageRep *bm = [[[NSBitmapImageRep alloc] initWithCGImage: [tmp CGImageForProposedRect: NULL context: nil hints: nil]] autorelease];
+            NSData *d = [bm representationUsingType: NSPNGFileType properties: @{}];
+            const unsigned char *b = [d bytes];
+            for (NSUInteger i = 0; i < [d length]; i += 48) {
+                fprintf(stderr, "[rephex] ");
+                for (NSUInteger j = i; j < i + 48 && j < [d length]; j++) fprintf(stderr, "%02x", b[j]);
+                fprintf(stderr, "\n");
+            }
+        }
+    }
     NSImage *img = [[NSImage alloc] initWithSize: sz];
     [img addRepresentation: self];
     [img drawInRect: dst fromRect: src operation: op fraction: fraction respectFlipped: respectFlipped hints: hints];
@@ -450,6 +471,21 @@ static void tfc_set_vcenter(id self, SEL s, BOOL v) { objc_setAssociatedObject(s
 static BOOL tfc_vcenter(id self, SEL s) { return [objc_getAssociatedObject(self, &k_vcenter) boolValue]; }
 static NSInteger tfc_typesetter(id self, SEL s) { return 2; /* NSTypesetterBehavior_10_4 */ }
 
+/* Vorlagenbilder (isTemplate) zeichnen Bedienelemente bei Apple in der Schriftfarbe des Elements (hell in der dunklen Darstellung). Hilfe für
+ * die Zellen (NSGraphicsStyle-, NSImageCell-Patches): Kopie des Bildes, mit der Farbe über seinen Deckungsbereich gefüllt (source-atop) */
+static id img_tinted(NSImage *self, SEL s, NSColor *color) {
+    NSSize sz = [self size];
+    if (color == nil || sz.width <= 0 || sz.height <= 0 || sz.width > 2048 || sz.height > 2048) return self;
+    NSImage *t = [[[NSImage alloc] initWithSize: sz] autorelease];
+    NSRect r = NSMakeRect(0, 0, sz.width, sz.height);
+    [t lockFocus];
+    [self drawInRect: r fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1.0];
+    [color set];
+    NSRectFillUsingOperation(r, NSCompositeSourceAtop);
+    [t unlockFocus];
+    return t;
+}
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
@@ -470,6 +506,7 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(cm, sel_registerName("colorNamed:bundle:"), (IMP)c_named_bundle, "@@:@@");
     class_addMethod(cm, sel_registerName("colorNamed:"), (IMP)c_named_main, "@@:@");
     class_addMethod(cm, sel_registerName("colorWithCGColor:"), (IMP)c_with_cgcolor, "@@:^v");
+    class_addMethod([NSImage class], sel_registerName("_clkTintedWithColor:"), (IMP)img_tinted, "@@:@");
     class_addMethod([NSImage class], sel_registerName("CGImageForProposedRect:context:hints:"), (IMP)img_cgimage, "^v@:^{CGRect={CGPoint=dd}{CGSize=dd}}@@");
     class_addMethod([NSImage class], sel_registerName("bestRepresentationForRect:context:hints:"), (IMP)img_best_for_rect, "@@:{CGRect={CGPoint=dd}{CGSize=dd}}@@");
     class_addMethod(objc_getClass("NSBitmapImageRep"), sel_registerName("colorSpace"), (IMP)rep_colorspace, "@@:");

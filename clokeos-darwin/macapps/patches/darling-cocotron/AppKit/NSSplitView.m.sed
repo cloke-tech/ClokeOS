@@ -22,10 +22,10 @@ s/^    return YES;$/    return NO;/
             resize1.size.height = MAX(0, NSMaxY(frame1) - start);\
             resize1.origin.y = NSMaxY(frame1) - NSHeight(resize1);\
         }
-# ClokeOS: arrangedSubviews/addArrangedSubview:/insertArrangedSubview:atIndex:/removeArrangedSubview: (10.11) fehlten. Eine nicht mehr
-# angeordnete Unteransicht bleibt wie bei Apple Unteransicht, bekommt aber keinen Platz mehr (zählt wie eingeklappt). Logic Pro nimmt so
+# ClokeOS: arrangedSubviews/addArrangedSubview:/insertArrangedSubview:atIndex:/removeArrangedSubview: (10.11) fehlten. Wie bei Apple
+# entfernt removeArrangedSubview: die Ansicht ganz, solange arrangesAllSubviews gilt (Vorgabe); sonst bleibt sie Unteransicht ohne Platz. Logic Pro nimmt so
 # die Live-Loops-Spalte aus dem Arrangierbereich; ohne das blieb sie als schwarze Fläche stehen.
-s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc/runtime.h>\nstatic char clk_unarranged;|
+s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc/runtime.h>\nstatic char clk_unarranged, clk_keepsUnarranged;|
 /^- \(BOOL\) isSubviewCollapsed: \(NSView \*\) subview \{$/,/^\}$/s/^    return \[subview isHidden\];$/    return [subview isHidden] || [objc_getAssociatedObject(self, \&clk_unarranged) containsObject: subview];/
 /^- \(BOOL\) isOpaque \{$/i\
 - (NSMutableSet *) clk_unarrangedSet {\
@@ -45,9 +45,10 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
     return a;\
 }\
 - (BOOL) arrangesAllSubviews {\
-    return [objc_getAssociatedObject(self, &clk_unarranged) count] == 0;\
+    return ![objc_getAssociatedObject(self, &clk_keepsUnarranged) boolValue];\
 }\
 - (void) setArrangesAllSubviews: (BOOL) flag {\
+    objc_setAssociatedObject(self, &clk_keepsUnarranged, flag ? nil : @YES, OBJC_ASSOCIATION_RETAIN);\
 }\
 - (void) addArrangedSubview: (NSView *) view {\
     [[self clk_unarrangedSet] removeObject: view];\
@@ -70,7 +71,11 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
 - (void) removeArrangedSubview: (NSView *) view {\
     if (view == nil || [view superview] != self)\
         return;\
-    [[self clk_unarrangedSet] addObject: view];\
+    if ([self arrangesAllSubviews]) {\
+        [[self clk_unarrangedSet] removeObject: view];\
+        [view removeFromSuperview];\
+    } else\
+        [[self clk_unarrangedSet] addObject: view];\
     [self adjustSubviews];\
 }\
 

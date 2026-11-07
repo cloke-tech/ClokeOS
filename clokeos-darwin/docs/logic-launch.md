@@ -969,3 +969,19 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
   x = 443, outside the 368-point header view (layout/width differs from the Mac, where the header is narrower); M/S/I letters missing.
   `CLOKE_BUTTON_TRACE=1` also logs `[clokeos-rep]` (image representations drawn: size, pixels, source/target rect).
 
+### Round 55: track headers – sliders and knobs, Live Loops pane gone
+
+* **`removeArrangedSubview:`** now removes the view from the split view, as Apple documents for `arrangesAllSubviews` = YES (the
+  default); before it stayed a subview and covered the track headers. Result: the black Live Loops block is gone, the track headers
+  span their full width and show **volume sliders and pan knobs**; regions start right after them. (The header is wider than on the
+  Mac: Logic's divider position.)
+* **Vector glyphs from Assets.car:** `macapps/carimages.m` now also exports the type "Vector Glyph" (`NSSymbolImageRep` on the Mac;
+  Logic's `Tools/…`, `Glyphs/…`, `ActionBarIcons/…`: 529 images, 2 MB) and writes an empty `<name>.template` next to template images;
+  ClokeOS' `imageForResource:`/`imageNamed:` set `isTemplate` for them. `CARIMAGES_TYPES="Vector Glyph"` limits a re-run to one type.
+* **Template images are tinted** in Cocotron's button and image cells (`controlTextColor`, disabled colour when disabled), as AppKit
+  does; `-[NSImage _clkTintedWithColor:]` in `modern.m`. Logic's own cells (`MAButtonCell` & co.) draw their glyphs themselves, so
+  the editor tool pop-up and the M/S/I letters are still not visible.
+* Still open in the track headers: instrument icons (Logic's 40×40/68×68 icon images it paints itself come out empty; the source
+  images are not found yet: they are in no `.car` file), M/S/I letters (`CharacterRGBImage/M`, `/S` are looked up and exist in no
+  asset catalog, so Logic generates them some other way).
+

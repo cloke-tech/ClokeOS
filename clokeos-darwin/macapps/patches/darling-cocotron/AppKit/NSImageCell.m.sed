@@ -1,0 +1,2 @@
+# ClokeOS: Vorlagenbilder in der Schriftfarbe (controlTextColor) wie bei Apple, statt schwarz
+/^- \(void\) drawInteriorWithFrame: \(NSRect\) controlFrame$/,/^\}$/s/^        \[\[self _imageValue\] drawInRect: drawInRect$/        NSImage *clk_img = [self _imageValue];\n        if ([clk_img isTemplate] \&\& [clk_img respondsToSelector: @selector(_clkTintedWithColor:)])\n            clk_img = [clk_img performSelector: @selector(_clkTintedWithColor:) withObject: [NSColor controlTextColor]];\n        [clk_img drawInRect: drawInRect/

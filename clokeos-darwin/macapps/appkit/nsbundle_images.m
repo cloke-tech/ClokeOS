@@ -43,7 +43,11 @@
 
 - (NSImage *)imageForResource:(NSString *)name {
     NSURL *url = [self URLForImageResource:name];
-    return url ? [[[NSImage alloc] initWithContentsOfURL:url] autorelease] : nil;
+    NSImage *img = url ? [[[NSImage alloc] initWithContentsOfURL:url] autorelease] : nil;
+    /* Vorlagenbild aus der Assets.car (carimages.m legt <Name>.template daneben) */
+    if (img && [[NSFileManager defaultManager] fileExistsAtPath:[[[url path] stringByDeletingPathExtension] stringByAppendingPathExtension:@"template"]])
+        [img setTemplate:YES];
+    return img;
 }
 
 @end
