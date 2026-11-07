@@ -132,8 +132,10 @@ static void fourcc(char o[5], UInt32 v);
 // CLOKE_CA_TRACE=2: jede Abfrage (Objekt, Eigenschaft, Bereich, Ergebnis)
 static Q prop(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out, UInt32 cap) {
   Q q = prop1(obj, a, out, cap);
-  if (ca_trace() >= 2 && out) { char c[5], sc[5]; fourcc(c, a->mSelector); fourcc(sc, a->mScope);
-    fprintf(stderr, "[CoreAudio] %u '%s' '%s' -> %s\n", (unsigned)obj, c, sc, q.ok ? "ja" : "nein"); }
+  if (ca_trace() >= 2) { char c[5], sc[5]; fourcc(c, a->mSelector); fourcc(sc, a->mScope);
+    fprintf(stderr, "[CoreAudio] %s %u '%s' '%s' el %u -> %s, %u Bytes", out ? "Wert" : "Größe", (unsigned)obj, c, sc, (unsigned)a->mElement, q.ok ? "ja" : "nein", (unsigned)q.size);
+    if (out && q.ok && q.size >= 4) fprintf(stderr, " [%08x]", *(UInt32 *)out);
+    fprintf(stderr, "\n"); }
   return q;
 }
 static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out, UInt32 cap) {
@@ -171,6 +173,22 @@ static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out
       case kAudioDevicePropertyStreams:
         if (outscope) PUT(AudioObjectID, kObjStream); else q.ok = 1;   // Eingang: leere Liste
         break;
+      case 'sfm#': case 'sfmt':   // kAudioDevicePropertyStreamFormats/-Format (alte API, Logics Scan verlangt ≥ ein ASBD)
+        if (outscope) PUT(AudioStreamBasicDescription, fmt_f32()); else q.ok = 0;
+        break;
+      case kAudioDevicePropertyPreferredChannelsForStereo:
+        if (outscope) { UInt32 v[2] = { 1, 2 }; q.size = sizeof v; q.ok = 1; if (out && cap >= sizeof v) memcpy(out, v, sizeof v); }
+        break;
+      case kAudioDevicePropertyPreferredChannelLayout:
+        // Logic (ScanCoreAudioDrivers) zählt ein Gerät nur mit dieser Eigenschaft (≥ 0x28 Bytes) als Ausgang
+        if (outscope) {
+          struct { AudioChannelLayoutTag tag; AudioChannelBitmap bm; UInt32 n; AudioChannelDescription d[CHANNELS]; } l;
+          memset(&l, 0, sizeof l);
+          l.tag = kAudioChannelLayoutTag_UseChannelDescriptions; l.n = CHANNELS;
+          l.d[0].mChannelLabel = kAudioChannelLabel_Left; l.d[1].mChannelLabel = kAudioChannelLabel_Right;
+          q.size = sizeof l; q.ok = 1; if (out && cap >= sizeof l) memcpy(out, &l, sizeof l);
+        }
+        break;
       case kAudioDevicePropertyStreamConfiguration:
         if (outscope) {
           struct { UInt32 n; AudioBuffer b; } c = { 1, { CHANNELS, 0, NULL } };
@@ -190,6 +208,10 @@ static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out
       case kAudioStreamPropertyLatency: PUT(UInt32, 0); break;
       case kAudioStreamPropertyVirtualFormat: PUT(AudioStreamBasicDescription, fmt_f32()); break;   // was der IOProc liefert
       case kAudioStreamPropertyPhysicalFormat: PUT(AudioStreamBasicDescription, fmt_s16()); break;  // was /dev/dsp0 nimmt
+      case kAudioStreamPropertyAvailableVirtualFormats: PUT(AudioStreamRangedDescription, ((AudioStreamRangedDescription){ fmt_f32(), { RATE, RATE } })); break;
+      case kAudioStreamPropertyAvailablePhysicalFormats: PUT(AudioStreamRangedDescription, ((AudioStreamRangedDescription){ fmt_s16(), { RATE, RATE } })); break;
+      case kAudioStreamPropertyTerminalType: PUT(UInt32, kAudioStreamTerminalTypeSpeaker); break;
+      case kAudioStreamPropertyIsActive: PUT(UInt32, 1); break;
       default: break;
     }
   }

@@ -727,3 +727,9 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   with notes, plus a second alert (empty list, "Continue"). Auto Layout is still a stub, so sizes and some controls are off. No playback or rendering yet.
 * `crashpc` prints the first four words behind x0 and x22. `macapps/vmlogs.sh` copies via the serial console: if `logicrun.sh`'s command is still running there (wait time ≥ send timeout),
   the copy does not happen and old logs in `/var/root` are read. Keep the wait under 150 s.
+* **Logic's audio engine runs on ClokeOS.** `ScanCoreAudioDrivers` (MAAudioEngine) dropped the shim's device until it answered `kAudioDevicePropertyStreamFormats` ('sfm#',
+  at least one ASBD) and `kAudioDevicePropertyPreferredChannelLayout`; now added along with the 12 HAL functions Logic imports but the shim lacked (host time, listeners, the old
+  `AudioDeviceGetProperty`/`AudioHardwareGetProperty` API). Logic then calls `MDCoreAudioNewDriver`, creates its IOProc and starts the device. With `CLOKE_CA_DEVICE=/tmp/out.wav`
+  the shim writes a WAV in real time (125 s in a test run, valid header) – still **silent** (all samples 0); whether the transport plays is the next question.
+* Traces: `CLOKE_CA_TRACE=1|2` (CoreAudio: unknown properties | every query with value), `CLOKE_AT_TRACE=1|2` (AudioToolbox), `libclogictrace` reports Logic's driver
+  calls and dumps MAAudioEngine's device table after the scan (offsets for Logic 12.3 arm64).

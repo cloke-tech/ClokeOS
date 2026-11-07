@@ -3,6 +3,7 @@
  *   (LogicAppFramework, Swift-AppFactory). Beide werden per __interpose gemeldet, dazu jeder Aufruf von -[NSApplication setDelegate:].
  * Nur für Logic: ohne die Symbole lässt sich die Bibliothek in anderen Programmen nicht laden. */
 #include <stdio.h>
+#include <dlfcn.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
 
@@ -21,8 +22,28 @@ typedef unsigned long long u64;
         u64 r = sym(a, b, c, d, e, f, g, h); \
         fprintf(stderr, "[clogic] %s(%#llx, %#llx) -> %#llx\n", name, a, b, r); return r; }
 AE_TRACE("MDCoreAudioNewDriver", MDCoreAudioNewDriver)
-AE_TRACE("ScanCoreAudioDrivers", _Z20ScanCoreAudioDriversv)
-AE_TRACE("FindCoreAudioDriver", _Z19FindCoreAudioDriverPKc22MDAudioDriverDirection)
+extern u64 _Z20ScanCoreAudioDriversv(void) __asm__("__Z20ScanCoreAudioDriversv");
+/* Nach dem Scan: Logics Gerätetabellen in MAAudioEngine (Logic Pro 12.3, arm64; Versätze aus der Disassemblierung von
+ * FindCoreAudioDriver): Eingänge 0xf7af28/Anzahl 0xf7af48, Ausgänge 0xf7af30/0xf7af4c, Einträge 0x50 Bytes, Name bei +0, Geräte-ID +0x20/+0x24 */
+static u64 my__Z20ScanCoreAudioDriversv(void) {
+    u64 r = _Z20ScanCoreAudioDriversv();
+    Dl_info di;
+    if (dladdr((void *)_Z20ScanCoreAudioDriversv, &di) && di.dli_fbase) {
+        char *b = (char *)di.dli_fbase;
+        fprintf(stderr, "[clogic] ScanCoreAudioDrivers -> %#llx, Modus %d, Eingänge %d, Ausgänge %d\n", r, *(int *)(b + 0xf7a584), *(int *)(b + 0xf7af48), *(int *)(b + 0xf7af4c));
+        for (int dir = 0; dir < 2; dir++) {
+            char *t = *(char **)(b + (dir ? 0xf7af30 : 0xf7af28)); int n = *(int *)(b + (dir ? 0xf7af4c : 0xf7af48));
+            for (int i = 0; t && i < n && i < 8; i++)
+                fprintf(stderr, "[clogic]   %s %d: '%.40s' ids %u/%u\n", dir ? "aus" : "ein", i, t + 0x50 * i, *(unsigned *)(t + 0x50 * i + 0x20), *(unsigned *)(t + 0x50 * i + 0x24));
+        }
+    }
+    return r;
+}
+extern u64 _Z19FindCoreAudioDriverPKc22MDAudioDriverDirection(const char *, u64) __asm__("__Z19FindCoreAudioDriverPKc22MDAudioDriverDirection");
+static u64 my__Z19FindCoreAudioDriverPKc22MDAudioDriverDirection(const char *name, u64 dir) {
+    u64 r = _Z19FindCoreAudioDriverPKc22MDAudioDriverDirection(name, dir);
+    fprintf(stderr, "[clogic] FindCoreAudioDriver('%s', %llu) -> %#llx\n", name ? name : "(null)", dir, r); return r;
+}
 AE_TRACE("DriverDeviceID", _Z14DriverDeviceIDi22MDAudioDriverDirection)
 AE_TRACE("MDInitDDS", _Z9MDInitDDSv)
 AE_TRACE("MSuperclass::SetLaunchingAudioDevice", _ZN11MSuperclass23SetLaunchingAudioDeviceEb)
