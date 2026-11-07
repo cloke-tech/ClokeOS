@@ -26,7 +26,11 @@
  *            typeOfFile:error: (Typbezeichner über NSURLTypeIdentifierKey); auch in Cocotrons MacWorkspace, wo sie Platzhalter waren
  *   CAShapeLayer: path, fillColor, strokeColor, fillRule, lineCap, lineJoin, lineDashPattern (Objekte) und lineWidth, miterLimit, strokeStart,
  *            strokeEnd, lineDashPhase (CGFloat) als gespeicherte Werte mit KVC-tauglichen Zugriffsmethoden (Cocotrons Klasse ist leer; Logic Pro
- *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird damit nichts.
+ *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird in softlayers.m.
+ *   NSImage: CGImageForProposedRect:context:hints: (zeichnet in ein Bitmap), bestRepresentationForRect:context:hints:;
+ *            NSBitmapImageRep colorSpace (Gerät-RGB)
+ *   NSColor: colorWithCGColor:, colorWithHue:saturation:brightness:alpha:, colorWithDisplayP3Red:green:blue:alpha: (fehlten: nil, daraus
+ *            machte Logic Pro Farben mit Anteilen 0, also durchsichtige Schrift im Lineal und in den Spurköpfen)
  *   UTType: +_typeOfCurrentDevice (private; Logic Pro setzt dessen localizedDescription in Texte ein) liefert ein Objekt mit "Mac"/com.apple.mac
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
@@ -40,6 +44,9 @@
 #import <Foundation/NSDateFormatter.h>
 #import <AppKit/NSFont.h>
 #import <AppKit/NSColor.h>
+#import <AppKit/NSColorSpace.h>
+#import <AppKit/NSGraphicsContext.h>
+#import <AppKit/NSImageRep.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <string.h>
@@ -144,7 +151,11 @@ static id c_named_bundle(Class cls, SEL s, NSString *name, NSBundle *bundle) {
     if (![name isKindOfClass: [NSString class]]) return nil;
     NSArray *c = lookup_color(named_colors(bundle ?: [NSBundle mainBundle]), name);
     if (!c && bundle) c = lookup_color(named_colors([NSBundle mainBundle]), name);
-    if (!c) return nil;
+    if (!c) {
+        if (getenv("CLOKE_TRACE")) fprintf(stderr, "[clokeos-trace] colorNamed: %s bundle %s -> nil\n", [name UTF8String],
+                                           [[bundle bundleIdentifier] UTF8String] ?: "main");
+        return nil;
+    }
     return [NSColor colorWithCalibratedRed: [c[0] doubleValue] green: [c[1] doubleValue] blue: [c[2] doubleValue] alpha: [c[3] doubleValue]];
 }
 static id c_named_main(Class cls, SEL s, NSString *name) { return c_named_bundle(cls, s, name, nil); }
@@ -299,6 +310,49 @@ static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
         [obj setValue: value forKey: key];
 }
 
+/* +[NSColor colorWithCGColor:] und colorWithHue:saturation:brightness:alpha: fehlten in Cocotron (nil; Logic Pro baute daraus Farben mit
+ * Anteilen 0, durchsichtige Schrift). Nach Zahl der Anteile: Grau+Alpha, RGB+Alpha, CMYK+Alpha. */
+static id c_with_cgcolor(Class c, SEL s, CGColorRef cg) {
+    if (cg == NULL) return nil;
+    size_t n = CGColorGetNumberOfComponents(cg);
+    const CGFloat *k = CGColorGetComponents(cg);
+    if (n == 2) return [NSColor colorWithCalibratedWhite: k[0] alpha: k[1]];
+    if (n == 4) return [NSColor colorWithCalibratedRed: k[0] green: k[1] blue: k[2] alpha: k[3]];
+    if (n == 5) return [NSColor colorWithDeviceCyan: k[0] magenta: k[1] yellow: k[2] black: k[3] alpha: k[4]];
+    if (n == 1) return [NSColor colorWithCalibratedWhite: k[0] alpha: 1];
+    return nil;
+}
+static id c_with_hsb(Class c, SEL s, CGFloat h, CGFloat sat, CGFloat b, CGFloat a) {
+    return [NSColor colorWithCalibratedHue: h saturation: sat brightness: b alpha: a];
+}
+static id c_with_p3(Class c, SEL s, CGFloat r, CGFloat g, CGFloat b, CGFloat a) {
+    return [NSColor colorWithCalibratedRed: r green: g blue: b alpha: a];
+}
+
+/* -[NSImage CGImageForProposedRect:context:hints:] fehlte (nil; Logic Pro zeichnet so seine Spursymbole): das Bild wird in ein Bitmap der
+ * Größe des Rechtecks (ohne Angabe: Bildgröße) gezeichnet; proposedRect bekommt wie bei Apple das verwendete Rechteck. */
+static CGImageRef img_cgimage(NSImage *self, SEL s, NSRect *proposed, id ctx, NSDictionary *hints) {
+    NSSize sz = [self size];
+    NSRect r = (proposed && proposed->size.width > 0 && proposed->size.height > 0) ? *proposed : NSMakeRect(0, 0, sz.width, sz.height);
+    size_t w = (size_t) ceil(r.size.width), h = (size_t) ceil(r.size.height);
+    if (w == 0 || h == 0 || w > 8192 || h > 8192) return NULL;
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef c = CGBitmapContextCreate(NULL, w, h, 8, 0, cs, kCGImageAlphaPremultipliedFirst | kCGBitmapByteOrder32Little);
+    CGColorSpaceRelease(cs);
+    if (c == NULL) return NULL;
+    NSGraphicsContext *g = [NSGraphicsContext graphicsContextWithGraphicsPort: c flipped: NO];
+    [NSGraphicsContext saveGraphicsState];
+    [NSGraphicsContext setCurrentContext: g];
+    [self drawInRect: NSMakeRect(0, 0, w, h) fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1.0];
+    [NSGraphicsContext restoreGraphicsState];
+    CGImageRef img = CGBitmapContextCreateImage(c);
+    CGContextRelease(c);
+    if (proposed) *proposed = r;
+    return img ? (CGImageRef) [(id) img autorelease] : NULL;
+}
+static id img_best_for_rect(NSImage *self, SEL s, NSRect r, id ctx, NSDictionary *hints) { return [self bestRepresentationForDevice: nil]; }
+static id rep_colorspace(id self, SEL s) { return [NSColorSpace deviceRGBColorSpace]; }
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
@@ -318,6 +372,12 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSColor class], sel_registerName("type"), (IMP)c_type, "q@:");
     class_addMethod(cm, sel_registerName("colorNamed:bundle:"), (IMP)c_named_bundle, "@@:@@");
     class_addMethod(cm, sel_registerName("colorNamed:"), (IMP)c_named_main, "@@:@");
+    class_addMethod(cm, sel_registerName("colorWithCGColor:"), (IMP)c_with_cgcolor, "@@:^v");
+    class_addMethod([NSImage class], sel_registerName("CGImageForProposedRect:context:hints:"), (IMP)img_cgimage, "^v@:^{CGRect={CGPoint=dd}{CGSize=dd}}@@");
+    class_addMethod([NSImage class], sel_registerName("bestRepresentationForRect:context:hints:"), (IMP)img_best_for_rect, "@@:{CGRect={CGPoint=dd}{CGSize=dd}}@@");
+    class_addMethod(objc_getClass("NSBitmapImageRep"), sel_registerName("colorSpace"), (IMP)rep_colorspace, "@@:");
+    class_addMethod(cm, sel_registerName("colorWithHue:saturation:brightness:alpha:"), (IMP)c_with_hsb, "@@:dddd");
+    class_addMethod(cm, sel_registerName("colorWithDisplayP3Red:green:blue:alpha:"), (IMP)c_with_p3, "@@:dddd");
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");

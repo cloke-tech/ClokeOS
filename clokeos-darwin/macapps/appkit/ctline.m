@@ -3,15 +3,24 @@
  *
  * Einfach, aber echt: eine Zeile hält ihre Zeichenkette und teilt sie an Attributgrenzen in Läufe. Glyphen und Vorschübe kommen aus der
  * Schrift des Laufs (NSFont; CTFontCreateWithName liefert hier NSFonts), ohne Ligaturen, Kerning, bidirektionalen Text oder
- * Schriftersatz. Positionen sind die Summe der Vorschübe auf der Grundlinie. CTLineDraw zeichnet die Zeichenkette mit AppKit an der
- * Textposition des Kontexts, wenn er der aktuelle NSGraphicsContext ist; sonst nichts. AppKit wird zur Laufzeit gefunden. */
+ * Schriftersatz. Positionen sind die Summe der Vorschübe auf der Grundlinie. CTLineDraw/CTRunDraw zeichnen die Glyphen über
+ * CoreGraphics in jeden Kontext (auch CGLayer- und Bitmap-Kontexte) an der Textposition, mit Textmatrix und Füllfarbe aus den Attributen,
+ * wie Apples CoreText. CTFramesetter/CTFrame: Zeilen an Zeilenumbrüchen und, wo nötig, an Leerzeichen umbrochen, von oben im
+ * Hüllrechteck des Pfads. AppKit wird zur Laufzeit gefunden. */
 #import <Foundation/Foundation.h>
 #import <CoreText/CTLine.h>
 #import <CoreText/CTRun.h>
 #import <CoreText/CTFont.h>
 #import <CoreText/CTStringAttributes.h>
+#import <CoreText/CTFrame.h>
+#import <CoreText/CTFramesetter.h>
+#import <CoreGraphics/CoreGraphics.h>
 #import <objc/runtime.h>
 #import <objc/message.h>
+#import <stdio.h>
+#import <stdlib.h>
+#import <execinfo.h>
+#import <dlfcn.h>
 
 @interface ClkCTRun : NSObject {
 @public
@@ -190,13 +199,202 @@ CGFloat CTLineGetOffsetForStringIndex(CTLineRef line, CFIndex index, CGFloat *se
     if (secondary) *secondary = x;
     return x;
 }
+/* Schrift eines Laufs als CGFont (NSFonts _cgFont), Farbe aus kCTForegroundColorAttributeName (CGColor) oder NSForegroundColor (NSColor);
+ * kCTForegroundColorFromContextAttributeName lässt die Füllfarbe des Kontexts stehen. Ohne Angabe schwarz, wie bei Apple. */
+static void draw_run(ClkCTRun *r, CGContextRef ctx, CGPoint origin, CFIndex from, CFIndex count) {
+    if (count <= 0) return;
+    id font = run_font(r->attrs);
+    CGFontRef cg = NULL;
+    if (font) object_getInstanceVariable(font, "_cgFont", (void **) &cg);
+    static int trace = -1;
+    if (trace < 0) trace = getenv("CLOKE_CT_TRACE") != NULL;
+    if (trace) {
+        CGAffineTransform m = CGContextGetCTM(ctx), t = CGContextGetTextMatrix(ctx);
+        fprintf(stderr, "[clokeos-ct] n=%ld font=%s cg=%p at %.1f,%.1f ctm=[%.2f %.2f %.2f %.2f %.1f %.1f] tm=[%.2f %.2f %.2f %.2f] keys=%s\n",
+                (long) count, font ? class_getName(object_getClass(font)) : "nil", cg,
+                origin.x, origin.y, m.a, m.b, m.c, m.d, m.tx, m.ty, t.a, t.b, t.c, t.d,
+                [[[r->attrs allKeys] componentsJoinedByString: @","] UTF8String] ?: "");
+    }
+    if (cg == NULL) return;
+    CGContextSaveGState(ctx);
+    if (trace) {
+        CGColorRef tc = (CGColorRef) r->attrs[@"CTForegroundColor"];
+        const CGFloat *k = tc ? CGColorGetComponents(tc) : NULL;
+        size_t kn = tc ? CGColorGetNumberOfComponents(tc) : 0;
+        fprintf(stderr, "[clokeos-ct]   color n=%zu %.2f %.2f %.2f %.2f size=%.1f\n", kn, kn > 0 ? k[0] : -1, kn > 1 ? k[1] : -1,
+                kn > 2 ? k[2] : -1, kn > 3 ? k[3] : -1, fmsg(font, "pointSize"));
+        static int bts;
+        if (kn == 4 && k[3] == 0 && bts++ < 3) {   /* durchsichtige Textfarbe: wer zeichnet (Bild + Versatz) */
+            void *pcs[12];
+            int n = backtrace(pcs, 12);
+            for (int i = 1; i < n; i++) {
+                Dl_info di;
+                if (dladdr(pcs[i], &di) && di.dli_fname)
+                    fprintf(stderr, "[clokeos-ct]     %s +%#lx %s\n", strrchr(di.dli_fname, '/') ? strrchr(di.dli_fname, '/') + 1 : di.dli_fname,
+                            (unsigned long) ((char *) pcs[i] - (char *) di.dli_fbase), di.dli_sname ?: "");
+            }
+        }
+    }
+    id fromCtx = r->attrs[@"CTForegroundColorFromContext"];
+    if (!(fromCtx && [fromCtx boolValue])) {
+        CGColorRef c = (CGColorRef) r->attrs[@"CTForegroundColor"];
+        id ns = r->attrs[@"NSColor"];
+        if (c == NULL && ns && [ns respondsToSelector: sel_registerName("CGColor")]) c = (CGColorRef) msg(ns, "CGColor");
+        if (c) CGContextSetFillColorWithColor(ctx, c);
+        else CGContextSetRGBFillColor(ctx, 0, 0, 0, 1);
+    }
+    CGFloat size = fmsg(font, "pointSize");
+    CGContextSetFont(ctx, cg);
+    CGContextSetFontSize(ctx, size > 0 ? size : 12);
+    CGContextSetTextPosition(ctx, origin.x + r->positions[from].x, origin.y + r->positions[from].y);
+    CGContextShowGlyphsWithAdvances(ctx, r->glyphs + from, r->advances + from, count);
+    CGContextRestoreGState(ctx);
+}
+
 void CTLineDraw(CTLineRef line, CGContextRef context) {
     if (!line || !context) return;
-    Class gc = objc_getClass("NSGraphicsContext");
-    id cur = gc ? msg((id) gc, "currentContext") : nil;
-    if (cur == nil || (CGContextRef) msg(cur, "graphicsPort") != context) return;
     CGPoint tp = CGContextGetTextPosition(context);
-    ((void (*)(id, SEL, NSPoint)) objc_msgSend)(LINE(line)->string, sel_registerName("drawAtPoint:"), NSMakePoint(tp.x, tp.y - LINE(line)->descent));
+    for (ClkCTRun *r in LINE(line)->runs) draw_run(r, context, tp, 0, r->count);
+    CGContextSetTextPosition(context, tp.x + LINE(line)->width, tp.y);
+}
+
+void CTRunDraw(CTRunRef run, CGContextRef context, CFRange range) {
+    if (!run || !context) return;
+    CFIndex n = RUN(run)->count, from = range.location, len = range.length;
+    if (from < 0 || from >= n) return;
+    if (len <= 0 || from + len > n) len = n - from;
+    /* Positionen sind auf die Zeile bezogen; Apple zeichnet einen Lauf ebenso an Textposition + Laufposition */
+    draw_run(RUN(run), context, CGContextGetTextPosition(context), from, len);
+}
+
+/* --- CTFramesetter / CTFrame ------------------------------------------------------------------------------------------------------- */
+@interface ClkCTFramesetter : NSObject { @public NSAttributedString *string; } @end
+@implementation ClkCTFramesetter
+- (void) dealloc { [string release]; [super dealloc]; }
+@end
+@interface ClkCTFrame : NSObject {
+@public
+    NSArray *lines;
+    CGPoint *origins;
+    CFRange range, visible;
+    CGPathRef path;
+}
+@end
+@implementation ClkCTFrame
+- (void) dealloc { [lines release]; free(origins); CGPathRelease(path); [super dealloc]; }
+@end
+
+/* Zeilen von [range] mit höchstens [width] Breite (<= 0: unbegrenzt): harte Umbrüche, sonst am letzten Leerzeichen, sonst mitten im Wort */
+static NSArray *break_lines(NSAttributedString *s, CFRange range, CGFloat width, NSMutableArray *ranges) {
+    NSMutableArray *out = [NSMutableArray array];
+    NSString *t = [s string];
+    NSUInteger end = range.length > 0 ? range.location + range.length : [t length];
+    if (end > [t length]) end = [t length];
+    NSUInteger pos = range.location;
+    while (pos < end) {
+        NSUInteger hard = pos;
+        while (hard < end && [t characterAtIndex: hard] != '\n' && [t characterAtIndex: hard] != '\r' && [t characterAtIndex: hard] != 0x2028) hard++;
+        NSUInteger stop = hard;
+        if (width > 0) {
+            ClkCTLine *probe = make_line([s attributedSubstringFromRange: NSMakeRange(pos, hard - pos)]);
+            if (probe->width > width) {
+                CFIndex fit = CTLineGetStringIndexForPosition((CTLineRef) probe, CGPointMake(width, 0));
+                NSUInteger cut = pos + (fit > 0 ? (NSUInteger) fit : 1);
+                NSUInteger sp = cut;
+                while (sp > pos && [t characterAtIndex: sp - 1] != ' ') sp--;
+                stop = sp > pos ? sp : cut;
+            }
+            [probe release];
+        }
+        NSRange lr = NSMakeRange(pos, stop - pos);
+        ClkCTLine *line = make_line([s attributedSubstringFromRange: lr]);
+        /* Indizes der Läufe auf die ganze Zeichenkette beziehen */
+        for (ClkCTRun *r in line->runs) {
+            r->range.location += pos;
+            for (CFIndex k = 0; k < r->count; k++) r->indices[k] += pos;
+        }
+        [out addObject: line];
+        [line release];
+        [ranges addObject: [NSValue valueWithRange: lr]];
+        pos = stop;
+        if (pos == hard && pos < end) pos++;   /* Zeilenumbruch selbst überspringen */
+    }
+    return out;
+}
+
+CFTypeID CTFramesetterGetTypeID(void) { return 0; }
+CFTypeID CTFrameGetTypeID(void) { return 0; }
+CTFramesetterRef CTFramesetterCreateWithAttributedString(CFAttributedStringRef s) {
+    if (!s) return NULL;
+    ClkCTFramesetter *f = [ClkCTFramesetter new];
+    f->string = [(NSAttributedString *) s copy];
+    return (CTFramesetterRef) f;
+}
+CTFramesetterRef CTFramesetterCreateWithTypesetter(CTTypesetterRef typesetter) { return NULL; }
+CTTypesetterRef CTFramesetterGetTypesetter(CTFramesetterRef framesetter) { return NULL; }
+
+CTFrameRef CTFramesetterCreateFrame(CTFramesetterRef fs, CFRange range, CGPathRef path, CFDictionaryRef attrs) {
+    if (!fs) return NULL;
+    CGRect box = path ? CGPathGetBoundingBox(path) : CGRectMake(0, 0, 1e6, 1e6);
+    NSMutableArray *ranges = [NSMutableArray array];
+    NSArray *lines = break_lines(((ClkCTFramesetter *) fs)->string, range, box.size.width, ranges);
+    ClkCTFrame *f = [ClkCTFrame new];
+    f->origins = calloc([lines count] + 1, sizeof(CGPoint));
+    CGFloat y = CGRectGetMaxY(box);
+    NSUInteger shown = 0;
+    for (ClkCTLine *l in lines) {
+        y -= l->ascent;
+        if (y - l->descent < CGRectGetMinY(box) - 0.5 && shown > 0) break;
+        f->origins[shown++] = CGPointMake(box.origin.x, y);
+        y -= l->descent + l->leading;
+    }
+    f->lines = [[lines subarrayWithRange: NSMakeRange(0, shown)] retain];
+    f->path = path ? CGPathRetain(path) : NULL;
+    NSUInteger n = [[((ClkCTFramesetter *) fs)->string string] length];
+    f->range = CFRangeMake(range.location, range.length > 0 ? range.length : (CFIndex) (n - range.location));
+    NSRange last = shown ? [ranges[shown - 1] rangeValue] : NSMakeRange(range.location, 0);
+    f->visible = CFRangeMake(range.location, (CFIndex) (NSMaxRange(last) - range.location));
+    return (CTFrameRef) f;
+}
+
+CGSize CTFramesetterSuggestFrameSizeWithConstraints(CTFramesetterRef fs, CFRange range, CFDictionaryRef attrs, CGSize constraints, CFRange *fitRange) {
+    if (!fs) { if (fitRange) *fitRange = CFRangeMake(0, 0); return CGSizeZero; }
+    NSMutableArray *ranges = [NSMutableArray array];
+    NSArray *lines = break_lines(((ClkCTFramesetter *) fs)->string, range, constraints.width < 1e5 ? constraints.width : 0, ranges);
+    CGFloat w = 0, h = 0;
+    NSUInteger shown = 0;
+    for (ClkCTLine *l in lines) {
+        CGFloat lh = l->ascent + l->descent + l->leading;
+        if (constraints.height > 0 && constraints.height < 1e5 && h + lh > constraints.height + 0.5 && shown > 0) break;
+        h += lh; if (l->width > w) w = l->width; shown++;
+    }
+    if (fitRange) {
+        NSRange last = shown ? [ranges[shown - 1] rangeValue] : NSMakeRange(range.location, 0);
+        *fitRange = CFRangeMake(range.location, (CFIndex) (NSMaxRange(last) - range.location));
+    }
+    return CGSizeMake(ceil(w), ceil(h));
+}
+
+CFRange CTFrameGetStringRange(CTFrameRef f) { return f ? ((ClkCTFrame *) f)->range : CFRangeMake(0, 0); }
+CFRange CTFrameGetVisibleStringRange(CTFrameRef f) { return f ? ((ClkCTFrame *) f)->visible : CFRangeMake(0, 0); }
+CGPathRef CTFrameGetPath(CTFrameRef f) { return f ? ((ClkCTFrame *) f)->path : NULL; }
+CFDictionaryRef CTFrameGetFrameAttributes(CTFrameRef f) { return NULL; }
+CFArrayRef CTFrameGetLines(CTFrameRef f) { return f ? (CFArrayRef) ((ClkCTFrame *) f)->lines : (CFArrayRef) [NSArray array]; }
+void CTFrameGetLineOrigins(CTFrameRef f, CFRange range, CGPoint origins[]) {
+    if (!f || !origins) return;
+    CFIndex n = [((ClkCTFrame *) f)->lines count];
+    CFIndex len = range.length > 0 ? range.length : n - range.location;
+    for (CFIndex i = 0; i < len && range.location + i < n; i++) origins[i] = ((ClkCTFrame *) f)->origins[range.location + i];
+}
+void CTFrameDraw(CTFrameRef f, CGContextRef ctx) {
+    if (!f || !ctx) return;
+    ClkCTFrame *fr = (ClkCTFrame *) f;
+    CFIndex i = 0;
+    for (ClkCTLine *l in fr->lines) {
+        CGContextSetTextPosition(ctx, fr->origins[i].x, fr->origins[i].y);
+        CTLineDraw((CTLineRef) l, ctx);
+        i++;
+    }
 }
 
 CFIndex CTRunGetGlyphCount(CTRunRef run) { return run ? RUN(run)->count : 0; }
@@ -251,4 +449,3 @@ void CTRunGetBaseAdvancesAndOrigins(CTRunRef run, CFRange range, CGSize *adv, CG
     range = clamp(run, range);
     if (origins) for (CFIndex i = 0; i < range.length; i++) origins[i] = CGPointZero;
 }
-void CTRunDraw(CTRunRef run, CGContextRef context, CFRange range) {}

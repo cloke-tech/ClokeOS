@@ -881,3 +881,41 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * **Result on ClokeOS:** the guitar chains now run (Guitar Amp, speaker/mic, Pedalboard with Chorus/Echo/Overdrive/Flanger). Whole-song bounce vs the
   Mac's: every octave band within 0.1 dB, envelope correlation 0.94 (2:16 vs 2:21; the Mac bounce has a longer tail). Not checked track by track yet
   (remote track selection is unreliable).
+
+### Round 52: the project window draws (much) more like the Mac
+
+Logic's window was drawn wrong (empty track headers, black arrange area, white inspector tables, empty control bar). Compared with
+Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/Darling, fixed globally (no Logic-specific code):
+
+* **Asset colours:** Logic writes its colours as `"{r,g,b,a}"` / `"{gray,alpha}"` and parses them with `NSRectFromString`/`NSPointFromString`.
+  Darling only accepted `{{x, y}, {w, h}}` (and scanned floats into CGFloat fields), so every asset colour was (0,0,0,0): invisible
+  text, missing tints. Now the numbers are read in order like Apple's (checked on the Mac; `darling-foundation/src/NSGeometry.m.sed`).
+* **Missing NSColor API:** `colorWithCGColor:`, `colorWithHue:saturation:brightness:alpha:`, `colorWithDisplayP3Red:…` (modern.m);
+  catalog colours forward `getRed:…`/`getComponents:`/`colorWithAlphaComponent:` to their real colour; base `colorWithAlphaComponent:`
+  returned nil for alpha < 1.
+* **Onyx2D/CoreGraphics:** `CGContextGetClipBoundingBox` was always empty; `CGLayerCreateWithContext` called a method that does not
+  exist (every CGLayer had no context); `CGGradient` returned NULL and linear/radial gradients, `CGContextDrawTiledImage`,
+  `CGContextShowGlyphsAtPositions` were stubs (`appkit/cggradient.m`); `convertRectToUser/DeviceSpace`.
+* **CoreText:** `CTLineDraw` only drew into the current NSGraphicsContext; now glyphs go through CoreGraphics into any context
+  (CGLayer, bitmap) with the attribute colour; `CTRunDraw`; simple CTFramesetter/CTFrame (line breaks at newlines/spaces).
+* **AppKit:** no layout pass at all (`setNeedsLayout:`, `layout`, `layoutSubtreeIfNeeded` before each display: `appkit/layout.m`);
+  layers drawn in software without OpenGL (background, contents, `updateLayer`, sublayers, CATextLayer/CAShapeLayer/CAGradientLayer:
+  `appkit/softlayers.m`); `NSDrawThreePartImage`/`NinePartImage`; `ancestorSharedWithView:`; `drawInRect:…respectFlipped:hints:`;
+  `-[NSImage CGImageForProposedRect:context:hints:]`; table cells from `tableView:dataCellForTableColumn:row:` / the outline variant,
+  values via `setObjectValue:`; NSCell's numeric setters no longer call an overridden `setObjectValue:` (Apple doesn't; Logic's
+  panner cell recursed until the stack overflowed); NSPopUpButtonCell value setters; `NSSplitView` `setPosition:ofDividerAtIndex:` clamped
+  widths to coordinates, `arrangedSubviews`/`removeArrangedSubview:` (Logic removes the Live Loops pane that way).
+* **Appearance:** `NSAppearance` was a stub. Mac apps now follow ClokeOS' system appearance like on macOS (`CLOKEOS_DARK` from
+  CloakServer, else `AppleInterfaceStyle`), with dark system colours (`appkit/appearance.m`); custom appearances (Logic's
+  `MALogicAppearance`) follow the system.
+* **Result (system dark):** ruler numbers, track names (`Evolving Shades`, `SoCal | Ch1` …), button outlines in the track headers,
+  regions over the full arrange width (Live Loops pane narrower), dark inspector with Logic's own cells (check boxes, pop-ups,
+  disclosure triangles), LCD shows the key. Screenshots are not in the repository (Logic content).
+* **Still open:** instrument icons and M/S/I/transport glyphs (`Vector Glyph` assets in Assets.car are not extracted; the transport
+  shows button titles instead), pop-up values (Logic's `MyPopUpButtonCell` shows an empty title), sliders/knobs in the track headers,
+  control bar background, a remaining narrow Live Loops strip, dialog text fields (item 5) and the display freeze after dialogs
+  (item 6) not looked at.
+* Traces: `CLOKE_CT_TRACE=1` (CTLineDraw font/colour/position, call chain for transparent colours), `CLOKE_CG_TRACE=1` (call chain of
+  CGColors created as (0,0,0,0)), `CLOKE_LAYER_TRACE=1` (layer background per view); `CLOKE_TRACE` logs `colorNamed:` misses,
+  transparent MAAsset colours with their source string; F12 dump shows table delegates, prepared cells and backgrounds.
+* Trap: two scripts typing into the same VM serial console at once garble each other (zsh stuck in a `dquote>` prompt).

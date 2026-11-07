@@ -240,15 +240,16 @@ framework Onyx2D A 1 1 "$obj/o2" "$cf" "$fnd" "${sys[@]}" "$pd/usr/lib/libz.1.dy
 
 # --- CoreGraphics ------------------------------------------------------------------------------
 echo "Baue CoreGraphics"
-sources CoreGraphics CoreGraphics_sources > "$obj/cg.list"
-printf "%s\n" "$M/appkit/sysstubs.c" "$M/appkit/cgsprivate.c" >> "$obj/cg.list"
+# CGGradient.m ist ein Platzhalter (NULL); appkit/cggradient.m setzt CGGradient und die Verlaufs-/Kachelfunktionen um
+sources CoreGraphics CoreGraphics_sources | grep -vE '(^|/)CGGradient\.m$' > "$obj/cg.list"
+printf "%s\n" "$M/appkit/sysstubs.c" "$M/appkit/cgsprivate.c" "$M/appkit/cggradient.m" >> "$obj/cg.list"
 compile_all "$obj/cg" "$src/CoreGraphics" "$obj/cg.list" -I"$src/CoreGraphics" -I"$src/CoreText"
 framework CoreGraphics A 64 1070.22 "$obj/cg" "$(fwlib Onyx2D)" "$cf" "$fnd" "${sys[@]}"
 
 # --- CoreText ----------------------------------------------------------------------------------
 echo "Baue CoreText"
-# CTLine.m/CTRun.m sind nur Platzhalter (NULL-Ergebnisse); appkit/ctline.m setzt beide um
-sources CoreText CoreText_sources | grep -vE '(^|/)CT(Line|Run)\.m$' > "$obj/ct.list"
+# CTLine.m/CTRun.m/CTFrame.m/CTFrameSetter.m sind nur Platzhalter (NULL-Ergebnisse); appkit/ctline.m setzt sie um
+sources CoreText CoreText_sources | grep -vE '(^|/)CT(Line|Run|Frame|FrameSetter)\.m$' > "$obj/ct.list"
 echo "$M/appkit/ctline.m" >> "$obj/ct.list"
 compile_all "$obj/ct" "$src/CoreText" "$obj/ct.list" -I"$src/CoreText"
 framework CoreText A 1 1 "$obj/ct" "$(fwlib CoreGraphics)" "$(fwlib Onyx2D)" "$cf" "$fnd" "${sys[@]}" \
@@ -316,7 +317,7 @@ framework Cocoa A 1 22 "$obj/cc" -Wl,-reexport_library,"$(fwlib AppKit)" -Wl,-re
 # --- X11-Backends ------------------------------------------------------------------------------
 echo "Baue X11-Backends"
 sed -n '/^add_backend(X11/,/INFO_PLIST/p' "$src/AppKit/CMakeLists.txt" | grep -oE 'X11\.backend/[A-Za-z0-9_]+\.m' > "$obj/akx.list"
-printf '%s\n' "$M/appkit/x11present.m" "$M/appkit/clokemenu.m" "$M/appkit/nsbundle_images.m" "$M/appkit/lenient.m" "$M/appkit/titlebar.m" "$M/appkit/xkbrules.c" "$M/appkit/sysstubs.c" >> "$obj/akx.list"
+printf '%s\n' "$M/appkit/x11present.m" "$M/appkit/clokemenu.m" "$M/appkit/nsbundle_images.m" "$M/appkit/lenient.m" "$M/appkit/layout.m" "$M/appkit/softlayers.m" "$M/appkit/appearance.m" "$M/appkit/titlebar.m" "$M/appkit/xkbrules.c" "$M/appkit/sysstubs.c" >> "$obj/akx.list"
 compile_all "$obj/akx" "$src/AppKit" "$obj/akx.list" "${ak[@]}"
 backend AppKit C "$obj/akx" "$(fwlib AppKit)" "$(fwlib Onyx2D)" "$(fwlib CoreGraphics)" "$(fwlib QuartzCore)" \
   "$fnd" "$cf" "${sys[@]}" "${x11[@]}"

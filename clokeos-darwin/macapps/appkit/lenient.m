@@ -6,6 +6,7 @@
  * Liegt im X11-Backend (macapps/appkit.sh), das AppKit beim Start lädt. */
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -60,6 +61,8 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
 #import <AppKit/NSFont.h>
 #import <AppKit/NSControl.h>
 #import <AppKit/NSCell.h>
+#import <AppKit/NSTableView.h>
+#import <QuartzCore/CALayer.h>
 @interface CKTrace : NSObject
 @end
 @implementation CKTrace
@@ -143,7 +146,45 @@ static void ck_dumpview(id v, int depth) {
             ck_overrides(object_getClass(v), @selector(drawRect:)) ? " drawRect" : "",
             ck_overrides(object_getClass(v), @selector(updateLayer)) ? " updateLayer" : "",
             [v respondsToSelector: @selector(stringValue)] && [v isKindOfClass: [NSControl class]] ? " ctl" : "");
-    if (depth >= 14) return;
+    /* Tabellen: Delegat und welche Zeichenwege er anbietet (zellen- oder ansichtsbasiert) */
+    if ([v isKindOfClass: [NSTableView class]]) {
+        id d = [v delegate];
+        static const char *const sels[] = {"tableView:viewForTableColumn:row:", "outlineView:viewForTableColumn:item:",
+            "tableView:dataCellForTableColumn:row:", "outlineView:dataCellForTableColumn:item:", "tableView:rowViewForRow:",
+            "outlineView:rowViewForItem:", "tableView:willDisplayCell:forTableColumn:row:"};
+        fprintf(stderr, "[viewdump] %*s  delegate %s rows=%ld cols=%ld:", depth * 2, "", d ? class_getName(object_getClass(d)) : "nil",
+                (long)[v numberOfRows], (long)[[v tableColumns] count]);
+        for (unsigned i = 0; i < sizeof sels / sizeof *sels; i++)
+            if ([d respondsToSelector: sel_registerName(sels[i])]) fprintf(stderr, " %s", sels[i]);
+        fprintf(stderr, "\n");
+        {   /* Hintergrund: Tabelle, Clip- und Scroll-Ansicht */
+            NSColor *bg = [v backgroundColor];
+            id clip = [v superview], scroll = [clip superview];
+            fprintf(stderr, "[viewdump] %*s  table bg=%s alt=%d grid=%lu clip=%s draws=%d bg=%s scroll draws=%d\n", depth * 2, "",
+                    [[bg description] UTF8String] ?: "nil", (int)[v usesAlternatingRowBackgroundColors], (unsigned long)[v gridStyleMask],
+                    class_getName(object_getClass(clip)), [clip respondsToSelector: @selector(drawsBackground)] ? (int)[clip drawsBackground] : -1,
+                    [clip respondsToSelector: @selector(backgroundColor)] ? [[[clip backgroundColor] description] UTF8String] ?: "nil" : "-",
+                    [scroll respondsToSelector: @selector(drawsBackground)] ? (int)[scroll drawsBackground] : -1);
+        }
+        /* je Zeile die vorbereitete Zelle (Klasse, Titel, Wert), höchstens 12 Zeilen */
+        NSInteger rows = MIN((NSInteger)[v numberOfRows], 12), cols = (NSInteger)[[v tableColumns] count];
+        for (NSInteger r = 0; r < rows; r++)
+            for (NSInteger c = 0; c < cols; c++) {
+                NSCell *cell = nil;
+                @try { cell = [v preparedCellAtColumn: c row: r]; } @catch (id e) {}
+                if (!cell) continue;
+                id t = [cell respondsToSelector: @selector(titleOfSelectedItem)] ? [(id)cell titleOfSelectedItem]
+                     : [cell respondsToSelector: @selector(title)] ? [(id)cell title] : nil;
+                fprintf(stderr, "[viewdump] %*s    [%ld,%ld] %s title=\"%s\" value=%s\n", depth * 2, "", (long)r, (long)c,
+                        class_getName(object_getClass(cell)), [[t description] UTF8String] ?: "",
+                        [[[[cell objectValue] description] substringToIndex: MIN((NSUInteger)40, [[[cell objectValue] description] length])] UTF8String] ?: "nil");
+            }
+    }
+    /* Ebene mit eigenen Unterebenen (nicht von Unteransichten) */
+    CALayer *L = [v respondsToSelector: @selector(layer)] ? [v layer] : nil;
+    if (L != nil && [[L sublayers] count])
+        fprintf(stderr, "[viewdump] %*s  layer %s sublayers=%lu\n", depth * 2, "", class_getName(object_getClass(L)), (unsigned long)[[L sublayers] count]);
+    if (depth >= 18) return;
     for (id sub in [v subviews]) ck_dumpview(sub, depth + 1);
 }
 static void ck_dumpwindows(void) {
@@ -212,10 +253,41 @@ static id h_colsec(id s, SEL c, id section, id name) {
 }
 static id h_asset(id s, SEL c, id name, id set, id family) {
     id r = ((id (*)(id, SEL, id, id, id))o_asset)(s, c, name, set, family);
+    if ([r isKindOfClass: [NSColor class]] && [r respondsToSelector: @selector(alphaComponent)] && ((CGFloat (*)(id, SEL)) objc_msgSend)(r, @selector(alphaComponent)) == 0) {
+        static NSMutableSet *seen;   /* durchsichtige Farb-Assets je Name einmal */
+        if (!seen) seen = [NSMutableSet new];
+        NSString *k = [NSString stringWithFormat: @"%@|%@|%@", name, set, family];
+        if (![seen containsObject: k]) {
+            [seen addObject: k];
+            fprintf(stderr, "[clokeos-trace] MAAssetManager asset %s set %s family %s -> durchsichtig %s\n", [[name description] UTF8String] ?: "",
+                    [[set description] UTF8String] ?: "", [[family description] UTF8String] ?: "", [[r description] UTF8String] ?: "");
+        }
+    }
     if (r == nil) fprintf(stderr, "[clokeos-trace] MAAssetManager asset %s set %s family %s -> nil\n", [[name description] UTF8String] ?: "",
                           [[set description] UTF8String] ?: "", [[family description] UTF8String] ?: "");
     return r;
 }
+/* Logic Pro (MACore): Farbtexte der Assets -> Farbe; durchsichtige Ergebnisse mit dem Text melden (je Text einmal) */
+static IMP o_colstr[4];
+static id h_colstr_n(int i, id s, SEL c, id str) {
+    id r = ((id (*)(id, SEL, id))o_colstr[i])(s, c, str);
+    CGFloat a = -1;
+    if ([r isKindOfClass: [NSColor class]]) a = ((CGFloat (*)(id, SEL)) objc_msgSend)(r, @selector(alphaComponent));
+    else if (r && strcmp(class_getName(object_getClass(r)), "O2Color") == 0) a = CGColorGetAlpha((CGColorRef) r);
+    if (a == 0) {
+        static NSMutableSet *seen;
+        if (!seen) seen = [NSMutableSet new];
+        if (![seen containsObject: str ?: @""]) {
+            [seen addObject: str ?: @""];
+            fprintf(stderr, "[clokeos-trace] %s createFromString \"%s\" -> durchsichtig\n", class_getName(object_getClass(s)), [[str description] UTF8String] ?: "");
+        }
+    }
+    return r;
+}
+static id h_colstr0(id s, SEL c, id t) { return h_colstr_n(0, s, c, t); }
+static id h_colstr1(id s, SEL c, id t) { return h_colstr_n(1, s, c, t); }
+static id h_colstr2(id s, SEL c, id t) { return h_colstr_n(2, s, c, t); }
+static id h_colstr3(id s, SEL c, id t) { return h_colstr_n(3, s, c, t); }
 static id h_nsfont(id s, SEL c, NSString *name, CGFloat size) {
     id r = ((id (*)(id, SEL, id, CGFloat))o_nsfont)(s, c, name, size);
     if (r == nil) fprintf(stderr, "[clokeos-trace] NSFont %s %.1f -> nil\n", [name UTF8String] ?: "(nil)", size);
@@ -300,6 +372,18 @@ static id h_docinitalt(id s, SEL c, NSURL *u, NSString *t, NSInteger alt, NSErro
       if (!m) m = class_getInstanceMethod(mc, @selector(fontWithName:size:)); if (m) o_mafont = method_setImplementation(m, (IMP)h_mafont); }
     { Method m = class_getClassMethod(NSClassFromString(@"MAKitColor"), @selector(colorFromSectionUncached:withName:)); if (m) o_colsec = method_setImplementation(m, (IMP)h_colsec); }
     { Method m = class_getInstanceMethod(NSClassFromString(@"MAAssetManager"), @selector(assetWithName:fromAssetSet:fromFamily:)); if (m) o_asset = method_setImplementation(m, (IMP)h_asset); }
+    {
+        const char *cls[4] = { "MAAssetTypeSRGBColorCreator", "MAAssetTypeNSColorCreator", "MAAssetTypeGrayColorCreator", "MAAssetTypeSRGBFloatColorCreator" };
+        IMP hs[4] = { (IMP)h_colstr0, (IMP)h_colstr1, (IMP)h_colstr2, (IMP)h_colstr3 };
+        for (int i = 0; i < 4; i++) {
+            Class k = objc_getClass(cls[i]);
+            /* nur die eigene Methode der Klasse, nicht die geerbte */
+            unsigned n = 0; Method *ms = k ? class_copyMethodList(k, &n) : NULL;
+            for (unsigned j = 0; j < n; j++)
+                if (method_getName(ms[j]) == @selector(createFromString:)) o_colstr[i] = method_setImplementation(ms[j], hs[i]);
+            free(ms);
+        }
+    }
     { Method m = class_getClassMethod(NSClassFromString(@"NSAlert"), @selector(alertWithError:)); if (m) o_alerterr = method_setImplementation(m, (IMP)h_alerterr); }
     o_nserr = ck_hook([NSError class], @selector(initWithDomain:code:userInfo:), (IMP)h_nserr);
     o_hide = ck_hook(NSClassFromString(@"X11Window"), @selector(hideWindow), (IMP)h_hide);
