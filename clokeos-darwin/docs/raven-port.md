@@ -311,4 +311,6 @@ Start Menu of the tree and the current user's. A prefix from before (`drive_c`, 
 `Program Files` but registered only for that user; files Raven copies into `/NT/Windows` belong to the first user. Checked in the VM
 with a hand-made `/NT` (775, `Users` 1777): `dir C:\` lists the tree, `/NT/Users/root` got its folders and symbolic links. The account code was checked in
 parts: CloakServer builds with it (`cloakserver/build.sh`), the `setup.c` block run alone made the folder and links, and the
-`brand.sh` debugfs commands made the same on a scratch ext4 image. Not done: a full image build and a real account creation in the VM.
+`brand.sh` debugfs commands made the same on a scratch ext4 image. Image build (brand.sh for the desktop image, with the Raven part taken from the tested binaries instead of
+rebuilt): `/NT` (775 staff, `Users` 1777) and `/NT/Users/guest` with `AppData` and the six links are in the image; a first Raven run
+filled `/NT/Windows`, `Program Files` ... (775) and `dir C:\` listed them. Not done: account creation through the setup assistant.
