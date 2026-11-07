@@ -47,6 +47,11 @@
     /* Vorlagenbild aus der Assets.car (carimages.m legt <Name>.template daneben) */
     if (img && [[NSFileManager defaultManager] fileExistsAtPath:[[[url path] stringByDeletingPathExtension] stringByAppendingPathExtension:@"template"]])
         [img setTemplate:YES];
+    static int trace = -1;
+    if (trace < 0) trace = getenv("CLOKE_IMAGE_TRACE") != NULL;
+    if (trace)   /* CLOKE_IMAGE_TRACE: welches Bundle nach welchem Bild gefragt wird und was es findet (Fehlersuche) */
+        NSLog(@"[clokeos-bundleimage] %@ %@ -> %@ %@", [[self bundlePath] lastPathComponent], name, url ? [url path] : @"fehlt",
+              img ? NSStringFromSize([img size]) : @"");
     return img;
 }
 

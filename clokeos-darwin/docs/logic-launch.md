@@ -985,3 +985,18 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
   images are not found yet: they are in no `.car` file), M/S/I letters (`CharacterRGBImage/M`, `/S` are looked up and exist in no
   asset catalog, so Logic generates them some other way).
 
+### Round 56: instrument icons in the track headers
+
+* **Cause 1 – `bestRepresentationForRect:context:hints:`** answered with Cocotron's `bestRepresentationForDevice:`, which can return the
+  image's `NSCachedImageRep`. Logic tints bitmap icons with `-[NSImage ma_imageRep:tintedWithColor:]` (MACore; CoreGraphics: bitmap
+  context, draw, `SourceAtop` fill), which accepts only an `NSBitmapImageRep` and otherwise returns nil, so nothing was drawn. It now
+  picks among the image's own representations like AppKit (smallest that covers the rect, else the largest, never the cache).
+* **Cause 2 – `-[NSImage drawInRect:]`** (macOS 10.9) was missing. Logic draws SVG icons (e.g. `Icon_e_synth_1`, exported as a white
+  glyph) in a drawing handler with `drawInRect:` + `NSRectFillUsingOperation(…, SourceAtop)` in the track colour; under `CLOKE_LENIENT`
+  the call was swallowed. Added in `modern.m`.
+* Result: drum, bass, guitar and synth icons show in the track headers (synths tinted in the track colour) and in the inspector.
+* Checked step by step with a Mac-SDK probe in the VM (bitmap tint, squaring via `imageWithSize:flipped:drawingHandler:` +
+  `CGImageForProposedRect:`, SVG branch); bytes match the Mac.
+* `CLOKE_IMAGE_TRACE=1` logs every `-[NSBundle imageForResource:]` (bundle, name, file found, size).
+* Found on the way, not fixed: Onyx2D treats `kCGBitmapByteOrderDefault` as little-endian for 8-bit RGBA images and contexts; Apple
+  treats it as byte order (RGBA in memory). Raw bytes written by apps with default order are read with swapped channels.

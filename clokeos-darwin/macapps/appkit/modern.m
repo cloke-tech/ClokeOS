@@ -31,7 +31,8 @@
  *   CAShapeLayer: path, fillColor, strokeColor, fillRule, lineCap, lineJoin, lineDashPattern (Objekte) und lineWidth, miterLimit, strokeStart,
  *            strokeEnd, lineDashPhase (CGFloat) als gespeicherte Werte mit KVC-tauglichen Zugriffsmethoden (Cocotrons Klasse ist leer; Logic Pro
  *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird in softlayers.m.
- *   NSImage: CGImageForProposedRect:context:hints: (zeichnet in ein Bitmap), bestRepresentationForRect:context:hints:;
+ *   NSImage: CGImageForProposedRect:context:hints: (zeichnet in ein Bitmap), bestRepresentationForRect:context:hints: (eigene Darstellung,
+ *            kein Zwischenspeicher), drawInRect:;
  *            _clkTintedWithColor: (eingefärbte Kopie für Vorlagenbilder in Zellen);
  *            NSBitmapImageRep colorSpace (Gerät-RGB)
  *   NSColor: colorWithCGColor:, colorWithHue:saturation:brightness:alpha:, colorWithDisplayP3Red:green:blue:alpha: (fehlten: nil, daraus
@@ -225,6 +226,12 @@ static id img_with_handler(Class c, SEL s, NSSize size, BOOL flipped, BOOL (^han
     return img;
 }
 
+/* -[NSImage drawInRect:] (macOS 10.9) fehlte; wie bei Apple Quelle über, ganzes Bild, Spiegelung beachtet. Logic Pro zeichnet so seine
+ * SVG-Instrumentensymbole (im Nachsichtmodus blieb der Aufruf folgenlos, die Symbole leer). */
+static void img_draw_in_rect(NSImage *self, SEL s, NSRect r) {
+    [self drawInRect: r fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1.0 respectFlipped: YES hints: nil];
+}
+
 static IMP o_image_named;
 static NSImage *asset_png(NSBundle *b, NSString *name) {
     if (b == nil || ![name isKindOfClass: [NSString class]] || [name length] == 0) return nil;
@@ -384,7 +391,23 @@ static CGImageRef img_cgimage(NSImage *self, SEL s, NSRect *proposed, id ctx, NS
     if (proposed) *proposed = r;
     return img ? (CGImageRef) [(id) img autorelease] : NULL;
 }
-static id img_best_for_rect(NSImage *self, SEL s, NSRect r, id ctx, NSDictionary *hints) { return [self bestRepresentationForDevice: nil]; }
+/* -[NSImage bestRepresentationForRect:context:hints:] wählt wie bei Apple unter den eigenen Darstellungen (nie Cocotrons Zwischenspeicher
+ * NSCachedImageRep, den bestRepresentationForDevice: liefern kann): die kleinste, deren Pixel das Rechteck abdecken, sonst die größte.
+ * Logic Pros Symbolfärbung (-[NSImage ma_imageRep:tintedWithColor:]) nimmt nur NSBitmapImageRep an; mit dem Zwischenspeicher blieben
+ * die Instrumentensymbole leer. */
+static id img_best_for_rect(NSImage *self, SEL s, NSRect r, id ctx, NSDictionary *hints) {
+    NSArray *reps = [self representations];
+    NSImageRep *best = nil, *largest = nil;
+    double need = r.size.width * r.size.height;
+    for (NSImageRep *rep in reps) {
+        if ([rep isKindOfClass: objc_getClass("NSCachedImageRep")] && [reps count] > 1) continue;
+        double px = (double) [rep pixelsWide] * [rep pixelsHigh];
+        if (px <= 0) px = [rep size].width * [rep size].height;
+        if (largest == nil || px > (double) [largest pixelsWide] * [largest pixelsHigh]) largest = rep;
+        if (px >= need && (best == nil || px < (double) [best pixelsWide] * [best pixelsHigh])) best = rep;
+    }
+    return best ?: largest ?: [self bestRepresentationForDevice: nil];
+}
 static id rep_colorspace(id self, SEL s) { return [NSColorSpace deviceRGBColorSpace]; }
 
 /* -[NSCell _contents] (privat bei Apple, Logic Pros MAButtonCell & Co. rufen es auf): der rohe Inhalt der Zelle, wie auf dem Mac
@@ -576,6 +599,7 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(objc_getClass("CALayer"), sel_registerName("setContentsScale:"), (IMP)ignore_scale, "v@:d");
     class_addMethod(object_getClass([NSDate class]), sel_registerName("now"), (IMP)date_now, "@@:");
     class_addMethod([NSImage class], sel_registerName("imageWithSymbolConfiguration:"), (IMP)img_self, "@@:@");
+    class_addMethod([NSImage class], sel_registerName("drawInRect:"), (IMP)img_draw_in_rect, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(object_getClass([NSImage class]), sel_registerName("imageWithSize:flipped:drawingHandler:"), (IMP)img_with_handler, "@@:{CGSize=dd}c@?");
     class_addMethod(objc_getClass("NSFontDescriptor"), sel_registerName("fontDescriptorWithDesign:"), (IMP)fd_design, "@@:@");
     class_addMethod([NSFont class], sel_registerName("boundingRect"), (IMP)font_bounds, "{CGRect={CGPoint=dd}{CGSize=dd}}@:");
