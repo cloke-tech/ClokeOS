@@ -28,7 +28,21 @@ typedef struct JitCtx {
 	uint64_t delta;            // 232  Host-Adresse = Gast-Adresse + delta
 	uint64_t jcache;           // 240
 	uint64_t fb_end;           // 248  JIT_FALLBACK/FAULT: Adresse hinter dem letzten Befehl, den Unicorn ausführen soll (uc_emu_start 'until')
-} JitCtx;
+	uint8_t xmm[16][16];       // 256  XMM0..15 (im JIT-Code in v0..v15)
+	uint32_t mxcsr, pad0[3];   // 512
+	uint64_t k_w[2];           // 528  Konstante für pmovmskb: Bytegewichte 1,2,4,..,128,1,..,128 (v31)
+	uint32_t k_i[4];           // 544  Konstante für movmskps: 0,1,2,3 (v30)
+	uint64_t x87_top, pad1;    // 560  x87: Stapelspitze (0..7)
+	double st[8];              // 576  x87-Register (physisch, nicht relativ zur Spitze)
+	uint16_t fcw, fsw, ftw;    // 640  x87: Steuer-, Statuswort (ohne TOP), Tag-Wort (0 = leer .. 1 = belegt, je Register ein Bit)
+	uint16_t pad2;
+} __attribute__((aligned(16))) JitCtx;
+#define C_XMM 256
+#define C_MXCSR 512
+#define C_KW 528
+#define C_KI 544
+#define C_X87TOP 560
+#define C_ST 576
 
 uint64_t jit_guest_limit(void);                   // Gastadressen müssen darunter liegen (Größe des Fensters, 16 GiB bis 256 GiB; 0 = nicht verfügbar)
 

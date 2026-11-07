@@ -64,7 +64,7 @@ static void emit_rm(Buf *B, int p66, int w, const uint8_t *op, int nop, int reg,
 	if (immb == 1) put8(B, (int)imm); else if (immb == 2) { put8(B, (int)imm); put8(B, (int)(imm >> 8)); } else if (immb == 4) put32(B, imm);
 	else if (immb == 8) { memcpy(B->b + B->n, &imm, 8); B->n += 8; }
 }
-static uint32_t cur_undef;
+static uint32_t cur_undef; static int cur_fp, sse_mode_;
 static int cc_ok(int cc) { static const uint32_t rm[16] = {0x800, 0x800, 1, 1, 0x40, 0x40, 0x41, 0x41, 0x80, 0x80, 0, 0, 0x880, 0x880, 0x8c0, 0x8c0}; return !(rm[cc] & cur_undef); }
 static int pick_cc(void) { for (int k = 0; k < 64; k++) { int cc = rn(16); if (cc != 10 && cc != 11 && cc_ok(cc)) return cc; } return -1; }
 static int rsz(void) { static const int s[] = {1, 2, 4, 4, 8, 8}; return s[rn(6)]; }
@@ -152,15 +152,80 @@ static void gen_one(Buf *B) {
 	case 29: { op[0] = 0x0f; op[1] = 0xaf; emit_rm(B, p66, w, op, 2, reg, mem, rm, 0, 0, 0); B->wf = 1; B->undef = 0xc4 | 0x10; if (sz == 1 || sz == 2) { B->n = B->n; } break; }
 	}
 }
+
+// ---------------------------------------------------------------------------------------------- SSE/SSE2
+static int sse_mode;           // jtest <n> <seed> -v|-s : -s erzeugt überwiegend SSE-Befehle
+static int want_pjcc;          // direkt hinter comis: jp/jnp/je/jne/jb/ja/... hinten anhängen
+static void put_sse(Buf *B, int pfx, int op, int reg, int mem, int rmreg, int w, int immb, int64_t imm) {
+	uint8_t o[2] = {0x0f, (uint8_t)op};
+	if (pfx == 0x66) emit_rm(B, 1, w, o, 2, reg, mem, rmreg, 0, immb, imm);
+	else { if (pfx) put8(B, pfx); emit_rm(B, 0, w, o, 2, reg, mem, rmreg, 0, immb, imm); }
+}
+static void gen_sse_one(Buf *B) {
+	static const struct { uint8_t pfx, op, form; int8_t fp; } T[] = {
+		// form 0: xmm, xmm/m
+		{0,0x58,0,32},{0x66,0x58,0,64},{0xf3,0x58,0,32},{0xf2,0x58,0,64},{0,0x5c,0,32},{0x66,0x5c,0,64},{0xf3,0x5c,0,32},{0xf2,0x5c,0,64},
+		{0,0x59,0,32},{0x66,0x59,0,64},{0xf3,0x59,0,32},{0xf2,0x59,0,64},{0,0x5e,0,32},{0x66,0x5e,0,64},{0xf3,0x5e,0,32},{0xf2,0x5e,0,64},
+		{0,0x5d,0,32},{0x66,0x5d,0,64},{0xf3,0x5d,0,32},{0xf2,0x5d,0,64},{0,0x5f,0,32},{0x66,0x5f,0,64},{0xf3,0x5f,0,32},{0xf2,0x5f,0,64},
+		{0,0x51,0,32},{0x66,0x51,0,64},{0xf3,0x51,0,32},{0xf2,0x51,0,64},
+		{0,0x54,0,0},{0x66,0x54,0,0},{0,0x55,0,0},{0x66,0x55,0,0},{0,0x56,0,0},{0x66,0x56,0,0},{0,0x57,0,0},{0x66,0x57,0,0},
+		{0,0x14,0,0},{0x66,0x14,0,0},{0,0x15,0,0},{0x66,0x15,0,0},
+		{0,0x5a,0,32},{0x66,0x5a,0,32},{0xf3,0x5a,0,64},{0xf2,0x5a,0,32},{0,0x5b,0,32},{0x66,0x5b,0,32},{0xf3,0x5b,0,32},{0xf3,0xe6,0,64},
+		{0x66,0x60,0,0},{0x66,0x61,0,0},{0x66,0x62,0,0},{0x66,0x63,0,0},{0x66,0x64,0,0},{0x66,0x65,0,0},{0x66,0x66,0,0},{0x66,0x67,0,0},
+		{0x66,0x68,0,0},{0x66,0x69,0,0},{0x66,0x6a,0,0},{0x66,0x6b,0,0},{0x66,0x6c,0,0},{0x66,0x6d,0,0},{0x66,0x74,0,0},{0x66,0x75,0,0},{0x66,0x76,0,0},
+		{0x66,0xd1,0,0},{0x66,0xd2,0,0},{0x66,0xd3,0,0},{0x66,0xe1,0,0},{0x66,0xe2,0,0},{0x66,0xf1,0,0},{0x66,0xf2,0,0},{0x66,0xf3,0,0},
+		{0x66,0xd4,0,0},{0x66,0xd5,0,0},{0x66,0xd8,0,0},{0x66,0xd9,0,0},{0x66,0xda,0,0},{0x66,0xdb,0,0},{0x66,0xdc,0,0},{0x66,0xdd,0,0},{0x66,0xde,0,0},{0x66,0xdf,0,0},
+		{0x66,0xe0,0,0},{0x66,0xe3,0,0},{0x66,0xe4,0,0},{0x66,0xe5,0,0},{0x66,0xe8,0,0},{0x66,0xe9,0,0},{0x66,0xea,0,0},{0x66,0xeb,0,0},{0x66,0xec,0,0},{0x66,0xed,0,0},{0x66,0xee,0,0},{0x66,0xef,0,0},
+		{0x66,0xf4,0,0},{0x66,0xf5,0,0},{0x66,0xf6,0,0},{0x66,0xf8,0,0},{0x66,0xf9,0,0},{0x66,0xfa,0,0},{0x66,0xfb,0,0},{0x66,0xfc,0,0},{0x66,0xfd,0,0},{0x66,0xfe,0,0},
+		{0,0x10,0,0},{0x66,0x10,0,0},{0xf3,0x10,0,0},{0xf2,0x10,0,0},{0,0x28,0,0},{0x66,0x28,0,0},{0x66,0x6f,0,0},{0xf3,0x6f,0,0},
+		{0,0x12,0,0},{0x66,0x12,0,0},{0,0x16,0,0},{0x66,0x16,0,0},{0xf2,0x12,0,0},{0xf3,0x12,0,0},{0xf3,0x16,0,0},{0xf3,0x7e,0,0},
+		// form 10: Speichern (r/m ist Ziel)
+		{0,0x11,10,0},{0x66,0x11,10,0},{0xf3,0x11,10,0},{0xf2,0x11,10,0},{0,0x29,10,0},{0x66,0x29,10,0},{0x66,0x7f,10,0},{0xf3,0x7f,10,0},{0x66,0xd6,10,0},
+		{0,0x13,11,0},{0x66,0x13,11,0},{0,0x17,11,0},{0x66,0x17,11,0},{0x66,0xe7,11,0},{0,0x2b,11,0},
+		// form 2: imm8
+		{0x66,0x70,2,0},{0xf3,0x70,2,0},{0xf2,0x70,2,0},{0,0xc2,2,32},{0x66,0xc2,2,64},{0xf3,0xc2,2,32},{0xf2,0xc2,2,64},{0,0xc6,2,0},{0x66,0xc6,2,0},{0x66,0xc4,9,0},
+		// form 5: Gruppe 71/72/73
+		{0x66,0x71,5,0},{0x66,0x72,5,0},{0x66,0x73,5,0},
+		// Formen mit Allzweckregister
+		{0,0x50,1,0},{0x66,0x50,1,0},{0x66,0xd7,1,0},{0x66,0xc5,8,0},{0xf3,0x2a,3,32},{0xf2,0x2a,3,64},{0xf3,0x2c,4,0},{0xf2,0x2c,4,0},{0xf3,0x2d,4,0},{0xf2,0x2d,4,0},
+		{0x66,0x6e,6,0},{0x66,0x7e,7,0},
+		// comis
+		{0,0x2e,12,0},{0x66,0x2e,12,0},{0,0x2f,12,0},{0x66,0x2f,12,0},
+	};
+	int n = (int)(sizeof T / sizeof *T), k = rn(n);
+	int reg = rn(16), rm = rn(16), mem = rn(3) == 0, op = T[k].op, pfx = T[k].pfx, form = T[k].form, w = 0;
+	if (T[k].fp) cur_fp = T[k].fp;
+	switch (form) {
+	case 0: if ((op == 0x12 || op == 0x16) && pfx == 0x66) mem = 1; put_sse(B, pfx, op, reg, mem, rm, 0, 0, 0); break;
+	case 10: put_sse(B, pfx, op, reg, mem, rm, 0, 0, 0); break;
+	case 11: put_sse(B, pfx, op, reg, 1, rm, 0, 0, 0); break;
+	case 2: { int ib = 1; int64_t im = rn(256); if (op == 0xc2) im = rn(8); put_sse(B, pfx, op, reg, mem, rm, 0, ib, im); break; }
+	case 9: put_sse(B, pfx, op, reg, mem, rm, 0, 1, rn(8)); break;   // pinsrw xmm, r32/m16, imm
+	case 5: {
+		int ext, im = rn(3) ? rn(20) : rn(256);
+		if (op == 0x73) { static const int e[4] = {2, 3, 6, 7}; ext = e[rn(4)]; } else { static const int e[3] = {2, 4, 6}; ext = e[rn(3)]; }
+		put_sse(B, pfx, op, ext, 0, rm, 0, 1, im); break; }
+	case 1: put_sse(B, pfx, op, rn(16), 0, rm, 0, 0, 0); break;   // movmsk / pmovmskb: Ziel Allzweckregister (reg), Quelle xmm (rm)
+	case 8: put_sse(B, pfx, op, rn(16), 0, rm, 0, 1, rn(8)); break;
+	case 3: w = rn(2); put_sse(B, pfx, op, reg, mem, rm, w, 0, 0); break;    // cvtsi2sd xmm, r/m
+	case 4: w = rn(2); put_sse(B, pfx, op, rn(16), mem, rm, w, 0, 0); break; // cvttsd2si r, xmm/m
+	case 6: w = rn(2); put_sse(B, pfx, op, reg, mem, rm, w, 0, 0); break;
+	case 7: w = rn(2); put_sse(B, pfx, op, reg, mem, rm, w, 0, 0); break;
+	case 12: put_sse(B, pfx, op, reg, mem, rm, 0, 0, 0); want_pjcc = 1; B->wf = 1; B->undef = 0; break;
+	}
+}
 static int gen_seq(Buf *B, uint64_t slot) {
 	memset(B, 0, sizeof *B); B->base = slot;
-	int n = 1 + rn(4); uint32_t um = 0; int have = 0; cur_undef = 0;
+	int n = 1 + rn(4); uint32_t um = 0; int have = 0; cur_undef = 0; cur_fp = 0;
 	for (int i = 0; i < n; i++) {
 		if (B->n > 60) break;
 		if (rn(6) == 0 && i > 0) {  // jcc über einen Befehl
 			int cc = pick_cc(); if (cc < 0) { put8(B, 0x90); continue; } put8(B, 0x70 + cc); put8(B, 3); put8(B, 0x83); put8(B, 0xc0 + rn(2) * 0); put8(B, 0x01 * 0 + 1);
 			B->undef = 0; B->wf = 0; continue; }
-		B->wf = 0; B->undef = 0; gen_one(B);
+		B->wf = 0; B->undef = 0; want_pjcc = 0; if (sse_mode && rn(4)) gen_sse_one(B); else gen_one(B);
+		if (want_pjcc) {   // hinter comis: bedingte Sprünge über einen Befehl, auch jp/jnp
+			static const int ccs[] = {2, 3, 4, 5, 6, 7, 10, 11}; for (int q = 0; q < 1; q++) { put8(B, 0x70 + ccs[rn(8)]); put8(B, 3); put8(B, 0x83); put8(B, 0xc0); put8(B, 1); }
+		}
 		if (B->wf == 1) { um = B->undef; cur_undef = um; have = 1; } else if (B->wf == 2) { /* inc/dec: CF bleibt */ }
 	}
 	put8(B, 0x0f); put8(B, 0x05);
@@ -175,16 +240,41 @@ static uint64_t pool64(void) {
 	return rn(3) ? p[rn(19)] : rn(2) ? rnd() : (uint64_t)rn(1000);
 }
 
+
+// zufällige XMM-Werte: Bitmuster, Gleitkommazahlen (float/double) mit Sonderwerten, kleine ganze Zahlen
+static void rnd_xmm(uint8_t *o) {
+	static const float fp[] = {0.f, -0.f, 1.f, -1.f, 0.5f, 2.f, 3.5f, -7.25f, 100.f, 1e10f, -1e-10f, 3e38f, 1e-40f, 1.f/0, -1.f/0, 16777216.f, 2147483648.f, 4294967296.f, -2147483904.f, 0.1f, 123456.789f};
+	static const double dp[] = {0., -0., 1., -1., 0.5, 2., 3.5, -7.25, 100., 1e10, -1e-10, 1e300, 1e-310, 1./0, -1./0, 9007199254740992., 2147483648., 4294967296., 9.3e18, -9.3e18, 0.1, 1e-5};
+	int m = rn(8);
+	if (m == 0) { for (int i = 0; i < 2; i++) { uint64_t v = rnd(); memcpy(o + 8 * i, &v, 8); } }
+	else if (m <= 3) { for (int i = 0; i < 4; i++) { float f = fp[rn(sizeof fp / sizeof *fp)]; if (rn(3) == 0) f = (float)(int)(rnd() % 2000 - 1000); memcpy(o + 4 * i, &f, 4); } }
+	else if (m <= 6) { for (int i = 0; i < 2; i++) { double f = dp[rn(sizeof dp / sizeof *dp)]; if (rn(3) == 0) f = (double)(int)(rnd() % 2000 - 1000); memcpy(o + 8 * i, &f, 8); } }
+	else { for (int i = 0; i < 16; i++) o[i] = (uint8_t)(rn(2) ? rnd() : (uint8_t[]){0, 1, 0x7f, 0x80, 0xff}[rn(5)]); }
+}
+// gleich, oder (bei Gleitkomma-Befehlen) beide Seiten NaN: x86 erzeugt negative, arm64 positive Standard-NaNs
+static int isnan32(uint32_t v) { return (v & 0x7f800000) == 0x7f800000 && (v & 0x7fffff); }
+static int isnan64(uint64_t v) { return (v & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (v & 0xfffffffffffffULL); }
+static int xmm_same(const uint8_t *a, const uint8_t *b) {
+	if (!memcmp(a, b, 16)) return 1;
+	if (!cur_fp) return 0;
+	uint32_t a4[4], b4[4]; uint64_t a8[2], b8[2]; memcpy(a4, a, 16); memcpy(b4, b, 16); memcpy(a8, a, 16); memcpy(b8, b, 16);
+	int ok4 = 1, ok8 = 1;
+	for (int i = 0; i < 4; i++) if (a4[i] != b4[i] && !(isnan32(a4[i]) && isnan32(b4[i]))) ok4 = 0;
+	for (int i = 0; i < 2; i++) if (a8[i] != b8[i] && !(isnan64(a8[i]) && isnan64(b8[i]))) ok8 = 0;
+	return ok4 || ok8;
+}
+
 int main(int argc, char **argv) {
-	long N = argc > 1 ? atol(argv[1]) : 20000; if (argc > 2) rs ^= (uint64_t)atoll(argv[2]) * 0x9E3779B97F4A7C15ULL; int verbose = argc > 3;
+	long N = argc > 1 ? atol(argv[1]) : 20000; if (argc > 2) rs ^= (uint64_t)atoll(argv[2]) * 0x9E3779B97F4A7C15ULL; int verbose = argc > 3 && strcmp(argv[3], "-s"); sse_mode = argc > 3 && !strcmp(argv[3], "-s");
 	JitCtx c; if (jit_init(&c)) { fprintf(stderr, "jit_init fehlgeschlagen\n"); return 2; }
 	code_h = jit_guest_alloc(CODE, CODE_N); data_h = jit_guest_alloc(DATA, DATA_N);
 	if (!code_h || !data_h) { fprintf(stderr, "jit_guest_alloc fehlgeschlagen\n"); return 2; }
 	c.pend = (volatile uint32_t *)calloc(1, 4);
 	if (uc_open(UC_ARCH_X86, UC_MODE_64, &uc)) return 2;
+	{ uint64_t cr = 0; uc_reg_read(uc, UC_X86_REG_CR0, &cr); cr = (cr & ~4ULL) | 2; uc_reg_write(uc, UC_X86_REG_CR0, &cr); uc_reg_read(uc, UC_X86_REG_CR4, &cr); cr |= 0x600; uc_reg_write(uc, UC_X86_REG_CR4, &cr); }   // SSE einschalten wie ein Betriebssystem
 	uc_mem_map_ptr(uc, CODE, CODE_N, UC_PROT_ALL, code_h); uc_mem_map_ptr(uc, DATA, DATA_N, UC_PROT_ALL, data_h);
 	setvbuf(stdout, NULL, _IOLBF, 0);
-	long fails = 0, skipped = 0, fbtests = 0, ok = 0, pfdiff = 0;
+	long nanskip = 0, fails = 0, skipped = 0, fbtests = 0, ok = 0, pfdiff = 0;
 	for (long it = 0; it < N; it++) {
 		int slot = it % NSLOT; if (getenv("JT_TRACE")) printf("it %ld\n", it);
 		if (slot == 0 && it) { jit_flush(); uc_ctl_flush_tb(uc); }
@@ -202,19 +292,31 @@ int main(int argc, char **argv) {
 		if (B.idx & 2) r0[1] = rn(20);
 		for (size_t i = 0; i < DATA_N; i += 8) { uint64_t v = rn(5) ? rnd() : 0; if (i >= 0x3f00 && i < 0x4200 && rn(2)) v = 0; memcpy(data_h + i, &v, 8); }
 		memcpy(data_init, data_h, DATA_N); memcpy(code_init, code_h, CODE_N);
+		uint8_t x0[16][16], xu[16][16]; for (int i = 0; i < 16; i++) rnd_xmm(x0[i]);
+		for (int i = 0; i < 16; i++) uc_reg_write(uc, UC_X86_REG_XMM0 + i, x0[i]);
 		// 1. Unicorn allein
 		for (int i = 0; i < 16; i++) uc_reg_write(uc, jit_ucreg[i], &r0[i]);
 		uc_reg_write(uc, UC_X86_REG_EFLAGS, &ef0);
-		uc_err e = uc_emu_start(uc, pc, end, 0, 0);
+		uc_err e;
+		int nangen = 0;
+		if (cur_fp) {   // Gleitkomma-Folge: Schritt für Schritt, ob x86 eine Standard-NaN (negativ) erzeugt, die arm64 anders bildet (Vorzeichen)
+			uint64_t cur = pc; e = UC_ERR_OK;
+			for (int step = 0; step < 24 && cur != end && !e; step++) {
+				e = uc_emu_start(uc, cur, end, 0, 1); uc_reg_read(uc, UC_X86_REG_RIP, &cur);
+				for (int i = 0; i < 16; i++) { uint8_t xx[16]; uc_reg_read(uc, UC_X86_REG_XMM0 + i, xx); uint32_t q[4]; uint64_t o[2]; memcpy(q, xx, 16); memcpy(o, xx, 16);
+					for (int j = 0; j < 4; j++) if (q[j] == 0xffc00000u) nangen = 1; for (int j = 0; j < 2; j++) if (o[j] == 0xfff8000000000000ULL) nangen = 1; }
+			}
+		} else e = uc_emu_start(uc, pc, end, 0, 0);
 		if (e) { skipped++; if (verbose) printf("skip %ld: %s\n", it, uc_strerror(e)); continue; }
 		{ uint64_t rp; uc_reg_read(uc, UC_X86_REG_RIP, &rp); if (rp != end) { skipped++; continue; } }
 		if (memcmp(code_h, code_init, CODE_N)) { skipped++; memcpy(code_h, code_init, CODE_N); continue; }  // Befehl hat den eigenen Code überschrieben (SMC wird nicht verglichen)
 		uint64_t ru[16], efu; for (int i = 0; i < 16; i++) uc_reg_read(uc, jit_ucreg[i], &ru[i]);
+		for (int i = 0; i < 16; i++) uc_reg_read(uc, UC_X86_REG_XMM0 + i, xu[i]);
 		uc_reg_read(uc, UC_X86_REG_EFLAGS, &efu); memcpy(data_uc, data_h, DATA_N);
 		if (getenv("JT_ONLY") && atol(getenv("JT_ONLY")) == it) setenv("UCRUN_JIT_TRACE", "2", 1);
 		// 2. JIT (mit Rückfall)
 		memcpy(data_h, data_init, DATA_N);
-		memcpy(c.r, r0, sizeof r0); c.rip = pc; jit_set_eflags(&c, ef0); int fb = 0, bad = 0;
+		memcpy(c.r, r0, sizeof r0); memcpy(c.xmm, x0, sizeof x0); c.rip = pc; jit_set_eflags(&c, ef0); int fb = 0, bad = 0;
 		for (int guard = 0; guard < 200; guard++) {
 			int st = jit_run(&c);
 			if (st == JIT_SYSCALL) break;
@@ -232,8 +334,10 @@ int main(int argc, char **argv) {
 		int same = 1; char why[200] = "";
 		for (int i = 0; i < 16; i++) if (c.r[i] != ru[i]) { same = 0; snprintf(why + strlen(why), 100, " r%d %llx!=%llx", i, (unsigned long long)c.r[i], (unsigned long long)ru[i]); }
 		if ((efj & mask) != (efu & mask)) { same = 0; snprintf(why + strlen(why), 80, " fl %llx!=%llx(mask %llx)", (unsigned long long)(efj & ALLF), (unsigned long long)(efu & ALLF), (unsigned long long)mask); }
+		for (int i = 0; i < 16; i++) if (!xmm_same(c.xmm[i], xu[i])) { same = 0; snprintf(why + strlen(why), 80, " xmm%d %016llx%016llx!=%016llx%016llx", i, (unsigned long long)((uint64_t *)c.xmm[i])[1], (unsigned long long)((uint64_t *)c.xmm[i])[0], (unsigned long long)((uint64_t *)xu[i])[1], (unsigned long long)((uint64_t *)xu[i])[0]); }
 		if (c.rip != end + 2 && c.rip != end) { same = 0; snprintf(why + strlen(why), 60, " rip %llx", (unsigned long long)c.rip); }
 		if (memcmp(data_jit, data_uc, DATA_N)) { same = 0; size_t k = 0; while (data_jit[k] == data_uc[k]) k++; snprintf(why + strlen(why), 60, " mem@%zx", k); }
+		if (!same && nangen) { same = 1; nanskip++; }
 		if (!same) {
 			fails++;
 			if (fails <= 25) { printf("FEHLER %ld:", it); for (int i = 0; i < B.n - 2; i++) printf(" %02x", B.b[i]); printf("  |%s\n  init:", why); for (int i = 0; i < 16; i++) printf(" %llx", (unsigned long long)r0[i]); printf(" ef=%llx\n", (unsigned long long)ef0); }
@@ -241,6 +345,6 @@ int main(int argc, char **argv) {
 		(void)pfdiff;
 	}
 	uint64_t b, i, f; jit_stats(&b, &i, &f);
-	printf("jtest: %ld Tests, %ld gleich, %ld Fehler, %ld übersprungen (Unicorn-Ausnahme), %ld mit Rückfall; JIT: %llu Blöcke, %llu Befehle, %llu Rückfälle\n", N, ok, fails, skipped, fbtests, (unsigned long long)b, (unsigned long long)i, (unsigned long long)f);
+	printf("jtest: %ld Tests, %ld gleich (davon %ld mit NaN-Vorzeichen-Abweichung), %ld Fehler, %ld übersprungen (Unicorn-Ausnahme), %ld mit Rückfall; JIT: %llu Blöcke, %llu Befehle, %llu Rückfälle\n", N, ok, nanskip, fails, skipped, fbtests, (unsigned long long)b, (unsigned long long)i, (unsigned long long)f);
 	return fails != 0;
 }

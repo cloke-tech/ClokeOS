@@ -7,6 +7,7 @@ here="$(cd "$(dirname "$0")/.." && pwd)"
 out="${1:?Ausgabeordner}"; ub="${2:?Unicorn-Bauordner}"; src="${UNICORN_SRC:-$HOME/ClokeOS-work/download/unicorn/src}"
 mkdir -p "$out"; cd "$here"
 libs=("$ub/libunicorn-static.a" "$ub/libx86_64-softmmu.a" "$ub/libunicorn-common.a")
+[ -f "$ub/libaarch64-softmmu.a" ] && libs+=("$ub/libaarch64-softmmu.a")
 clang -O1 -g -Wno-deprecated-declarations -I"$src/include" jit/jtest.c jit/jit.c "${libs[@]}" -lpthread -o "$out/jtest"
 clang -O1 -g -Wno-deprecated-declarations -I"$src/include" ucrun.c jit/jit.c "${libs[@]}" -lpthread -o "$out/ucrun"
 x="-target x86_64-apple-macos11.0 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -static -Wl,-e,_start"

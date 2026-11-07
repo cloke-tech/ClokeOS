@@ -97,6 +97,7 @@ static void str_ctx(int rt, int off) { E(0xF9000000 | (off / 8) << 10 | 19 << 5 
 #define C_DELTA 232
 #define C_JC 240
 #define C_FBEND 248
+#define C_PF_BIT 8
 #define STP_SAVE (0xA9000000u | (C_NZCV / 8) << 15 | 31 << 10 | 19 << 5 | 16)
 
 enum { EQ = 0, NE, CS, CC, MI, PL, VS, VC, HI, LS, GE, LT, GT, LE };
@@ -182,12 +183,13 @@ void jit_guest_free(uint64_t g, uint64_t n) {
 // ------------------------------------------------------------------------------------------------ Decoder
 enum { OP_FB, OP_NOP, OP_MOV, OP_LEA, OP_ALU, OP_INC, OP_DEC, OP_NEG, OP_NOT, OP_MUL1, OP_IMUL1, OP_DIV, OP_IDIV, OP_IMUL2,
        OP_SHIFT, OP_PUSH, OP_POP, OP_CALL, OP_CALLI, OP_RET, OP_JMP, OP_JMPI, OP_JCC, OP_SETCC, OP_CMOV, OP_MOVZX, OP_MOVSX,
-       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP };
+       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE };
 typedef struct { uint8_t k, n, hi; } Opd;  // k: 0 -, 1 Register, 2 Speicher, 3 Immediate
 typedef struct {
 	int op, sz, ssz, cc, alu, len, rep, count, live, cl, imm3, strop, branchy, followed;
 	uint64_t pc, target; int64_t imm; Opd d, s;
 	int base, index, scale, seg, ripr; int64_t disp;
+	int sop, arg, fl, fmt, xd;   // SSE: Art, Unterart, Flags (SF_*), Format, Zielregister (xmm bzw. Allzweck)
 } Insn;
 
 static Opd mkreg(int n, int sz, int rex) { Opd o = {1, (uint8_t)n, 0}; if (sz == 1 && !rex && n >= 4 && n <= 7) { o.n = n - 4; o.hi = 1; } return o; }
@@ -238,6 +240,8 @@ static int flen(const uint8_t *p, int *branchy) {
 	return i + imm;
 }
 
+#include "jit_sse_dec.inc"
+
 // Befehl unter p (Host-Zeiger) mit Gast-Adresse pc; unbekannte Befehle -> OP_FB
 static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 	memset(I, 0, sizeof *I); I->pc = pc; I->op = OP_FB; I->base = I->index = -1;
@@ -268,12 +272,30 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 		if (o2 == 0x05) { I->op = OP_SYSCALL; I->len = i; return; }
 		if (o2 == 0x1f) { MODRM(osz); I->op = OP_NOP; I->len = i; return; }
 		if (o2 == 0x1e && rep == 1 && p[i] == 0xfa) { I->op = OP_NOP; I->len = i + 1; return; }  // endbr64
-		if (o2 >= 0x80 && o2 <= 0x8f) { int cc = o2 & 15; if (cc == 10 || cc == 11) FAIL; int64_t d = rd32(p + i); i += 4; I->op = OP_JCC; I->cc = cc; I->len = i; I->target = pc + i + d; return; }
+		if (o2 >= 0x80 && o2 <= 0x8f) { int cc = o2 & 15; int64_t d = rd32(p + i); i += 4; I->op = OP_JCC; I->cc = cc; I->len = i; I->target = pc + i + d; return; }
 		if (o2 >= 0x90 && o2 <= 0x9f) { int cc = o2 & 15; if (cc == 10 || cc == 11) FAIL; MODRM(1); I->op = OP_SETCC; I->cc = cc; I->sz = 1; I->d = rmo; I->len = i; return; }
 		if (o2 >= 0x40 && o2 <= 0x4f) { int cc = o2 & 15; if (cc == 10 || cc == 11 || osz == 2) FAIL; MODRM(osz); I->op = OP_CMOV; I->cc = cc; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 == 0xaf) { if (osz == 2) FAIL; MODRM(osz); I->op = OP_IMUL2; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 == 0xb6 || o2 == 0xb7 || o2 == 0xbe || o2 == 0xbf) { int ss = (o2 & 1) ? 2 : 1; MODRM(ss); I->op = (o2 < 0xb8) ? OP_MOVZX : OP_MOVSX; I->sz = osz; I->ssz = ss; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 >= 0xc8 && o2 <= 0xcf) { if (osz == 2) FAIL; I->op = OP_BSWAP; I->sz = osz; I->d = mkreg((o2 & 7) | B, osz, rex); I->len = i; return; }
+		{
+			int sop, arg, fl, msz, fmt, pfx = rep == 1 ? 0xf3 : rep == 2 ? 0xf2 : opsz16 ? 0x66 : 0;
+			if (sse_class(o2, pfx, &sop, &arg, &fl, &msz, &fmt)) {
+				if (sop == S_CVT && arg == CV_I2F) msz = W ? 8 : 4;
+				MODRM(16);
+				if (rmo.k == 1 && pfx == 0 && o2 == 0x12) sop = S_MOVHLPS; else if (rmo.k == 1 && pfx == 0 && o2 == 0x16) sop = S_MOVLHPS;
+				else if (rmo.k == 1 && (o2 == 0x13 || o2 == 0x17 || ((o2 == 0x12 || o2 == 0x16) && pfx == 0x66))) FAIL;
+				if ((fl & SF_REGONLY) && rmo.k != 1) FAIL;
+				I->op = OP_SSE; I->sop = sop; I->arg = arg; I->fl = fl; I->fmt = fmt; I->ssz = msz; I->xd = regf; I->s = rmo; I->sz = W ? 8 : 4;
+				if (sop == S_SHIFTI) {
+					I->xd = rmo.n; I->cc = regf & 7;
+					int ok = o2 == 0x73 ? (I->cc == 2 || I->cc == 3 || I->cc == 6 || I->cc == 7) : (I->cc == 2 || I->cc == 4 || I->cc == 6);
+					if (!ok) FAIL;
+				}
+				if (fl & SF_IMM) I->imm = p[i++];
+				I->len = i; return;
+			}
+		}
 		FAIL;
 	}
 	if (op < 0x40 && (op & 7) <= 5) {  // add or adc sbb and sub xor cmp
@@ -292,7 +314,7 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 	case 0x68: I->op = OP_PUSH; I->d.k = 3; I->imm = IMMZ(4); I->len = i; return;
 	case 0x6a: I->op = OP_PUSH; I->d.k = 3; I->imm = IMM8; I->len = i; return;
 	case 0x69: case 0x6b: if (osz == 2) FAIL; MODRM(osz); I->op = OP_IMUL2; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->imm3 = 1; I->imm = op == 0x6b ? IMM8 : IMMZ(osz); I->len = i; return;
-	case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x77: case 0x78: case 0x79: case 0x7c: case 0x7d: case 0x7e: case 0x7f:
+	case 0x70: case 0x71: case 0x72: case 0x73: case 0x74: case 0x75: case 0x76: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x7b: case 0x7c: case 0x7d: case 0x7e: case 0x7f:
 		{ int64_t d = (int8_t)p[i++]; I->op = OP_JCC; I->cc = op & 15; I->len = i; I->target = pc + i + d; return; }
 	case 0x80: case 0x81: case 0x83: {
 		int s8 = op == 0x80 ? 1 : osz; MODRM(s8); I->op = OP_ALU; I->alu = regf & 7; I->sz = s8; I->d = rmo; I->s.k = 3;
@@ -350,7 +372,7 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 }
 
 // ------------------------------------------------------------------------------------------------ Übersetzer
-enum { FS_CTX, FS_ADD, FS_SUB, FS_LOGIC };
+enum { FS_CTX, FS_ADD, FS_SUB, FS_LOGIC, FS_FCMP };   // FS_FCMP: NZCV roh von fcmp (comiss/ucomiss), siehe g_conv
 static int fs, trunc_;
 typedef struct { uint32_t *pos; int kind; } Fix;  // kind 0: imm19 (cbz/b.cond), 1: imm14 (tbz), 2: b (imm26)
 typedef struct { uint64_t pc, end; int fs, count; Fix f[8]; int nf; } Slow;
@@ -359,12 +381,18 @@ typedef struct { uint32_t *site, *pend; uint64_t target; int fs; } Exit;
 static Exit exs[16]; static int nexs;
 static int cur_live_in;
 
-static void ensure_nzcv(void) { if (fs == FS_CTX) { ldr_ctx(16, C_NZCV); msr_nzcv(16); fs = FS_ADD; } }
+static uint32_t *g_conv;
+static void bl_to(void *t) { int64_t off = ((uint8_t *)t - (uint8_t *)cp) / 4; E(0x94000000 | (off & 0x3ffffff)); }
+static void ensure_nzcv(void) {
+	if (fs == FS_CTX) { ldr_ctx(16, C_NZCV); msr_nzcv(16); fs = FS_ADD; }
+	else if (fs == FS_FCMP) { bl_to(g_conv); msr_nzcv(16); fs = FS_ADD; }   // roh -> CF/ZF genau (PF geht verloren)
+}
 static void flipc(void) { mrs_nzcv(16); logic_imm(EOR_, 16, 16, 0x20000000, 1); msr_nzcv(16); }
 static void to_sub(void) { ensure_nzcv(); if (fs != FS_SUB) { flipc(); fs = FS_SUB; } }
 static void to_add(void) { ensure_nzcv(); if (fs == FS_SUB) { flipc(); fs = FS_ADD; } }
 static const int cc_tab[16] = {VS, VC, -1, -1, EQ, NE, -1, -1, MI, PL, -1, -1, LT, GE, LE, GT};
 static int cond_arm(int cc) {
+	if (fs == FS_FCMP) switch (cc) { case 2: return LT; case 3: return GE; case 6: return LE; case 7: return GT; case 10: return VS; case 11: return VC; default: break; }
 	ensure_nzcv();
 	if (cc == 6 || cc == 7) { if (fs == FS_LOGIC) return cc == 6 ? EQ : NE; if (fs != FS_SUB) to_sub(); return cc == 6 ? LS : HI; }
 	if (cc == 2 || cc == 3) { if (fs == FS_SUB) return cc == 2 ? CC : CS; return cc == 2 ? CS : CC; }
@@ -373,6 +401,7 @@ static int cond_arm(int cc) {
 // Flags sichern (normiert auf C = CF); fest 3 Befehle, wenn patchbar
 static void save_flags(int fsx, int patchable) {
 	if (fsx == FS_CTX) return;
+	if (fsx == FS_FCMP) { bl_to(g_conv); E(NOP); E(STP_SAVE); return; }   // g_conv liefert CF/ZF genau und PF (Bit 8) in x16
 	mrs_nzcv(16);
 	if (fsx == FS_SUB) logic_imm(EOR_, 16, 16, 0x20000000, 1); else if (patchable) E(NOP);
 	E(STP_SAVE);
@@ -465,6 +494,8 @@ static void exit_fb(uint64_t pc, int count, uint64_t end) {
 #define ALL64 1
 // Flags-Zustand nach Operation
 static void set_fs_alu(int alu) { fs = (alu == 0 || alu == 2) ? FS_ADD : (alu == 3 || alu == 5 || alu == 7) ? FS_SUB : FS_LOGIC; }
+
+#include "jit_sse_gen.inc"
 
 static int gen_alu(Insn *I) {
 	int alu = I->alu, sz = I->sz, live = I->live, cmp = alu == 7 || alu == 8, is64 = sz == 8;
@@ -628,6 +659,7 @@ static int gen_insn(Insn *I) {
 	int sz = I->sz;
 	switch (I->op) {
 	case OP_NOP: return 1;
+	case OP_SSE: return gen_sse(I);
 	case OP_MOV: {
 		Opd *d = &I->d, *s = &I->s;
 		if (s->k == 3) {
@@ -787,6 +819,7 @@ static Blk *translate(uint64_t pc) {
 		case OP_SHIFT: if (!I->cl) wr = 1; else rd = 1; break;
 		case OP_JCC: case OP_SETCC: case OP_CMOV: case OP_FB: case OP_SYSCALL: rd = 1; break;
 		case OP_DIV: case OP_IDIV: rd = 1; break;
+		case OP_SSE: if (I->sop == S_COMIS) wr = 1; break;
 		default: break;
 		}
 		if (rd) L = 1; else if (wr) L = 0;
@@ -795,7 +828,7 @@ static Blk *translate(uint64_t pc) {
 	if (pc < code_lo) code_lo = pc; if (cur + 16 > code_hi) code_hi = cur + 16; if (pc + 1 > code_hi) code_hi = pc + 1; for (int i = 0; i < n; i++) { if (ins[i].pc < code_lo) code_lo = ins[i].pc; if (ins[i].pc + 16 > code_hi) code_hi = ins[i].pc + 16; }
 	if (nbr == cbr) { cbr = cbr ? cbr * 2 : 4096; branges = realloc(branges, cbr * sizeof *branges); }
 	uint32_t *start = cp; branges[nbr].start = start; branges[nbr].i0 = nim;
-	fs = FS_CTX; nslow = 0; nexs = 0; trunc_ = 0;
+	fs = FS_CTX; nslow = 0; nexs = 0; trunc_ = 0; nlits = 0;
 	int ended = 0; uint64_t next_pc = pc;
 	for (int i = 0; i < n && !ended; i++) {
 		Insn *I = &ins[i]; next_pc = I->pc + I->len;
@@ -803,9 +836,30 @@ static Blk *translate(uint64_t pc) {
 		imap[nim].pc = I->pc; imap[nim].off = (uint32_t)(cp - start); imap[nim].fs = fs; imap[nim].len = (uint8_t)I->len; nim++;
 		st_insns++;
 		switch (I->op) {
-		case OP_FB: exit_fb(I->pc, I->count, I->len > 0 ? I->pc + I->len : 0); st_fb++; ended = 1; break;
+		case OP_FB: exit_fb(I->pc, I->count, (I->len > 0 && !I->branchy) ? I->pc + I->len : 0); st_fb++; ended = 1; break;
 		case OP_JMP: if (!I->followed) { exit_direct(I->target, I->pc); ended = 1; } break;
 		case OP_JCC: {
+			int cc = I->cc;
+			if (cc == 10 || cc == 11) {   // Parität: nur aus fcmp (Bit PF = V) oder aus dem gesicherten Zustand (Bit 8 von nzcv) zu holen
+				if (fs == FS_FCMP) { uint32_t *bc = cp; E(0x54000000 | ((cc == 10 ? VS : VC) ^ 1)); exit_direct(I->target, I->pc); *bc |= ((cp - bc) & 0x7ffff) << 5; exit_direct(I->pc + I->len, I->pc); ended = 1; break; }
+				if (fs == FS_CTX) {
+					ldr_ctx(16, C_NZCV); uint32_t *bc = cp; E((cc == 10 ? 0x36000000u : 0x37000000u) | C_PF_BIT << 19 | 16);   // tbz/tbnz x16,#8: übergehen, wenn nicht genommen
+					exit_direct(I->target, I->pc); *bc |= ((cp - bc) & 0x3fff) << 5; exit_direct(I->pc + I->len, I->pc); ended = 1; break; }
+				exit_fb(I->pc, 1, 0); st_fb++; ended = 1; break;   // PF aus ALU-Befehlen kennt der JIT nicht: Unicorn
+			}
+			if (fs == FS_FCMP && (cc == 4 || cc == 5)) {   // ZF = (gleich oder unordentlich): zwei Bedingungen
+				uint32_t *b1 = cp, *b2;
+				if (cc == 4) {   // genommen bei EQ oder VS
+					E(0x54000000 | EQ); b2 = cp; E(0x54000000 | (VS ^ 1));
+					*b1 |= ((cp - b1) & 0x7ffff) << 5;
+					exit_direct(I->target, I->pc); *b2 |= ((cp - b2) & 0x7ffff) << 5; exit_direct(I->pc + I->len, I->pc);
+				} else {         // genommen bei NE und VC: nicht genommen bei EQ oder VS
+					E(0x54000000 | EQ); b2 = cp; E(0x54000000 | VS);
+					exit_direct(I->target, I->pc);
+					*b1 |= ((cp - b1) & 0x7ffff) << 5; *b2 |= ((cp - b2) & 0x7ffff) << 5; exit_direct(I->pc + I->len, I->pc);
+				}
+				ended = 1; break;
+			}
 			int c = cond_arm(I->cc); uint32_t *bc = cp; E(0x54000000 | (c ^ 1));
 			exit_direct(I->target, I->pc);
 			*bc |= ((cp - bc) & 0x7ffff) << 5;
@@ -841,6 +895,7 @@ static Blk *translate(uint64_t pc) {
 			*x->pend |= ((ps - x->pend) & 0x7ffff) << 5;
 		}
 	}
+	for (int q = 0; q < nlits; q++) { uint32_t *at = cp; memcpy(cp, lits[q].b, 16); cp += 4; *lits[q].pos |= ((at - lits[q].pos) & 0x7ffff) << 5; }
 	branges[nbr].i1 = nim; nbr++;
 	Blk *b = blk_add(pc, start, trunc_ ? 1 : cur_live_in);
 	sys_icache_invalidate(start, (cp - start) * 4);
@@ -864,20 +919,34 @@ static void patch_site(uint32_t *site, Blk *t) {
 // ------------------------------------------------------------------------------------------------ Laufzeit
 static void emit_common(void) {
 	g_enter = cp;
-	E(0xA9BA7BFD);                                   // stp x29,x30,[sp,#-96]!
+	E(0xA9B67BFD);                                   // stp x29,x30,[sp,#-160]!
 	{ int regs[5][2] = {{19, 20}, {21, 22}, {23, 24}, {25, 26}, {27, 28}}; for (int i = 0; i < 5; i++) E(0xA9000000 | ((16 + 16 * i) / 8) << 15 | regs[i][1] << 10 | 31 << 5 | regs[i][0]); }
+	for (int i = 0; i < 4; i++) E(0x6D000000 | ((96 + 16 * i) / 8) << 15 | (9 + 2 * i) << 10 | 31 << 5 | (8 + 2 * i));   // stp d8..d15
 	mov_r(19, 0, 1); mov_r(16, 1, 1);
 	E(0x910003E0 | 17); /* mov x17, sp */ str_ctx(17, C_HSP);
 	ldr_ctx(20, C_DELTA); ldr_ctx(21, C_JC);
 	for (int i = 0; i < 16; i += 2) E(0xA9400000 | (i / 2 * 2) << 15 | (i + 1) << 10 | 19 << 5 | i);
+	for (int i = 0; i < 16; i += 2) E(0xAD400000 | ((C_XMM + 16 * i) / 16) << 15 | (i + 1) << 10 | 19 << 5 | i);        // ldp q(i), q(i+1) aus ctx->xmm
+	E(0xAD400000 | (C_KW / 16) << 15 | 30 << 10 | 19 << 5 | 31);                                                          // q31 = Bytegewichte (k_w), q30 = 0,1,2,3 (k_i)
 	br_(16);
 	g_E1 = cp;
 	for (int i = 0; i < 16; i += 2) E(0xA9000000 | (i / 2 * 2) << 15 | (i + 1) << 10 | 19 << 5 | i);
+	for (int i = 0; i < 16; i += 2) E(0xAD000000 | ((C_XMM + 16 * i) / 16) << 15 | (i + 1) << 10 | 19 << 5 | i);        // stp q(i), q(i+1) nach ctx->xmm
 	g_E2 = cp;
 	ldr_ctx(16, C_HSP); E(0x91000000 | 16 << 5 | 31);  // mov sp, x16
 	{ int regs[5][2] = {{19, 20}, {21, 22}, {23, 24}, {25, 26}, {27, 28}}; for (int i = 0; i < 5; i++) E(0xA9400000 | ((16 + 16 * i) / 8) << 15 | regs[i][1] << 10 | 31 << 5 | regs[i][0]); }
-	E(0xA8C67BFD);                                   // ldp x29,x30,[sp],#96
+	for (int i = 0; i < 4; i++) E(0x6D400000 | ((96 + 16 * i) / 8) << 15 | (9 + 2 * i) << 10 | 31 << 5 | (8 + 2 * i));   // ldp d8..d15
+	E(0xA8CA7BFD);                                   // ldp x29,x30,[sp],#160
 	E(0xD65F03C0);                                   // ret
+	g_conv = cp;   // x16 = x86-Flags (CF/ZF genau, PF in Bit 8) aus dem rohen NZCV von fcmp; benutzt nur x16, x24, x25
+	E(0x1A9F77E0 | 24);                                  // cset w24, vs      (VS ^ 1 = VC -> cset liefert VS)
+	E(0x1A9F57E0 | 25);                                  // cset w25, mi
+	alu_r(ORR_, 25, 25, 24, 0); lsl_i(25, 25, 29, 0);    // CF = lt | un -> Bit 29
+	E(0x1A9F17E0 | 16);                                  // cset w16, eq
+	alu_r(ORR_, 16, 16, 24, 0);                          // ZF = eq | un
+	alu_rs(ORR_, 25, 25, 16, 1, 0, 30);                  // Bit 30
+	alu_rs(ORR_, 16, 25, 24, 1, 0, C_PF_BIT);            // PF in Bit 8
+	E(0xD65F03C0);                                       // ret
 	g_M = cp; str_ctx(16, C_NEXT); str_ctx(17, C_SITE); movz_(16, JIT_MISS, 0); str_ctx(16, C_STATUS); b_to(g_E1);
 	g_Mi = cp; str_ctx(17, C_NEXT); str_ctx(XZR, C_SITE); movz_(16, JIT_MISS, 0); str_ctx(16, C_STATUS); b_to(g_E1);
 	g_MP = cp; str_ctx(17, C_RIP); movz_(16, JIT_PENDING, 0); str_ctx(16, C_STATUS); b_to(g_E1);
@@ -895,8 +964,10 @@ static void fault_handler(int sig, siginfo_t *si, void *uc_) {
 	BRange *br = &branges[lo]; uint32_t off = (uint32_t)((pcv - (uint64_t)br->start) / 4); IMap *m = &imap[br->i0];
 	for (uint32_t i = br->i0; i < br->i1; i++) if (imap[i].off <= off) m = &imap[i];
 	for (int i = 0; i < 16; i++) gctx->r[i] = uc->uc_mcontext->__ss.__x[i];
+	for (int i = 0; i < 16; i++) memcpy(gctx->xmm[i], &uc->uc_mcontext->__ns.__v[i], 16);
 	uint64_t nz = uc->uc_mcontext->__ss.__cpsr & 0xf0000000ULL;
 	if (m->fs == FS_SUB) nz ^= 0x20000000ULL;
+	if (m->fs == FS_FCMP) { uint64_t N = nz >> 31 & 1, Z = nz >> 30 & 1, V = nz >> 28 & 1; nz = (N | V) << 29 | (Z | V) << 30 | V << 8; }
 	if (m->fs != FS_CTX) { gctx->nzcv = nz; gctx->expl = 0; }
 	gctx->rip = m->pc; gctx->fb_end = m->len ? m->pc + m->len : 0; gctx->aux = (uint64_t)si->si_addr; gctx->count = 1; gctx->status = JIT_FAULT;
 	uc->uc_mcontext->__ss.__pc = (uint64_t)g_E2;
@@ -921,7 +992,9 @@ int jit_init(JitCtx *c) {
 	}
 	if (trace_jit) fprintf(stderr, "jit: init: Gastspeicher\n");
 	if (reserve_guest()) return -2;
-	memset(c, 0, sizeof *c); c->delta = DELTA;
+	memset(c, 0, sizeof *c); c->delta = DELTA; c->mxcsr = 0x1f80; c->fcw = 0x37f; c->ftw = 0;
+	for (int i = 0; i < 16; i++) ((uint8_t *)c->k_w)[i] = (uint8_t)(1 << (i & 7));
+	for (int i = 0; i < 4; i++) c->k_i[i] = i;
 	c->jcache = (uint64_t)calloc(4096, 16);
 	gctx = c;
 	return 0;
@@ -948,10 +1021,12 @@ uint64_t jit_eflags_of(const JitCtx *c) {
 	if (c->expl) return c->eflags;
 	uint64_t n = c->nzcv, ef = (c->eflags & ~0x8d5ULL) | 2;
 	if (n & (1ULL << 29)) ef |= 1; if (n & (1ULL << 30)) ef |= 0x40; if (n & (1ULL << 31)) ef |= 0x80; if (n & (1ULL << 28)) ef |= 0x800;
+	if (n & (1ULL << C_PF_BIT)) ef |= 4;
 	return ef;
 }
 void jit_set_eflags(JitCtx *c, uint64_t ef) {
 	c->eflags = ef; c->expl = 1; uint64_t n = 0;
 	if (ef & 1) n |= 1ULL << 29; if (ef & 0x40) n |= 1ULL << 30; if (ef & 0x80) n |= 1ULL << 31; if (ef & 0x800) n |= 1ULL << 28;
+	if (ef & 4) n |= 1ULL << C_PF_BIT;
 	c->nzcv = n;
 }

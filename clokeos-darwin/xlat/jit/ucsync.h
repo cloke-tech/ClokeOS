@@ -6,18 +6,22 @@
 static const int jit_ucreg[16] = {UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RBX, UC_X86_REG_RSP, UC_X86_REG_RBP, UC_X86_REG_RSI, UC_X86_REG_RDI,
 	UC_X86_REG_R8, UC_X86_REG_R9, UC_X86_REG_R10, UC_X86_REG_R11, UC_X86_REG_R12, UC_X86_REG_R13, UC_X86_REG_R14, UC_X86_REG_R15};
 
-// Gastzustand (ohne XMM: die bleiben dauerhaft in Unicorn) in die Maschine schreiben
+// Gastzustand (Allzweckregister, Flags, XMM, MXCSR) in die Maschine schreiben
 static void jit_to_uc(uc_engine *u, JitCtx *c) {
-	int regs[19]; void *vals[19]; uint64_t ef = jit_eflags_of(c);
+	int regs[36]; void *vals[36]; uint64_t ef = jit_eflags_of(c);
 	for (int i = 0; i < 16; i++) { regs[i] = jit_ucreg[i]; vals[i] = &c->r[i]; }
 	regs[16] = UC_X86_REG_RIP; vals[16] = &c->rip; regs[17] = UC_X86_REG_EFLAGS; vals[17] = &ef; regs[18] = UC_X86_REG_GS_BASE; vals[18] = &c->gs_base;
-	uc_reg_write_batch(u, regs, vals, 19);
+	for (int i = 0; i < 16; i++) { regs[19 + i] = UC_X86_REG_XMM0 + i; vals[19 + i] = c->xmm[i]; }
+	regs[35] = UC_X86_REG_MXCSR; vals[35] = &c->mxcsr;
+	uc_reg_write_batch(u, regs, vals, 36);
 }
 static void jit_from_uc(uc_engine *u, JitCtx *c) {
-	int regs[19]; void *vals[19]; uint64_t ef = 0;
+	int regs[36]; void *vals[36]; uint64_t ef = 0;
 	for (int i = 0; i < 16; i++) { regs[i] = jit_ucreg[i]; vals[i] = &c->r[i]; }
 	regs[16] = UC_X86_REG_RIP; vals[16] = &c->rip; regs[17] = UC_X86_REG_EFLAGS; vals[17] = &ef; regs[18] = UC_X86_REG_GS_BASE; vals[18] = &c->gs_base;
-	uc_reg_read_batch(u, regs, vals, 19);
+	for (int i = 0; i < 16; i++) { regs[19 + i] = UC_X86_REG_XMM0 + i; vals[19 + i] = c->xmm[i]; }
+	regs[35] = UC_X86_REG_MXCSR; vals[35] = &c->mxcsr;
+	uc_reg_read_batch(u, regs, vals, 36);
 	jit_set_eflags(c, ef);
 }
 
