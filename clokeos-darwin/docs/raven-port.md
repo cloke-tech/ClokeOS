@@ -241,3 +241,16 @@ TCG). Seen and open: the title shows `?` for the em dashes, the two image button
 (`/var/root/Library/Raven/drive_c/Users/root/AppData/Local/Programs/Inno Setup 6/Compil32.exe`), not a C:\ path.
 Test tip: other sessions kill every x86 QEMU on the Mac now and then; run the VM with its own `CLOKEOS_WORK` (for example
 `~/ClokeOS-work-raven-vm`) and the image from the shared `out/` directory with `--snapshot`.
+
+### The black image buttons of Compil32's Welcome dialog (open)
+
+Findings (`RAVEN_TRACE_FAIL=1` now also prints the first colour-table entries of every indexed `CreateDIBSection`): the two buttons
+are `TBitmapButton` controls that draw 62x31 images with a Delphi `StretchBlt` after `SelectPalette`/`RealizePalette`. Four
+8-bit sections of that size are created with an all-zero colour table, so everything quantizes to black. On Windows the table
+comes from `RealizePalette` of the palette selected into the context. `SelectPalette` now keeps the palette in the context and
+`RealizePalette` copies it into the colour table of a selected indexed DIB section (gdi_api.cpp), but the buttons stayed black
+in the next run, so the colours are lost on another path (the image bits are copied into the section by a blit or `SetDIBits`
+that maps through the empty table before the palette is realized, or the palette itself holds black entries after `ResizePalette`).
+Next step: trace `SelectPalette`, `RealizePalette`, `ResizePalette`, `BitBlt` and `SetDIBits` calls for those four sections with
+`RAVEN_TRACE_X86=1`, but read only the last 3 MB of the trace file (a full 11 MB trace wedges the single-CPU VM's shell).
+The em dash `?` in the title is also still open.

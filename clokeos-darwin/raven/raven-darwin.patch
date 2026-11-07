@@ -229,7 +229,7 @@ index 26451b4..2829ba1 100644
  			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
  				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {
 diff --git a/native/desktop/gdi_api.cpp b/native/desktop/gdi_api.cpp
-index cdf405b..e00b616 100644
+index cdf405b..3e9f1d4 100644
 --- a/native/desktop/gdi_api.cpp
 +++ b/native/desktop/gdi_api.cpp
 @@ -497,6 +497,19 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
@@ -252,7 +252,44 @@ index cdf405b..e00b616 100644
  	registry.add("GetNearestPaletteIndex", 2, [=, this](ApiCall &call) {
  		guarded(call, clr_invalid, [&] {
  			const auto *palette = objects.palette(call[0]);
-@@ -1355,6 +1368,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+@@ -517,9 +530,20 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+ 			call.ret(best);
+ 		});
+ 	});
++	// RealizePalette: the palette selected into a context becomes the colour table of the indexed DIB section selected in it, which is
++	// how a program that creates its section with an empty table (Delphi's bitmaps) gets its colours.
+ 	registry.add("RealizePalette", 1, [=, this](ApiCall &call) {
+ 		guarded(call, 0, [&] {
+-			require_dc(call, 0);
++			auto &dc = require_dc(call, 0);
++			const auto *palette = dc.palette ? objects.palette(dc.palette) : nullptr;
++			auto *bitmap = objects.bitmap(dc.bitmap);
++			if (palette && bitmap && bitmap->dib_section && bitmap->depth <= 8) {
++				bitmap->palette.assign(size_t(1) << bitmap->depth, 0);
++				for (size_t i = 0; i < bitmap->palette.size() && i < palette->entries.size(); ++i)
++					bitmap->palette[i] = palette->entries[i];
++				call.ret(palette->entries.size());
++				return;
++			}
+ 			call.ret(0);
+ 		});
+ 	});
+@@ -534,8 +558,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+ 		});
+ 	registry.add("SelectPalette", 3, [=, this](ApiCall &call) {
+ 		guarded(call, 0, [&] {
+-			require_dc(call, 0);
+-			call.ret(0);
++			auto &dc = require_dc(call, 0);
++			if (call[1] && !objects.palette(call[1]))
++				throw uint32_t(6);
++			const auto previous = dc.palette;
++			dc.palette = call[1];
++			call.ret(previous);
+ 		});
+ 	});
+ 	registry.add("GetPixel", 3, [=, this](ApiCall &call) {
+@@ -1355,6 +1383,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
  				throw uint32_t(handle > 0 && handle <= 32 ? 120 : 6);
  			Painter painter(objects, dc);
  			painter.fill(rect.left, rect.top, rect.right, rect.bottom, *brush);
@@ -278,6 +315,35 @@ index 7713b09..ea6369d 100644
  		text_engine=std::make_unique<TextRenderer>(std::filesystem::is_directory(bundled) ? bundled.string() : RAVEN_FONT_DIRECTORY);
  	}
  	return *text_engine;
+diff --git a/native/desktop/objects.h b/native/desktop/objects.h
+index b2a095e..f587226 100644
+--- a/native/desktop/objects.h
++++ b/native/desktop/objects.h
+@@ -122,6 +122,8 @@ struct DesktopDC {
+ 	bool window_frame = false;
+ 	uint32_t text_color = 0,background_color = 0xffffff,background_mode = 2;
+ 	uint64_t brush = desktop_stock_brush;
++	// The logical palette selected into the context (SelectPalette); RealizePalette puts it into the colour table of a selected DIB section.
++	uint64_t palette = 0;
+ 	int32_t origin_x=0,origin_y=0;
+ 	std::optional<DesktopRect> bounds{};
+ 	// Application clipping is independent of BeginPaint's update region.
+diff --git a/native/desktop/surface.cpp b/native/desktop/surface.cpp
+index 6eef535..f87734c 100644
+--- a/native/desktop/surface.cpp
++++ b/native/desktop/surface.cpp
+@@ -133,6 +133,11 @@ uint64_t NativeDesktop::create_section(std::span<const uint64_t> args)
+ 		}
+ 		while (palette.size() < (1U << bits)) palette.push_back(0);
+ 	}
++	if (std::getenv("RAVEN_TRACE_FAIL") && !palette.empty()) {
++		std::cerr << "dib palette";
++		for (size_t i = 0; i < std::min<size_t>(6, palette.size()); ++i) std::cerr << ' ' << std::hex << palette[i] << std::dec;
++		std::cerr << " usage=" << uint32_t(args[2]) << '\n';
++	}
+ 	const auto bitmap=allocate_dib(uint32_t(width),uint32_t(height<0 ? -height : height),bits,height<0,std::move(palette),args[4],uint32_t(args[5]));
+ 	if (!bitmap) return 0;
+ 	try {
 diff --git a/native/desktop/theme.cpp b/native/desktop/theme.cpp
 index 089a377..6ccab2b 100644
 --- a/native/desktop/theme.cpp
