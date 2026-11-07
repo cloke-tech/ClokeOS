@@ -1,5 +1,6 @@
-// AudioConverter für PCM <-> PCM (eigener Code, kein Apple-Code): Format, Verschachtelung, Kanalzahl,
-// Abtastrate (linear). Keine Codecs (AAC/ALAC/MP3 liefern kAudioConverterErr_FormatNotSupported).
+// AudioConverter für PCM <-> PCM (eigener Code): Format, Verschachtelung, Kanalzahl, Abtastrate (linear). Als einziger Codec
+// ALAC -> PCM (Dekodieren mit Apples quelloffenem Decoder in alac/, über alac_glue.cpp); AAC/MP3 usw. liefern
+// kAudioConverterErr_FormatNotSupported.
 #include "at_internal.h"
 #include <math.h>
 #include <stdlib.h>
@@ -101,14 +102,51 @@ struct OpaqueAudioConverter {
   float *fifo[AT_MAXCH]; UInt32 fifoN, fifoCap;   // dekodierte Eingangsframes (Eingangskanalzahl)
   double pos;                         // Leseposition im FIFO (Frames)
   UInt32 quality, complexity, primeMethod;
+  // ALAC-Quelle: s ist das komprimierte Format, sp das PCM, das der Decoder liefert (verschachtelte Ganzzahlen)
+  int alac; void *dec; AudioStreamBasicDescription sp; uint8_t *cookie; UInt32 cookieSize; uint8_t *pcm;
+  UInt32 skip;                        // nach dem Suchen zu verwerfende dekodierte Frames (at_conv_skip)
 };
+void *at_alac_new(const void *cookie, uint32_t size, uint32_t fpp, uint32_t bits, uint32_t ch, uint32_t rate);
+void at_alac_free(void *p);
+void at_alac_info(void *p, uint32_t *bits, uint32_t *ch, uint32_t *fpp);
+uint32_t at_alac_decode(void *p, const uint8_t *pkt, uint32_t bytes, uint8_t *out);
+
+// Bittiefe der Quelle aus den ALAC-Formatflags (kAppleLosslessFormatFlag_16/20/24/32BitSourceData = 1..4)
+static UInt32 alac_bits(const AudioStreamBasicDescription *s) {
+  switch (s->mFormatFlags) { case 2: return 20; case 3: return 24; case 4: return 32; default: return 16; }
+}
+// Decoder (neu) anlegen und das PCM-Zwischenformat festlegen
+static int alac_setup(struct OpaqueAudioConverter *c) {
+  if (c->dec) { at_alac_free(c->dec); c->dec = NULL; }
+  c->dec = at_alac_new(c->cookie, c->cookieSize, c->s.mFramesPerPacket, alac_bits(&c->s), c->s.mChannelsPerFrame, (uint32_t)c->s.mSampleRate);
+  if (!c->dec) return 0;
+  uint32_t bits, ch, fpp; at_alac_info(c->dec, &bits, &ch, &fpp);
+  if (!ch || ch > AT_MAXCH || !fpp) return 0;
+  UInt32 bpc = bits == 16 ? 2 : bits == 32 ? 4 : 3;
+  c->sp = (AudioStreamBasicDescription){ c->s.mSampleRate, kAudioFormatLinearPCM,
+    kAudioFormatFlagIsSignedInteger | (bits == 20 ? kAudioFormatFlagIsAlignedHigh : kAudioFormatFlagIsPacked), ch * bpc, 1, ch * bpc, ch, bits, 0 };
+  c->s.mFramesPerPacket = fpp; c->s.mChannelsPerFrame = ch;
+  free(c->pcm); c->pcm = malloc((size_t)fpp * ch * 4 + 64);
+  return c->pcm != NULL;
+}
+void at_conv_skip(AudioConverterRef c, UInt32 frames) { if (c) c->skip = frames; }
 
 OSStatus AudioConverterNew(const AudioStreamBasicDescription *s, const AudioStreamBasicDescription *d, AudioConverterRef *out) {
   if (!s || !d || !out) return kAudio_ParamError;
-  if (!at_pcm_ok(s) || !at_pcm_ok(d)) return kAudioConverterErr_FormatNotSupported;
+  int alac = s->mFormatID == kAudioFormatAppleLossless && s->mChannelsPerFrame && s->mChannelsPerFrame <= AT_MAXCH;
+  if ((!alac && !at_pcm_ok(s)) || !at_pcm_ok(d)) return kAudioConverterErr_FormatNotSupported;
   struct OpaqueAudioConverter *c = calloc(1, sizeof *c);
   if (!c) return kAudio_MemFullError;
   c->s = *s; c->d = *d;
+  if (alac) {
+    c->alac = 1;
+    if (!alac_setup(c)) { AudioConverterDispose(c); return kAudioConverterErr_FormatNotSupported; }
+    c->d.mBytesPerFrame = c->d.mBytesPerFrame ? c->d.mBytesPerFrame : at_pcm_bytes_per_frame(d);
+    c->ratio = (s->mSampleRate > 0 && d->mSampleRate > 0) ? s->mSampleRate / d->mSampleRate : 1.0;
+    c->quality = kAudioConverterQuality_Medium; c->complexity = kAudioConverterSampleRateConverterComplexity_Linear;
+    *out = c;
+    return 0;
+  }
   if (!c->s.mBytesPerFrame) c->s.mBytesPerFrame = at_pcm_bytes_per_frame(s);
   if (!c->d.mBytesPerFrame) c->d.mBytesPerFrame = at_pcm_bytes_per_frame(d);
   c->ratio = (s->mSampleRate > 0 && d->mSampleRate > 0) ? s->mSampleRate / d->mSampleRate : 1.0;
@@ -120,19 +158,21 @@ OSStatus AudioConverterNew(const AudioStreamBasicDescription *s, const AudioStre
 OSStatus AudioConverterDispose(AudioConverterRef c) {
   if (!c) return kAudio_ParamError;
   for (int i = 0; i < AT_MAXCH; i++) free(c->fifo[i]);
+  if (c->dec) at_alac_free(c->dec);
+  free(c->cookie); free(c->pcm);
   free(c);
   return 0;
 }
 OSStatus AudioConverterReset(AudioConverterRef c) {
   if (!c) return kAudio_ParamError;
-  c->fifoN = 0; c->pos = 0;
+  c->fifoN = 0; c->pos = 0; c->skip = 0;
   return 0;
 }
 
 static int fifo_reserve(struct OpaqueAudioConverter *c, UInt32 need) {
   if (need <= c->fifoCap) return 1;
   UInt32 cap = need + 4096;
-  for (UInt32 ch = 0; ch < c->s.mChannelsPerFrame; ch++) {
+  for (UInt32 ch = 0; ch < (c->alac ? c->sp.mChannelsPerFrame : c->s.mChannelsPerFrame); ch++) {
     float *p = realloc(c->fifo[ch], cap * sizeof(float));
     if (!p) return 0;
     c->fifo[ch] = p;
@@ -144,7 +184,7 @@ static int fifo_reserve(struct OpaqueAudioConverter *c, UInt32 need) {
 OSStatus AudioConverterFillComplexBuffer(AudioConverterRef c, AudioConverterComplexInputDataProc proc, void *user,
                                          UInt32 *ioPackets, AudioBufferList *out, AudioStreamPacketDescription *outDesc) {
   if (!c || !proc || !ioPackets || !out) return kAudio_ParamError;
-  const AudioStreamBasicDescription *D = &c->d, *S = &c->s;
+  const AudioStreamBasicDescription *D = &c->d, *S = c->alac ? &c->sp : &c->s;
   UInt32 want = *ioPackets, dbpf = D->mBytesPerFrame, dch = D->mChannelsPerFrame;
   // Platz im Ausgang begrenzt die Frames
   for (UInt32 b = 0; b < out->mNumberBuffers && b < at_pcm_nbuffers(D); b++)
@@ -165,6 +205,33 @@ OSStatus AudioConverterFillComplexBuffer(AudioConverterRef c, AudioConverterComp
     if (need > c->fifoN) {
       UInt32 ask = (UInt32)ceil((want - made) * c->ratio) + 2;
       if (ask < 64) ask = 64;
+      if (c->alac) {                    // Pakete holen und einzeln dekodieren
+        UInt32 fpp = c->s.mFramesPerPacket, pk = (ask + fpp - 1) / fpp;
+        abl->mNumberBuffers = 1; abl->mBuffers[0] = (AudioBuffer){ c->s.mChannelsPerFrame, 0, NULL };
+        AudioStreamPacketDescription *pd = NULL;
+        OSStatus r = proc(c, &pk, abl, &pd, user);
+        if (r) { err = r; break; }
+        if (!pk || !abl->mBuffers[0].mData) break;
+        const uint8_t *data = abl->mBuffers[0].mData; UInt32 total = abl->mBuffers[0].mDataByteSize, off = 0, decoded = 0;
+        for (UInt32 i = 0; i < pk; i++) {
+          UInt32 po = pd ? (UInt32)pd[i].mStartOffset : off, pb = pd ? pd[i].mDataByteSize : total / pk;
+          off = po + pb;
+          if (po + pb > total || !pb) break;
+          UInt32 n = at_alac_decode(c->dec, data + po, pb, c->pcm);
+          if (!n) continue;
+          decoded = 1;
+          UInt32 sk = c->skip < n ? c->skip : n; c->skip -= sk;
+          if (n == sk) continue;
+          if (!fifo_reserve(c, c->fifoN + n - sk)) { err = kAudio_MemFullError; break; }
+          AudioBufferList one = { 1, { { S->mChannelsPerFrame, (n - sk) * S->mBytesPerFrame, c->pcm + (size_t)sk * S->mBytesPerFrame } } };
+          float *pl[AT_MAXCH]; for (UInt32 k = 0; k < S->mChannelsPerFrame; k++) pl[k] = c->fifo[k] + c->fifoN;
+          at_decode(S, &one, n - sk, pl);
+          c->fifoN += n - sk;
+        }
+        if (err) break;
+        if (!decoded) break;
+        continue;
+      }
       UInt32 nb = at_pcm_nbuffers(S);
       abl->mNumberBuffers = nb;
       for (UInt32 b = 0; b < nb; b++) abl->mBuffers[b] = (AudioBuffer){ (S->mFormatFlags & kAudioFormatFlagIsNonInterleaved) ? 1 : S->mChannelsPerFrame, 0, NULL };
@@ -243,9 +310,10 @@ static int cprop(AudioConverterRef c, AudioConverterPropertyID id, UInt32 *size,
     case kAudioConverterSampleRateConverterQuality: p = &c->quality; w = 1; break;
     case kAudioConverterSampleRateConverterComplexity: p = &c->complexity; w = 1; break;
     case kAudioConverterPrimeMethod: p = &c->primeMethod; w = 1; break;
-    case kAudioConverterPropertyMinimumInputBufferSize: u = c->s.mBytesPerFrame; break;
+    case kAudioConverterPropertyMinimumInputBufferSize: u = c->alac ? c->s.mFramesPerPacket * c->sp.mBytesPerFrame + 64 : c->s.mBytesPerFrame; break;
     case kAudioConverterPropertyMinimumOutputBufferSize: u = c->d.mBytesPerFrame; break;
-    case kAudioConverterPropertyMaximumInputPacketSize: u = c->s.mBytesPerFrame; break;
+    case kAudioConverterPropertyMaximumInputPacketSize: u = c->alac ? c->s.mFramesPerPacket * c->sp.mBytesPerFrame + 64 : c->s.mBytesPerFrame; break;
+    case kAudioConverterDecompressionMagicCookie: if (!c->alac) { ok = 0; break; } p = c->cookie; sz = c->cookieSize; w = 1; break;
     case kAudioConverterPropertyMaximumOutputPacketSize: u = c->d.mBytesPerFrame; break;
     case kAudioConverterPropertyMaximumInputBufferSize: u = 1 << 20; break;
     case kAudioConverterCodecQuality: w = 1; break;
@@ -255,7 +323,7 @@ static int cprop(AudioConverterRef c, AudioConverterPropertyID id, UInt32 *size,
   if (!ok) return 0;
   if (size) *size = sz;
   if (writable) *writable = w;
-  if (data) memcpy(data, p, sz);
+  if (data && sz) memcpy(data, p, sz);
   if (setv) { if (!w) return -1; if (id == kAudioConverterSampleRateConverterQuality) c->quality = *(const UInt32 *)setv;
     else if (id == kAudioConverterSampleRateConverterComplexity) c->complexity = *(const UInt32 *)setv;
     else if (id == kAudioConverterPrimeMethod) c->primeMethod = *(const UInt32 *)setv; }
@@ -283,6 +351,11 @@ OSStatus AudioConverterSetProperty(AudioConverterRef c, AudioConverterPropertyID
   if (!c || !data) return kAudio_ParamError;
   if (id == kAudioConverterChannelMap || id == kAudioConverterInputChannelLayout || id == kAudioConverterOutputChannelLayout)
     return 0;     // Layouts werden ignoriert, die Abbildung ist fest (at_chanmap)
+  if (id == kAudioConverterDecompressionMagicCookie && c->alac) {      // Cookie übernehmen, Decoder neu aufsetzen
+    free(c->cookie); c->cookie = malloc(size ? size : 1); if (!c->cookie) return kAudio_MemFullError;
+    memcpy(c->cookie, data, size); c->cookieSize = size;
+    return alac_setup(c) ? 0 : kAudioConverterErr_FormatNotSupported;
+  }
   if (!cprop(c, id, &sz, &wr, NULL, NULL)) return kAudioConverterErr_PropertyNotSupported;
   if (!wr) return kAudioConverterErr_PropertyNotSupported;
   if (size != sz && id != kAudioConverterCodecQuality) return kAudioConverterErr_BadPropertySizeError;

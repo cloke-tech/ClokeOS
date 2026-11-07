@@ -26,12 +26,19 @@ ca="$root$fwdir/CoreAudio.framework/Versions/A/CoreAudio"
 
 d="$root$fwdir/AudioToolbox.framework"
 rm -rf "$d"; mkdir -p "$d/Versions/A/Resources"
+# ALAC-Decoder (Apples Quelltext, Apache 2.0, macapps/audiotoolbox/alac) und seine C-Schnittstelle: C++ ohne Ausnahmen/RTTI, braucht kein libc++
+alacobj="$obj/alac"; mkdir -p "$alacobj"
+for f in ALACDecoder.cpp ../alac_glue.cpp; do
+  clang++ -target "$TARGET" -isysroot "$SDK" -O2 -g0 -w -fno-exceptions -fno-rtti ${ARCHCC[@]+"${ARCHCC[@]}"} -c "$M/audiotoolbox/alac/$f" -o "$alacobj/$(basename "${f%.cpp}").o"
+done
+alacsrc=("$M"/audiotoolbox/alac/{ag_dec,dp_dec,matrix_dec,ALACBitUtilities,EndianPortable}.c)
 clang -target "$TARGET" -isysroot "$SDK" -O2 -g0 -Wno-deprecated-declarations ${ARCHCC[@]+"${ARCHCC[@]}"} -dynamiclib -nostdlib \
   -Wl,-platform_version,macos,11.0,11.5 -Wl,-syslibroot,"$pd" \
   ${CLOKE_ARCH:+$([ "$CLOKE_ARCH" = arm64 ] && echo -Wl,-no_fixup_chains)} \
   -install_name /System/Library/Frameworks/AudioToolbox.framework/Versions/A/AudioToolbox \
   -compatibility_version 1 -current_version 1 \
   -o "$d/Versions/A/AudioToolbox" "$M/audiotoolbox/AudioToolbox.c" "$M/audiotoolbox/convert.c" "$M/audiotoolbox/file.c" \
+  "${alacsrc[@]}" "$alacobj/ALACDecoder.o" "$alacobj/alac_glue.o" -w \
   "$obj/CoreFoundation" "$ca" "$pd/usr/lib/libSystem.B.dylib" 2>&1 | grep -v '^ld: warning' || true
 [ -f "$d/Versions/A/AudioToolbox" ] || exit 1
 cat > "$d/Versions/A/Resources/Info.plist" <<'PL'

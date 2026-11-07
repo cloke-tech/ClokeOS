@@ -862,3 +862,22 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   plausible levels; no guitar chain (second Pedalboard, `CGuitarAmpShell`) appeared, but the playback window may not have reached the guitar entries
   (first guitar note at 15 s on the Mac). Next: run the probe through an offline bounce of the whole song. Blocker for remote tests: the VM display
   freezes after a few minutes and Logic then ignores keys.
+
+### Round 51: guitars play – ALAC in AudioToolbox
+
+* **Cause of the silent guitars:** the guitar sampler instrument ("Vintage Strat") streams `Vintage Strat_consolidated.caf`, which is **ALAC** (Apple
+  Lossless, 4096 frames/packet, packet table). Our AudioToolbox had no codecs and rejected non-`lpcm` CAF, so the sampler got no audio; Logic then also skips
+  the channel's plug-ins (no Pedalboard/Amp in the effect probe). Drum and bass samples are plain PCM, hence they worked.
+* Found with two new probes in `libclogictrace`: `CLOKE_LOGIC_SMPPROBE=1` (per `MDSampler`: MIDI events and `Process` calls; all six samplers got notes)
+  and `CLOKE_LOGIC_FXPROBE=1` (level before/after each effect). Both patch function entries with a generic trampoline (`tramp()`, refuses PC-relative
+  instructions).
+* **Fix:** `macapps/audiotoolbox/alac/` = Apple's open-source ALAC decoder (Apache 2.0, unchanged, LICENSE included), `alac_glue.cpp` = C interface
+  (placement new, no exceptions/RTTI, no libc++ needed). `convert.c`: AudioConverter ALAC -> any PCM (magic cookie via
+  `kAudioConverterDecompressionMagicCookie` or defaults, VBR packet descriptions, `at_conv_skip` for positions inside a packet). `file.c`: CAF with any
+  format (`kuki` cookie, `pakt` packet table, also after the data chunk), VBR `AudioFileReadPacketData` with descriptions, packet-table/cookie properties;
+  ExtAudioFile hands the cookie to the converter, seeks to packet + skip (with priming frames) and stops at the valid frame count.
+* **Checked on the Mac:** our decoder + ExtAudioFile on `Vintage Strat_consolidated.caf` (26.3 M frames) is **bit-identical** to Apple's
+  (`afconvert`), also after seeking to 0, 4095, 4096, 123457 and the end.
+* **Result on ClokeOS:** the guitar chains now run (Guitar Amp, speaker/mic, Pedalboard with Chorus/Echo/Overdrive/Flanger). Whole-song bounce vs the
+  Mac's: every octave band within 0.1 dB, envelope correlation 0.94 (2:16 vs 2:21; the Mac bounce has a longer tail). Not checked track by track yet
+  (remote track selection is unreliable).

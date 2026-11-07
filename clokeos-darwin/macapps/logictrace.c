@@ -241,7 +241,56 @@ static void hook_fx_probe(void) {
     } else fprintf(stderr, "[clogic] CPlugInShell::Execute: unerwartete Befehle\n");
     fprintf(stderr, "[clogic] Effekt-Pegelsonde aktiv\n");
 }
+
+/* Allgemeines Sprungbrett: die ersten vier Befehle von f nach t kopieren (nur wenn keiner PC-relativ ist), dahinter Sprung nach f+16;
+ * f selbst springt auf hook. Gibt die Adresse des Sprungbretts (= Original) zurück oder NULL. */
+static int pcrel(uint32_t i) {
+    return (i & 0x1f000000) == 0x10000000 || (i & 0x7c000000) == 0x14000000 || (i & 0xff000010) == 0x54000000 ||
+           (i & 0x7e000000) == 0x34000000 || (i & 0x7e000000) == 0x36000000 || (i & 0x3b000000) == 0x18000000;
+}
+static void *tramp(uint32_t *f, void *hook) {
+    for (int i = 0; i < 4; i++) if (pcrel(f[i])) { fprintf(stderr, "[clogic] Sprungbrett: Befehl %d (%#x) PC-relativ\n", i, f[i]); return NULL; }
+    uint32_t *t = mmap(NULL, 0x4000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (t == MAP_FAILED) return NULL;
+    for (int i = 0; i < 4; i++) t[i] = f[i];
+    t[4] = 0x58000050; t[5] = 0xd61f0200; *(uint64_t *)&t[6] = (uint64_t)(f + 4);
+    mprotect(t, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(t, 32);
+    long pg = (long)f & ~0x3fffL;
+    if (mprotect((void *)pg, 0x8000, PROT_READ | PROT_WRITE)) return NULL;
+    f[0] = 0x58000050; f[1] = 0xd61f0200; *(uint64_t *)&f[2] = (uint64_t)hook;
+    mprotect((void *)pg, 0x8000, PROT_READ | PROT_EXEC); sys_icache_invalidate(f, 16);
+    return t;
+}
+/* CLOKE_LOGIC_SMPPROBE=1: je Sampler-Objekt (MDSampler) Zahl der MIDI-Ereignisse (InputMidiEvent +0x7dc0ac, Note-An gesondert) und
+ * der Process-Aufrufe (+0x7d4d78); Ausgabe alle ~5 s. */
+#include <time.h>
+typedef long (*smp_midi_fn)(void *, const unsigned char *, int);
+typedef long (*smp_proc_fn)(void *, void *, void *, long, long, long, int);
+static smp_midi_fn smp_midi_orig; static smp_proc_fn smp_proc_orig;
+#define SMN 32
+static struct { void *s; long midi, noteon, proc; } smp[SMN];
+static int smp_slot(void *s) { int k; for (k = 0; k < SMN && smp[k].s && smp[k].s != s; k++); if (k < SMN) smp[k].s = s; return k; }
+static long smp_midi_hook(void *s, const unsigned char *ev, int b) {
+    int k = smp_slot(s);
+    if (k < SMN) { smp[k].midi++; if (ev) { for (int i = 0; i < 16; i++) if ((ev[i] & 0xf0) == 0x90 && i + 2 < 16 && ev[i + 2]) { smp[k].noteon++; break; } } }
+    return smp_midi_orig(s, ev, b);
+}
+static long smp_proc_hook(void *s, void *in, void *out, long a, long b, long c, int lvl) {
+    int k = smp_slot(s); if (k < SMN) smp[k].proc++;
+    static time_t last; time_t now = time(NULL);
+    if (now - last >= 5) { last = now;
+        for (int i = 0; i < SMN && smp[i].s; i++) fprintf(stderr, "[clogic] smp %p midi %ld noteon~ %ld process %ld\n", smp[i].s, smp[i].midi, smp[i].noteon, smp[i].proc); }
+    return smp_proc_orig(s, in, out, a, b, c, lvl);
+}
+static void hook_smp_probe(void) {
+    if (!getenv("CLOKE_LOGIC_SMPPROBE")) return;
+    const char *base = mae_base(); if (!base) return;
+    smp_midi_orig = (smp_midi_fn)tramp((uint32_t *)(base + 0x7dc0ac), (void *)smp_midi_hook);
+    smp_proc_orig = (smp_proc_fn)tramp((uint32_t *)(base + 0x7d4d78), (void *)smp_proc_hook);
+    fprintf(stderr, "[clogic] Sampler-Sonde %s\n", smp_midi_orig && smp_proc_orig ? "aktiv" : "NICHT aktiv");
+}
 __attribute__((constructor)) static void init(void) {
+    hook_smp_probe();
     hook_fx_probe();
     hook_mdca_vtable();
     patch_newfile_dispose();

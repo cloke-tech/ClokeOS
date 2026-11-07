@@ -15,4 +15,6 @@ void at_decode(const AudioStreamBasicDescription *f, const AudioBufferList *abl,
 void at_encode(const AudioStreamBasicDescription *f, AudioBufferList *abl, UInt32 n, float **planar);
 // Kanalabbildung ohne Layout: gleiche Zahl = durchreichen, Mono = auf alle, auf Mono = Mittel, sonst min() und Rest 0
 void at_chanmap(UInt32 sch, float **src, UInt32 dch, float **dst, UInt32 n);
+// ALAC-Wandler: nach dem Suchen so viele dekodierte Frames verwerfen (Lage im Paket)
+void at_conv_skip(AudioConverterRef c, UInt32 frames);
 #endif

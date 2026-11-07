@@ -1,5 +1,6 @@
-// AudioFile / ExtAudioFile / AudioFormat für PCM in WAV, AIFF(-C) und CAF (eigener Code, kein Apple-Code).
-// Keine Codecs, keine Benutzerdaten-Chunks, kein Streaming-Parser (AudioFileStream).
+// AudioFile / ExtAudioFile / AudioFormat für PCM in WAV, AIFF(-C) und CAF (eigener Code, kein Apple-Code). Dazu Lesen
+// komprimierter CAF (Pakettabelle 'pakt', Magic Cookie 'kuki'); dekodieren kann der Wandler nur ALAC.
+// Keine Benutzerdaten-Chunks, kein Streaming-Parser (AudioFileStream).
 #include "at_internal.h"
 #include <fcntl.h>
 #include <math.h>
@@ -35,7 +36,12 @@ struct OpaqueAudioFileID {
   SInt64 sizePos;                  // Stelle des Größenfelds der Datenchunks (WAV/AIFF/CAF)
   SInt64 hdrEnd;
   UInt64 frames;                   // AIFF: Frames aus COMM
+  // komprimierte CAF: Magic Cookie und Pakettabelle (Anfang jedes Pakets relativ zu dataOff, npk+1 Einträge)
+  uint8_t *cookie; UInt32 cookieSize;
+  SInt64 npk, *pkoff; UInt32 maxpk;
+  SInt64 validFrames; UInt32 priming, remainder;
 };
+static int af_vbr(AudioFileID f) { return f->fmt.mFormatID != kAudioFormatLinearPCM; }
 
 static uint32_t rd32le(const uint8_t *p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
 static uint32_t rd32be(const uint8_t *p) { return p[3] | p[2] << 8 | p[1] << 16 | (uint32_t)p[0] << 24; }
@@ -137,35 +143,70 @@ static OSStatus parse_aiff(AudioFileID f) {
   return kAudioFileInvalidFileError;
 }
 static OSStatus parse_caf(AudioFileID f) {
-  uint8_t c[12]; UInt32 g; SInt64 pos = 8, size = io_size(&f->io); int have_fmt = 0;
+  uint8_t c[12]; UInt32 g; SInt64 pos = 8, size = io_size(&f->io); int have_fmt = 0, have_data = 0;
+  SInt64 paktPos = -1, paktLen = 0;
   while (pos + 12 <= size) {
     if (io_read(&f->io, pos, c, 12, &g) || g < 12) break;
     uint32_t id = rd32be(c); int64_t len = (int64_t)rd64be(c + 4);
     if (id == 'desc') {
       uint8_t b[32]; if (len < 32 || io_read(&f->io, pos + 12, b, 32, &g) || g < 32) return kAudioFileInvalidFileError;
       uint32_t fid = rd32be(b + 8), fl = rd32be(b + 12);
-      if (fid != 'lpcm') return kAudioFileUnsupportedDataFormatError;
       uint64_t rb = rd64be(b); double rate; memcpy(&rate, &rb, 8);
-      f->fmt = (AudioStreamBasicDescription){ rate, kAudioFormatLinearPCM, 0, rd32be(b + 16), rd32be(b + 20), rd32be(b + 24), rd32be(b + 28), 0, 0 };
       // Reihenfolge: bytesPerPacket, framesPerPacket, channels, bits
-      f->fmt.mBytesPerPacket = rd32be(b + 16); f->fmt.mFramesPerPacket = rd32be(b + 20);
-      f->fmt.mChannelsPerFrame = rd32be(b + 24); f->fmt.mBitsPerChannel = rd32be(b + 28);
-      f->fmt.mBytesPerFrame = f->fmt.mFramesPerPacket ? f->fmt.mBytesPerPacket / f->fmt.mFramesPerPacket : f->fmt.mBytesPerPacket;
-      f->fmt.mFormatFlags = ((fl & 1) ? kAudioFormatFlagIsFloat : kAudioFormatFlagIsSignedInteger) | ((fl & 2) ? 0 : kAudioFormatFlagIsBigEndian) | kAudioFormatFlagIsPacked;
-      if (!(fl & 1) && f->fmt.mBitsPerChannel == 8) f->fmt.mFormatFlags &= ~kAudioFormatFlagIsBigEndian;   // egal bei einem Byte
-      if (!f->fmt.mChannelsPerFrame || !f->fmt.mBytesPerFrame) return kAudioFileInvalidFileError;
+      f->fmt = (AudioStreamBasicDescription){ rate, fid, fl, rd32be(b + 16), rd32be(b + 20), 0, rd32be(b + 24), rd32be(b + 28), 0 };
+      if (!f->fmt.mChannelsPerFrame) return kAudioFileInvalidFileError;
+      if (fid == 'lpcm') {
+        f->fmt.mFormatID = kAudioFormatLinearPCM;
+        f->fmt.mBytesPerFrame = f->fmt.mFramesPerPacket ? f->fmt.mBytesPerPacket / f->fmt.mFramesPerPacket : f->fmt.mBytesPerPacket;
+        f->fmt.mFormatFlags = ((fl & 1) ? kAudioFormatFlagIsFloat : kAudioFormatFlagIsSignedInteger) | ((fl & 2) ? 0 : kAudioFormatFlagIsBigEndian) | kAudioFormatFlagIsPacked;
+        if (!(fl & 1) && f->fmt.mBitsPerChannel == 8) f->fmt.mFormatFlags &= ~kAudioFormatFlagIsBigEndian;   // egal bei einem Byte
+        if (!f->fmt.mBytesPerFrame) return kAudioFileInvalidFileError;
+      } else if (!f->fmt.mFramesPerPacket) return kAudioFileUnsupportedDataFormatError;   // variable Frames je Paket: nicht unterstützt
       have_fmt = 1;
+    } else if (id == 'kuki' && len > 0 && len < (1 << 20)) {
+      free(f->cookie); f->cookie = malloc((size_t)len);
+      if (!f->cookie || io_read(&f->io, pos + 12, f->cookie, (UInt32)len, &g) || g < len) return kAudioFileInvalidFileError;
+      f->cookieSize = (UInt32)len;
+    } else if (id == 'pakt') {
+      paktPos = pos + 12; paktLen = len;
     } else if (id == 'data') {
       if (!have_fmt) return kAudioFileInvalidFileError;
       f->dataOff = pos + 12 + 4; f->sizePos = pos + 4;
       SInt64 left = size - f->dataOff;
       f->dataBytes = (len < 0 || len - 4 > left) ? left : len - 4;
-      return 0;
+      have_data = 1;
+      if (len < 0) break;           // Daten bis zum Dateiende
     }
     if (len < 0) break;
     pos += 12 + len;
   }
-  return kAudioFileInvalidFileError;
+  if (!have_data) return kAudioFileInvalidFileError;
+  if (!af_vbr(f)) return 0;
+  // Komprimiert: feste Paketgröße oder Pakettabelle (Größen als BER-Zahlen: 7 Bit je Byte, oberes Bit = weiter)
+  f->validFrames = 0;
+  if (f->fmt.mBytesPerPacket) {
+    f->npk = f->dataBytes / f->fmt.mBytesPerPacket; f->maxpk = f->fmt.mBytesPerPacket;
+    f->pkoff = malloc((size_t)(f->npk + 1) * sizeof(SInt64));
+    if (!f->pkoff) return kAudio_MemFullError;
+    for (SInt64 i = 0; i <= f->npk; i++) f->pkoff[i] = i * f->fmt.mBytesPerPacket;
+  } else {
+    if (paktPos < 0 || paktLen < 24 || paktLen > (1 << 28)) return kAudioFileInvalidFileError;
+    uint8_t *t = malloc((size_t)paktLen);
+    if (!t || io_read(&f->io, paktPos, t, (UInt32)paktLen, &g) || g < paktLen) { free(t); return kAudioFileInvalidFileError; }
+    f->npk = (SInt64)rd64be(t); f->validFrames = (SInt64)rd64be(t + 8); f->priming = rd32be(t + 16); f->remainder = rd32be(t + 20);
+    f->pkoff = malloc((size_t)(f->npk + 1) * sizeof(SInt64));
+    if (!f->pkoff) { free(t); return kAudio_MemFullError; }
+    SInt64 q = 24, o = 0;
+    for (SInt64 i = 0; i < f->npk; i++) {
+      uint64_t v = 0; int more = 1;
+      while (more && q < paktLen) { v = (v << 7) | (t[q] & 0x7f); more = t[q] & 0x80; q++; }
+      f->pkoff[i] = o; o += (SInt64)v; if (v > f->maxpk) f->maxpk = (UInt32)v;
+    }
+    f->pkoff[f->npk] = o;
+    free(t);
+  }
+  if (!f->validFrames) f->validFrames = f->npk * f->fmt.mFramesPerPacket - f->priming - f->remainder;
+  return 0;
 }
 
 static AudioFileID af_new(void) { return calloc(1, sizeof(struct OpaqueAudioFileID)); }
@@ -307,6 +348,7 @@ OSStatus AudioFileClose(AudioFileID f) {
   OSStatus r = 0;
   if (f->writable && f->dirty) r = af_write_header(f);
   if (f->ownfd) close(f->io.fd);
+  free(f->cookie); free(f->pkoff);
   free(f);
   return r;
 }
@@ -335,8 +377,20 @@ OSStatus AudioFileWriteBytes(AudioFileID f, Boolean cache, SInt64 start, UInt32 
   return 0;
 }
 OSStatus AudioFileReadPacketData(AudioFileID f, Boolean cache, UInt32 *nbytes, AudioStreamPacketDescription *d, SInt64 start, UInt32 *npk, void *buf) {
-  (void)cache; (void)d;
+  (void)cache;
   if (!f || !nbytes || !npk || !buf) return kAudio_ParamError;
+  if (af_vbr(f)) {                     // komprimiert: so viele ganze Pakete, wie in nbytes passen, mit Beschreibungen
+    if (start < 0 || start >= f->npk) { *npk = 0; *nbytes = 0; return kAudioFileEndOfFileError; }
+    UInt32 n = 0; SInt64 base = f->pkoff[start];
+    while (n < *npk && start + n < f->npk && f->pkoff[start + n + 1] - base <= (SInt64)*nbytes) n++;
+    if (!n) { *npk = 0; *nbytes = 0; return kAudioFileBadPropertySizeError; }
+    UInt32 bytes = (UInt32)(f->pkoff[start + n] - base), got = 0;
+    if (io_read(&f->io, f->dataOff + base, buf, bytes, &got) || got < bytes) return kAudioFileUnspecifiedError;
+    if (d) for (UInt32 i = 0; i < n; i++)
+      d[i] = (AudioStreamPacketDescription){ f->pkoff[start + i] - base, 0, (UInt32)(f->pkoff[start + i + 1] - f->pkoff[start + i]) };
+    *npk = n; *nbytes = bytes;
+    return 0;
+  }
   UInt32 bpp = f->fmt.mBytesPerPacket;
   SInt64 total = f->dataBytes / bpp;
   if (start < 0 || start >= total) { *npk = 0; *nbytes = 0; return kAudioFileEndOfFileError; }
@@ -365,7 +419,19 @@ OSStatus AudioFileSetUserData(AudioFileID f, UInt32 id, UInt32 i, UInt32 s, cons
 OSStatus AudioFileRemoveUserData(AudioFileID f, UInt32 id, UInt32 i) { (void)f; (void)id; (void)i; return kAudioFileUnsupportedPropertyError; }
 
 static int afprop(AudioFileID f, AudioFilePropertyID id, UInt32 *size, UInt32 *w, void *out) {
-  union { UInt32 u; UInt64 q; SInt64 s; Float64 d; AudioStreamBasicDescription f; } v; UInt32 sz = 4; v.q = 0; *w = 0;
+  union { UInt32 u; UInt64 q; SInt64 s; Float64 d; AudioStreamBasicDescription f; AudioFilePacketTableInfo t; } v; UInt32 sz = 4; v.q = 0; *w = 0;
+  if (id == kAudioFilePropertyMagicCookieData) {
+    if (!f->cookie) return 0;
+    *size = f->cookieSize; if (out) memcpy(out, f->cookie, f->cookieSize);
+    return 1;
+  }
+  if (af_vbr(f)) switch (id) {         // komprimiert: Werte aus der Pakettabelle
+    case kAudioFilePropertyAudioDataPacketCount: v.q = f->npk; sz = 8; goto done;
+    case kAudioFilePropertyMaximumPacketSize: case kAudioFilePropertyPacketSizeUpperBound: v.u = f->maxpk; goto done;
+    case kAudioFilePropertyEstimatedDuration: v.d = f->fmt.mSampleRate > 0 ? (double)f->validFrames / f->fmt.mSampleRate : 0; sz = 8; goto done;
+    case kAudioFilePropertyBitRate: v.u = f->validFrames ? (UInt32)(f->dataBytes * 8 * f->fmt.mSampleRate / f->validFrames) : 0; goto done;
+    case kAudioFilePropertyPacketTableInfo: v.t = (AudioFilePacketTableInfo){ f->validFrames, (SInt32)f->priming, (SInt32)f->remainder }; sz = sizeof v.t; goto done;
+  }
   switch (id) {
     case kAudioFilePropertyFileFormat: v.u = f->type; break;
     case kAudioFilePropertyDataFormat: v.f = f->fmt; sz = sizeof v.f; break;
@@ -379,6 +445,7 @@ static int afprop(AudioFileID f, AudioFilePropertyID id, UInt32 *size, UInt32 *w
     case kAudioFilePropertyChannelLayout: *w = 1; return 0;
     default: return 0;
   }
+done:
   *size = sz;
   if (out) memcpy(out, &v, sz);
   return 1;
@@ -428,12 +495,14 @@ OSStatus AudioFormatGetProperty(AudioFormatPropertyID id, UInt32 specSize, const
   switch (id) {
     case kAudioFormatProperty_FormatInfo: {
       AudioStreamBasicDescription *d = out; *d = *(const AudioStreamBasicDescription *)spec;
+      if (d->mFormatID == kAudioFormatAppleLossless) { if (!d->mFramesPerPacket) d->mFramesPerPacket = 4096; break; }
       if (d->mFormatID != kAudioFormatLinearPCM) return kAudioFormatUnknownFormatError;
       if (!d->mBytesPerFrame && d->mBitsPerChannel) d->mBytesPerFrame = d->mChannelsPerFrame * ((d->mBitsPerChannel + 7) / 8);
       if (!d->mFramesPerPacket) d->mFramesPerPacket = 1;
       if (!d->mBytesPerPacket) d->mBytesPerPacket = d->mBytesPerFrame;
       break; }
-    case kAudioFormatProperty_FormatIsVBR: case kAudioFormatProperty_FormatIsExternallyFramed: *(UInt32 *)out = 0; break;
+    case kAudioFormatProperty_FormatIsVBR: case kAudioFormatProperty_FormatIsExternallyFramed:
+      *(UInt32 *)out = spec && specSize >= sizeof(AudioStreamBasicDescription) && ((const AudioStreamBasicDescription *)spec)->mFormatID == kAudioFormatAppleLossless; break;
     case kAudioFormatProperty_FormatName: {
       const AudioStreamBasicDescription *d = spec;
       if (d->mFormatID != kAudioFormatLinearPCM) return kAudioFormatUnknownFormatError;
@@ -452,6 +521,7 @@ struct OpaqueExtAudioFile {
   SInt64 fpos;          // nächstes Dateiframe, das der Wandler lesen wird
   SInt64 cpos;          // Clientframes gelesen/geschrieben
   UInt32 chunkcap; void *chunk;
+  AudioStreamPacketDescription *pdesc; UInt32 pdcap;   // komprimiert: Beschreibungen der gelesenen Pakete
 };
 typedef struct OpaqueExtAudioFile *ExtFile;
 
@@ -489,8 +559,18 @@ OSStatus ExtAudioFileDispose(ExtAudioFileRef e) {
   if (e->conv) AudioConverterDispose(e->conv);
   if (e->af && e->ownaf) r = AudioFileClose(e->af);
   else if (e->af && e->af->writable && e->af->dirty) { r = af_write_header(e->af); }
-  free(e->chunk); free(e);
+  free(e->chunk); free(e->pdesc); free(e);
   return r;
+}
+// Leseposition für Clientframe cf: PCM = Dateiframe; komprimiert = Paket mit dem Frame (plus Vorlauf), Rest wird im Wandler verworfen
+static void ext_locate(ExtFile e, SInt64 cf) {
+  double cr = e->cfmt.mSampleRate > 0 ? e->cfmt.mSampleRate : e->ffmt.mSampleRate;
+  SInt64 ff = (SInt64)floor(cf * e->ffmt.mSampleRate / cr);
+  if (!af_vbr(e->af)) { e->fpos = ff; return; }
+  ff += e->af->priming;
+  UInt32 fpp = e->af->fmt.mFramesPerPacket;
+  e->fpos = ff / fpp;
+  if (e->conv) { AudioConverterReset(e->conv); at_conv_skip(e->conv, (UInt32)(ff % fpp)); }
 }
 static OSStatus ext_setclient(ExtFile e, const AudioStreamBasicDescription *c) {
   AudioStreamBasicDescription d = *c;
@@ -500,8 +580,9 @@ static OSStatus ext_setclient(ExtFile e, const AudioStreamBasicDescription *c) {
   if (e->conv) { AudioConverterDispose(e->conv); e->conv = NULL; }
   OSStatus r = e->writing ? AudioConverterNew(&d, &e->ffmt, &e->conv) : AudioConverterNew(&e->ffmt, &d, &e->conv);
   if (r) return r;
+  if (!e->writing && e->af->cookie) AudioConverterSetProperty(e->conv, kAudioConverterDecompressionMagicCookie, e->af->cookieSize, e->af->cookie);
   e->cfmt = d; e->hascfmt = 1;
-  e->fpos = e->writing ? e->fpos : (SInt64)floor(e->cpos * e->ffmt.mSampleRate / d.mSampleRate);
+  if (!e->writing) ext_locate(e, e->cpos);
   return 0;
 }
 OSStatus ExtAudioFileSetProperty(ExtAudioFileRef e, ExtAudioFilePropertyID id, UInt32 size, const void *data) {
@@ -539,7 +620,7 @@ OSStatus ExtAudioFileGetProperty(ExtAudioFileRef e, ExtAudioFilePropertyID id, U
   switch (id) {
     case kExtAudioFileProperty_FileDataFormat: *(AudioStreamBasicDescription *)out = e->ffmt; break;
     case kExtAudioFileProperty_ClientDataFormat: *(AudioStreamBasicDescription *)out = e->cfmt; break;
-    case kExtAudioFileProperty_FileLengthFrames: *(SInt64 *)out = e->af->dataBytes / e->af->fmt.mBytesPerPacket; break;
+    case kExtAudioFileProperty_FileLengthFrames: *(SInt64 *)out = af_vbr(e->af) ? e->af->validFrames : e->af->dataBytes / e->af->fmt.mBytesPerPacket; break;
     case kExtAudioFileProperty_AudioFile: *(AudioFileID *)out = e->af; break;
     case kExtAudioFileProperty_AudioConverter: if (!e->conv) return kExtAudioFileError_InvalidProperty; *(AudioConverterRef *)out = e->conv; break;
   }
@@ -549,7 +630,21 @@ OSStatus ExtAudioFileGetProperty(ExtAudioFileRef e, ExtAudioFilePropertyID id, U
 
 typedef struct { ExtFile e; const AudioBufferList *src; UInt32 srcFrames; int given; } WrCtx;
 static OSStatus rd_input(AudioConverterRef c, UInt32 *np, AudioBufferList *io, AudioStreamPacketDescription **pd, void *ud) {
-  ExtFile e = ud; (void)c; (void)pd;
+  ExtFile e = ud; (void)c;
+  if (af_vbr(e->af)) {                 // komprimiert: *np Pakete mit Beschreibungen
+    UInt32 n = *np > 64 ? 64 : (*np ? *np : 1), cap = n * e->af->maxpk;
+    if (e->chunkcap < cap) { free(e->chunk); e->chunk = malloc(e->chunkcap = cap); if (!e->chunk) { e->chunkcap = 0; return kAudio_MemFullError; } }
+    if (e->pdcap < n) { free(e->pdesc); e->pdesc = malloc(sizeof *e->pdesc * (e->pdcap = n)); if (!e->pdesc) { e->pdcap = 0; return kAudio_MemFullError; } }
+    UInt32 bytes = cap, pk = n;
+    OSStatus r = AudioFileReadPacketData(e->af, 0, &bytes, e->pdesc, e->fpos, &pk, e->chunk);
+    if (r == kAudioFileEndOfFileError) { *np = 0; io->mBuffers[0].mDataByteSize = 0; return 0; }
+    if (r) return r;
+    e->fpos += pk;
+    io->mBuffers[0].mData = e->chunk; io->mBuffers[0].mDataByteSize = bytes; io->mBuffers[0].mNumberChannels = e->ffmt.mChannelsPerFrame;
+    if (pd) *pd = e->pdesc;
+    *np = pk;
+    return 0;
+  }
   UInt32 bpf = e->ffmt.mBytesPerFrame, n = *np > 4096 ? 4096 : *np;
   if (e->chunkcap < n * bpf) { free(e->chunk); e->chunk = malloc(e->chunkcap = n * bpf); if (!e->chunk) { e->chunkcap = 0; return kAudio_MemFullError; } }
   UInt32 bytes = n * bpf, pk = n;
@@ -566,6 +661,12 @@ OSStatus ExtAudioFileRead(ExtAudioFileRef e, UInt32 *nframes, AudioBufferList *i
   if (e->writing) return kExtAudioFileError_InvalidOperationOrder;
   if (!e->conv) { OSStatus r = ext_setclient(e, &e->cfmt); if (r) return r; }
   UInt32 n = *nframes;
+  if (af_vbr(e->af)) {                 // nicht über die gültigen Frames hinaus (Rest des letzten Pakets)
+    double cr = e->cfmt.mSampleRate > 0 ? e->cfmt.mSampleRate : e->ffmt.mSampleRate;
+    SInt64 total = (SInt64)floor(e->af->validFrames * cr / e->ffmt.mSampleRate);
+    if (e->cpos >= total) { *nframes = 0; for (UInt32 b = 0; b < io->mNumberBuffers; b++) io->mBuffers[b].mDataByteSize = 0; return 0; }
+    if ((SInt64)n > total - e->cpos) n = (UInt32)(total - e->cpos);
+  }
   OSStatus r = AudioConverterFillComplexBuffer(e->conv, rd_input, e, &n, io, NULL);
   if (r && !n) { *nframes = 0; return r; }
   e->cpos += n; *nframes = n;
@@ -610,8 +711,8 @@ OSStatus ExtAudioFileSeek(ExtAudioFileRef e, SInt64 frame) {
   if (e->writing) return kExtAudioFileError_InvalidOperationOrder;
   if (frame < 0) return kAudio_ParamError;
   e->cpos = frame;
-  e->fpos = (SInt64)floor(frame * e->ffmt.mSampleRate / (e->cfmt.mSampleRate > 0 ? e->cfmt.mSampleRate : e->ffmt.mSampleRate));
-  if (e->conv) AudioConverterReset(e->conv);
+  if (e->conv && !af_vbr(e->af)) AudioConverterReset(e->conv);
+  ext_locate(e, frame);
   return 0;
 }
 OSStatus ExtAudioFileTell(ExtAudioFileRef e, SInt64 *frame) {
