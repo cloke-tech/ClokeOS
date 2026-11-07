@@ -1,34 +1,42 @@
 #!/bin/bash
-# Baut Raven (https://github.com/mirkobrombin/raven, GPL-3.0) für ClokeOS x86_64 auf dem Mac: Quellen holen, den Darwin-Port
+# Baut Raven (https://github.com/mirkobrombin/raven, GPL-3.0) für ClokeOS (x86_64, oder arm64 mit Unicorn als CPU, GPL-2.0) auf dem Mac: Quellen holen, den Darwin-Port
 # (raven-darwin.patch: Mach-Backend statt ptrace, Plattform-Shims) anwenden, mit CMake für x86_64-apple-macos11 bauen.
 #
 #   raven/build.sh <stage>     legt <stage>/usr/libexec/raven/{raven,raven-bootstrap} und die gepatchte libc++ ab
 #
 # Ohne Vulkan, OpenSSL, Skia, FreeType und libpng: 64-Bit-Konsolenprogramme und einfache Fenster über den X11-Desktop (xcb,
-# xkbcommon, pixman); mit Skia (nur CPU) und Liberation-Schriften auch Text. Getestet: ein Konsolenprogramm, ein GDI-Fenster mit Text. Nur x86_64: Raven führt x86-64-Code nativ aus.
+# xkbcommon, pixman); mit Skia (nur CPU) und Liberation-Schriften auch Text. Getestet: ein Konsolenprogramm, ein GDI-Fenster mit Text.
+# x86_64: Raven führt x86-64-Code nativ aus (Mach-Backend). arm64 (CLOKEOS_ARCH=arm64): raven-arm64.patch kommt dazu, der x86-64-Code des
+# Programms läuft in Unicorn ($WORK/download/unicorn, gebaut von xlat/build.sh), siehe docs/raven-port.md.
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
 need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gcc i686-w64-mingw32-gcc pkg-config
-[ "$CLOKE_ARCH" = x86_64 ] || { echo "Raven gibt es nur für x86_64" >&2; exit 0; }
+case "$CLOKE_ARCH" in
+  x86_64) R="$WORK/raven"; triple=x86_64; skia_cpu=x64; meson_family=x86_64 ;;
+  arm64) R="$WORK/raven-arm64"; triple=arm64; skia_cpu=arm64; meson_family=aarch64
+    [ -f "$WORK/download/unicorn/build-arm64/libunicorn-static.a" ] || { echo "Unicorn fehlt: erst xlat/build.sh (baut es nach $WORK/download/unicorn)" >&2; exit 1; } ;;
+  *) echo "Raven gibt es nur für x86_64 und arm64" >&2; exit 0 ;;
+esac
 
 stage="$1"
 REV=387c718393777983d38a43d269df1ff13bfb5c04
-src="$WORK/raven/src"
-build="$WORK/raven/build"
-mkdir -p "$WORK/raven"
+src="$R/src"
+build="$R/build"
+mkdir -p "$R"
 if [ ! -d "$src/.git" ]; then
   git clone -q https://github.com/mirkobrombin/raven.git "$src"
 fi
-want=$(shasum "$HERE/raven/raven-darwin.patch" | cut -d' ' -f1)
+want=$(cat "$HERE/raven/raven-darwin.patch" "$HERE/raven/raven-arm64.patch" | shasum | cut -d' ' -f1)$CLOKE_ARCH
 if [ "$(cat "$src/.clokeos-patch" 2>/dev/null)" != "$want" ]; then
   git -C "$src" checkout -q -f "$REV"
   git -C "$src" clean -fdq -- native scripts CMakeLists.txt
   git -C "$src" apply --whitespace=nowarn "$HERE/raven/raven-darwin.patch"
+  [ "$CLOKE_ARCH" != arm64 ] || git -C "$src" apply --whitespace=nowarn "$HERE/raven/raven-arm64.patch"
   echo "$want" > "$src/.clokeos-patch"
 fi
 # Sysroot für den X11-Desktop: Header und Bibliotheken (xcb, xkbcommon, freetype, png) kommen aus dem PureDarwin-Image, pixman
 # wird aus dem Quelltext gebaut (meson aus einer venv)
-sys="$WORK/raven/sysroot"
+sys="$R/sysroot"
 if [ ! -f "$sys/lib/libpixman-1.a" ]; then
   rm -rf "$sys"; mkdir -p "$sys/lib/pkgconfig"
   read -r root_start _ < <(gpt_part "$PD_IMG" "$GUID_LINUX_FS")
@@ -51,41 +59,41 @@ if [ ! -f "$sys/lib/libpixman-1.a" ]; then
     sed -i '' -e "s#^prefix=.*#prefix=$sys#" -e '/^Requires.private/d' -e '/^Libs.private/d' -e "s#/nix/store/[a-z0-9]*-[A-Za-z0-9._-]*#$sys#g" "$f"
   done
   # OpenSSL (Zertifikate in crypt32): Bibliotheken aus dem Image, Header von Homebrews openssl@3 (gleiche Hauptversion)
-  mkdir -p "$sys/ssl/include" "$WORK/raven/dl"
+  mkdir -p "$sys/ssl/include" "$R/dl"
   cp -R "$(brew --prefix openssl@3)/include/openssl" "$sys/ssl/include/"
   for f in libcrypto.a libssl.a; do "$DEBUGFS" -R "dump /lib/$f $sys/lib/$f" "$fs0" >/dev/null 2>&1; done
   # libpng 1.6.59 (Raven verlangt mindestens diese Version, das Image hat 1.6.58)
   png=1.6.59
-  [ -d "$WORK/raven/dl/libpng-$png" ] || { curl -sL "https://download.sourceforge.net/libpng/libpng-$png.tar.xz" | tar xJ -C "$WORK/raven/dl"; }
-  cmake -G Ninja -S "$WORK/raven/dl/libpng-$png" -B "$WORK/raven/dl/libpng-build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+  [ -d "$R/dl/libpng-$png" ] || { curl -sL "https://download.sourceforge.net/libpng/libpng-$png.tar.xz" | tar xJ -C "$R/dl"; }
+  cmake -G Ninja -S "$R/dl/libpng-$png" -B "$R/dl/libpng-build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain-$CLOKE_ARCH.cmake" -DCMAKE_BUILD_TYPE=Release \
     -DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_INSTALL_PREFIX="$sys/png" >/dev/null
-  ninja -C "$WORK/raven/dl/libpng-build" install >/dev/null
+  ninja -C "$R/dl/libpng-build" install >/dev/null
   pixman=0.46.4
-  mkdir -p "$WORK/raven/dl"
-  [ -d "$WORK/raven/dl/pixman-$pixman" ] || { curl -sL "https://www.cairographics.org/releases/pixman-$pixman.tar.gz" | tar xz -C "$WORK/raven/dl"; }
-  python3 -m venv "$WORK/raven/dl/mv" >/dev/null && "$WORK/raven/dl/mv/bin/pip" -q install meson >/dev/null 2>&1
-  cat > "$WORK/raven/dl/cross.ini" <<INI
+  mkdir -p "$R/dl"
+  [ -d "$R/dl/pixman-$pixman" ] || { curl -sL "https://www.cairographics.org/releases/pixman-$pixman.tar.gz" | tar xz -C "$R/dl"; }
+  python3 -m venv "$R/dl/mv" >/dev/null && "$R/dl/mv/bin/pip" -q install meson >/dev/null 2>&1
+  cat > "$R/dl/cross.ini" <<INI
 [binaries]
-c = ['clang', '-target', 'x86_64-apple-macos11.0']
-cpp = ['clang++', '-target', 'x86_64-apple-macos11.0']
+c = ['clang', '-target', '$triple-apple-macos11.0']
+cpp = ['clang++', '-target', '$triple-apple-macos11.0']
 ar = 'ar'
 strip = 'strip'
 [host_machine]
 system = 'darwin'
-cpu_family = 'x86_64'
-cpu = 'x86_64'
+cpu_family = '$meson_family'
+cpu = '$meson_family'
 endian = 'little'
 [built-in options]
 c_args = ['-fPIC']
 INI
-  PATH="$WORK/raven/dl/mv/bin:$PATH" meson setup "$WORK/raven/dl/pixman-build" "$WORK/raven/dl/pixman-$pixman" --cross-file "$WORK/raven/dl/cross.ini" \
+  PATH="$R/dl/mv/bin:$PATH" meson setup "$R/dl/pixman-build" "$R/dl/pixman-$pixman" --cross-file "$R/dl/cross.ini" \
     --default-library=static -Dopenmp=disabled -Dgtk=disabled -Dlibpng=disabled -Dtests=disabled -Ddemos=disabled -Dprefix="$sys" -Dbuildtype=release >/dev/null
-  PATH="$WORK/raven/dl/mv/bin:$PATH" ninja -C "$WORK/raven/dl/pixman-build" install >/dev/null
+  PATH="$R/dl/mv/bin:$PATH" ninja -C "$R/dl/pixman-build" install >/dev/null
 fi
 export PKG_CONFIG_LIBDIR="$sys/lib/pkgconfig" PKG_CONFIG_PATH="$sys/lib/pkgconfig"
 # Text in Fenstern: Skia (nur CPU, ohne CoreText) und die Schriften. Von Skia wird nur FreeType gebraucht; git-sync-deps holt
 # dagegen 7 GB, deshalb wird FreeType allein geholt.
-text="$WORK/raven/text"
+text="$R/text"
 mkdir -p "$text/pnginc"
 cp "$sys/include/png.h" "$sys/include/pngconf.h" "$sys/include/pnglibconf.h" "$text/pnginc/"
 if [ ! -f "$text/cpu-fonts/libskia.a" ]; then
@@ -104,10 +112,10 @@ if [ ! -f "$text/cpu-fonts/libskia.a" ]; then
   fi
   python3 "$text/skia/bin/fetch-gn" >/dev/null
   mkdir -p "$text/cpu-fonts"
-  python3 - "$src/scripts/provision-text.py" "$text" <<'PY'
+  python3 - "$src/scripts/provision-text.py" "$text" "$skia_cpu" <<'PY'
 import re, sys
 args = re.search(r'SKIA_ARGUMENTS = """(.*?)"""', open(sys.argv[1]).read(), re.S).group(1)
-args += 'target_os = "mac"\ntarget_cpu = "x64"\nskia_use_system_freetype2 = false\nskia_use_fonthost_mac = false\n'
+args += 'target_os = "mac"\ntarget_cpu = "%s"\nskia_use_system_freetype2 = false\nskia_use_fonthost_mac = false\n' % sys.argv[3]
 args += 'extra_cflags = ["-mmacosx-version-min=11.0", "-fPIC", "-isystem", "%s/pnginc"]\n' % sys.argv[2]
 open(sys.argv[2] + "/cpu-fonts/args.gn", "w").write(args)
 PY
@@ -119,38 +127,48 @@ if [ ! -f "$text/fonts/RavenSans-Regular.ttf" ]; then
   mkdir -p "$text/shim"
   printf '#!/bin/bash\nargs=(); for a in "$@"; do [ "$a" = --wildcards ] || args+=("$a"); done\nexec /usr/bin/tar "${args[@]}"\n' > "$text/shim/tar"
   chmod +x "$text/shim/tar"
-  [ -x "$WORK/raven/dl/mv/bin/pip" ] || python3 -m venv "$WORK/raven/dl/mv" >/dev/null
-  "$WORK/raven/dl/mv/bin/pip" -q install fonttools >/dev/null 2>&1
-  PATH="$text/shim:$PATH" "$WORK/raven/dl/mv/bin/python" "$src/scripts/provision-text.py" --output "$text" --fonts-only >/dev/null
+  [ -x "$R/dl/mv/bin/pip" ] || python3 -m venv "$R/dl/mv" >/dev/null
+  "$R/dl/mv/bin/pip" -q install fonttools >/dev/null 2>&1
+  PATH="$text/shim:$PATH" "$R/dl/mv/bin/python" "$src/scripts/provision-text.py" --output "$text" --fonts-only >/dev/null
 fi
 # die Gast-Komponenten (RTL, ucrtbase, Controls) baut Raven mit MinGW aus den eigenen Quellen
-[ -f "$WORK/raven/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$WORK/raven/components/rtl" >/dev/null
-[ -f "$WORK/raven/components/controls/ucrtbase.dll" ] && grep -aq SHGetImageList "$WORK/raven/components/controls/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --output "$WORK/raven/components/controls" >/dev/null
+[ -f "$R/components/rtl/raven-rtl.dll" ] || python3 "$src/scripts/provision-rtl.py" --output "$R/components/rtl" >/dev/null
+[ -f "$R/components/controls/ucrtbase.dll" ] && grep -aq SHGetImageList "$R/components/controls/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --output "$R/components/controls" >/dev/null
 # 32-Bit-Komponenten (MinGW i686): Controls und ucrtbase32 (die CMake-Regel dafür hängt an Bedingungen, die hier nicht gelten)
-[ -f "$WORK/raven/components/controls32/comctl32.dll" ] && grep -aq SHGetImageList "$WORK/raven/components/controls32/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$WORK/raven/components/controls32" >/dev/null
+[ -f "$R/components/controls32/comctl32.dll" ] && grep -aq SHGetImageList "$R/components/controls32/raven-shell.dll" || python3 "$src/scripts/provision-controls.py" --arch x86 --output "$R/components/controls32" >/dev/null
 # Installer-Komponenten (msiexec, regsvr32, msxml3, oleaut32, windowscodecs ...): bauen aus den ReactOS-Quellen (ca. 150 MB Archiv),
 # brauchen widl (MinGW, pro Architektur) und bison >= 3.8 (brew)
 bisonbin="$(brew --prefix bison 2>/dev/null)/bin"
 [ -x "$bisonbin/bison" ] || { echo "bison fehlt: brew install bison" >&2; exit 1; }
 for a in x86_64:x64:installer i686:x86:installer32; do
   triple="${a%%:*}"; rest="${a#*:}"; arch="${rest%%:*}"; dir="${rest#*:}"
-  mkdir -p "$WORK/raven/shim-$arch"; ln -sf "$(command -v $triple-w64-mingw32-widl)" "$WORK/raven/shim-$arch/widl"
-  [ -f "$WORK/raven/components/$dir/msi.dll" ] || PATH="$WORK/raven/shim-$arch:$bisonbin:$PATH" python3 "$src/scripts/provision-installer.py" --arch "$arch" --output "$WORK/raven/components/$dir" >/dev/null
+  mkdir -p "$R/shim-$arch"; ln -sf "$(command -v $triple-w64-mingw32-widl)" "$R/shim-$arch/widl"
+  [ -f "$R/components/$dir/msi.dll" ] || PATH="$R/shim-$arch:$bisonbin:$PATH" python3 "$src/scripts/provision-installer.py" --arch "$arch" --output "$R/components/$dir" >/dev/null
 done
 crt="$src/native/upstream/raven-crt"
-i686-w64-mingw32-gcc -c -O2 -w -ffreestanding -fno-builtin "$crt/ucrtbase.c" -o "$WORK/raven/ucrtbase32.o"
-i686-w64-mingw32-gcc -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp -o "$WORK/raven/ucrtbase32.dll" \
-  "$WORK/raven/ucrtbase32.o" "$crt/ucrtbase32.def" -lkernel32 -lgcc
+i686-w64-mingw32-gcc -c -O2 -w -ffreestanding -fno-builtin "$crt/ucrtbase.c" -o "$R/ucrtbase32.o"
+i686-w64-mingw32-gcc -shared -nostdlib -Wl,--entry,_DllMain@12,--image-base,0x1fc00000,--no-insert-timestamp -o "$R/ucrtbase32.dll" \
+  "$R/ucrtbase32.o" "$crt/ucrtbase32.def" -lkernel32 -lgcc
 rm -f "$build/CMakeCache.txt"
-cmake -G Ninja -S "$src" -B "$build" -DCMAKE_TOOLCHAIN_FILE="$HERE/raven/toolchain.cmake" -DCMAKE_BUILD_TYPE=Release \
+toolchain_args="-DCMAKE_TOOLCHAIN_FILE=$HERE/raven/toolchain-$CLOKE_ARCH.cmake"
+unicorn_args=-DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0
+link_args=()
+if [ "$CLOKE_ARCH" = arm64 ]; then
+  # arm64 läuft auf dem Mac selbst: ohne Toolchain-Datei (als Cross-Build fänden die Werkzeuge der Regeln ihren Pfad nicht)
+  toolchain_args="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
+  # das Image liefert libxcb statisch: die Authentifizierungsbibliotheken kommen dazu
+  unicorn_args="-DRAVEN_UNICORN=ON -DRAVEN_UNICORN_DIR=$WORK/download/unicorn"
+  link_args=("-DCMAKE_EXE_LINKER_FLAGS=$sys/lib/libXau.a $sys/lib/libXdmcp.a")
+fi
+cmake -G Ninja -S "$src" -B "$build" $toolchain_args -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON \
   -DFREETYPE_INCLUDE_DIR_freetype2="$sys/include/freetype2" -DFREETYPE_INCLUDE_DIR_ft2build="$sys/include/freetype2" \
   -DFREETYPE_LIBRARY_RELEASE="$sys/lib/libfreetype.dylib" -DRAVEN_SKIA_SOURCE="$text/skia" -DRAVEN_SKIA_LIBRARY="$text/cpu-fonts/libskia.a" \
   -DRAVEN_FONT_DIRECTORY="$text/fonts" -DOPENSSL_INCLUDE_DIR="$sys/ssl/include" -DOPENSSL_CRYPTO_LIBRARY="$sys/lib/libcrypto.a" -DOPENSSL_SSL_LIBRARY="$sys/lib/libssl.a" \
   -DPNG_LIBRARY_RELEASE="$sys/png/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$sys/png/include" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
-  -DCMAKE_ASM_COMPILER_TARGET=x86_64-apple-macos11.0 -DRAVEN_RTL_COMPONENT_PATH="$WORK/raven/components/rtl/raven-rtl.dll" \
-  -DRAVEN_CONTROLS_COMPONENT_DIR="$WORK/raven/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$WORK/raven/components/controls32" \
-  -DRAVEN_INSTALLER_COMPONENT_DIR="$WORK/raven/components/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$WORK/raven/components/installer32" >/dev/null
+  $unicorn_args "${link_args[@]}" -DRAVEN_RTL_COMPONENT_PATH="$R/components/rtl/raven-rtl.dll" \
+  -DRAVEN_CONTROLS_COMPONENT_DIR="$R/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$R/components/controls32" \
+  -DRAVEN_INSTALLER_COMPONENT_DIR="$R/components/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$R/components/installer32" >/dev/null
 ninja -C "$build" raven raven-bootstrap installer_components_64 installer_components_32 >/dev/null
 
 # PureDarwins libc++ bricht bei std::uncaught_exceptions ab: die Bibliothek wird im Image ersetzt
@@ -164,10 +182,10 @@ python3 -I "$src/native/platform/patch_libcxx.py" "$WORK/tmp/raven/libc++.1.dyli
 mkdir -p "$stage/usr/libexec/raven" "$stage/usr/lib"
 cp "$build/native/raven" "$build/native/raven-bootstrap" "$stage/usr/libexec/raven/"
 cp -R "$text/fonts" "$stage/usr/libexec/raven/fonts"
-cp "$WORK/raven/ucrtbase32.dll" "$stage/usr/libexec/raven/"
+cp "$R/ucrtbase32.dll" "$stage/usr/libexec/raven/"
 [ ! -d "$build/native/x86" ] || cp -R "$build/native/x86" "$stage/usr/libexec/raven/x86"
 # die Komponenten liegen neben dem Programm: Raven sucht sie dort
 for f in "$build"/native/*.dll "$build"/native/*.exe; do [ -f "$f" ] && cp "$f" "$stage/usr/libexec/raven/"; done
 cp "$WORK/tmp/raven/libc++.1.dylib.patched" "$stage/usr/lib/libc++.1.dylib"
 chmod 755 "$stage/usr/libexec/raven/raven" "$stage/usr/libexec/raven/raven-bootstrap" "$stage/usr/lib/libc++.1.dylib"
-echo "Fertig: Raven für x86_64 ($(wc -c < "$build/native/raven" | tr -d ' ') Bytes)"
+echo "Fertig: Raven für $CLOKE_ARCH ($(wc -c < "$build/native/raven" | tr -d ' ') Bytes)"
