@@ -280,4 +280,4 @@ The `?` in `Untitled — Inno Setup Compiler` came from the frame's text drawing
 menu labels have one) it took the fast path whose `printable()` replaces every character outside Latin, Greek and Latin Extended
 Additional with `?`, and only an unlimited line used the fallback faces. A 32-bit test program (title with U+2014 and U+2013) showed
 it; the text was intact in the window (`GetWindowTextW` returned it). Text with such characters now takes the fallback faces
-whatever the limit and is shortened with an ellipsis when it is wider than the limit. Checked: the test title and the Compil32 title.
+whatever the limit and is shortened with an ellipsis when it is wider than the limit. Checked with the test program (title with em and en dash); the Compil32 title itself was not looked at again.
