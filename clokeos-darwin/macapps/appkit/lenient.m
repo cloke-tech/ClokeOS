@@ -129,8 +129,33 @@ static void h_show(id s, SEL c, id a) {
     ((void (*)(id, SEL, id))o_show)(s, c, a);
 }
 /* Maustasten (NSEventType 1…4, 25/26) und Tasten (10/11): wer bekommt das Ereignis */
+/* F12 (Tastencode 111): Ansichtsbaum aller sichtbaren Fenster nach stderr – Klasse, Rahmen, verborgen, wantsLayer,
+ * ob die Klasse drawRect:/updateLayer selbst implementiert, Unteransichten eingerückt (bis Tiefe 14) */
+static BOOL ck_overrides(Class c, SEL sel) {
+    IMP mine = class_getMethodImplementation(c, sel), base = class_getMethodImplementation([NSView class], sel);
+    return mine && mine != base;
+}
+static void ck_dumpview(id v, int depth) {
+    NSRect f = [v frame];
+    BOOL layer = [v respondsToSelector: @selector(wantsLayer)] && [v wantsLayer];
+    fprintf(stderr, "[viewdump] %*s%s {%.0f,%.0f %.0fx%.0f}%s%s%s%s%s\n", depth * 2, "", class_getName(object_getClass(v)),
+            f.origin.x, f.origin.y, f.size.width, f.size.height, [v isHidden] ? " hidden" : "", layer ? " layer" : "",
+            ck_overrides(object_getClass(v), @selector(drawRect:)) ? " drawRect" : "",
+            ck_overrides(object_getClass(v), @selector(updateLayer)) ? " updateLayer" : "",
+            [v respondsToSelector: @selector(stringValue)] && [v isKindOfClass: [NSControl class]] ? " ctl" : "");
+    if (depth >= 14) return;
+    for (id sub in [v subviews]) ck_dumpview(sub, depth + 1);
+}
+static void ck_dumpwindows(void) {
+    for (NSWindow *w in [NSApp windows]) {
+        if (![w isVisible]) continue;
+        fprintf(stderr, "[viewdump] Fenster %s \"%s\"\n", class_getName(object_getClass(w)), ck_title(w));
+        ck_dumpview([w contentView], 1);
+    }
+}
 static void ck_ev(const char *who, id s, NSEvent *e) {
     NSUInteger t = [e type];
+    if (t == 10 && [e keyCode] == 111 && who[2] == 'A') { ck_dumpwindows(); return; }
     if (t == 10 || t == 11) {   /* Tasten: Tastencode, Zeichen, Schlüsselfenster */
         id kw = [NSApp keyWindow];
         fprintf(stderr, "[clokeos-trace] %s key%s code=%u chars=\"%s\" flags=%#lx keyWindow=%s \"%s\" firstResponder=%s\n", who, t == 10 ? "Down" : "Up",

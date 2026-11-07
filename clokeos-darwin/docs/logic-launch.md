@@ -794,3 +794,20 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * File > Export > All Tracks as Audio Files runs on ClokeOS ("Exporting all Tracks", NSOpenPanel for the folder), writes the first track and then crashes in
   `MD::DisposeFileList` (called from `MD::FileRecordDisable`, garbage FileIO pointer). The export options view (`ExportRegionAsAudioFileView`) is not drawn, so the
   files are named "Untitled".
+
+### Round 47: per-track export on ClokeOS, first per-track comparison
+
+* **Export crash fixed (workaround):** after a track, `MD::NewFile` calls `MDFile::CheckDisposeFiles`, which releases every file no stream references – also
+  the file of the track just finished, which Logic still passes to `FileRecordDisable` (use-after-free, found with crashpc's free log and `CRASHPC_DUMPREG=19`:
+  the freed object was reused for Logic's tempo-analysis JSON). On the Mac pending async writes make `CheckDisposeFiles` return early; on ClokeOS the file
+  thread is done sooner. `libclogictrace` replaces that one call with `nop` (MAAudioEngine +0x6ee2f4, checked before patching; `CLOKE_LOGIC_KEEPFILES=0` turns it off).
+* **Global input fixes in AppKit:** (1) `NSWindow.m.sed`: hiding the key window passes key status to the main window / next visible window (an invisible
+  NSOpenPanel kept swallowing all keys). (2) `X11.backend/X11Display.m.sed`: Carbon key codes (`-[NSEvent keyCode]`) come from the X keysym instead of a fixed
+  evdev table – ClokeOS's X server uses XFree86 keycodes, so all arrow/Home/End/Page keys arrived wrong in every Mac app (Down was "keypad Enter").
+* `clokeos-xtest` in the image was older than `cloakserver/xtest.c` (no key chords); rebuilt, so `vmctl.py xkey super+shift+e` (Cmd+Shift+E) works.
+* File > Export > Tracks as Audio Files (Cmd+E) works on ClokeOS (files named after the track). Comparison with the Mac's export of the same tracks:
+  track 1 "Evolving Shades" (synth) **identical** (RMS 0.0490 vs 0.0491, every octave band within 1 dB); track 2 "SoCal" (drums, sampler/Drum Kit Designer,
+  samples missing on both machines) **differs**: 4× louder on ClokeOS, +27…+34 dB below 250 Hz, −10…−20 dB above 2 kHz. That is the low-end difference of
+  rounds 44–46. Open: what the drum instrument plays on ClokeOS without its samples; tracks 3–8 not exported yet (remote control of the export was flaky:
+  X focus stays on the closed panel, error alert NSCocoaErrorDomain 4 on the third export).
+* Tools: `CRASHPC_DUMPREG=<n>` (memory around a register as text), crashpc free log skips libc++/CF reuse; F12 in Logic dumps the view tree (`[viewdump]`).

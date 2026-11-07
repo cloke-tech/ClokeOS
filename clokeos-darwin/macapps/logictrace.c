@@ -7,6 +7,8 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <mach-o/dyld.h>
+#include <stdlib.h>
+#include <libkern/OSCacheControl.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
 
@@ -88,12 +90,36 @@ static void vt_bt(const char *what, void *self) {
 static u64 my_prime(void *self) { vt_bt("Prime", self); u64 r = o_prime(self); fprintf(stderr, "[clogic] MDCA::Prime -> %#llx\n", r); return r; }
 static u64 my_prep(void *self, u64 a, u64 b) { vt_bt("PrepareForStart", self); u64 r = o_prep(self, a, b); fprintf(stderr, "[clogic] MDCA::PrepareForStart(%llu, %llu) -> %#llx\n", a, b, r); return r; }
 static u64 my_start(void *self, u64 a) { vt_bt("Start", self); u64 r = o_start(self, a); fprintf(stderr, "[clogic] MDCA::Start(%llu) -> %#llx\n", a, r); return r; }
-static void hook_mdca_vtable(void) {
-    const char *base = NULL;   /* Bildanfang aus der dyld-Liste (dlsym traf ein anderes Bild) */
+static const char *mae_base(void) {   /* Bildanfang von MAAudioEngine aus der dyld-Liste (dlsym traf ein anderes Bild) */
     for (uint32_t i = 0; i < _dyld_image_count(); i++) {
         const char *n = _dyld_get_image_name(i);
-        if (n && strstr(n, "/MAAudioEngine.framework/")) { base = (const char *)_dyld_get_image_header(i); break; }
+        if (n && strstr(n, "/MAAudioEngine.framework/")) return (const char *)_dyld_get_image_header(i);
     }
+    return NULL;
+}
+/* Export-Absturz (File > Export > All Tracks): MD::NewFile ruft MDFile::CheckDisposeFiles, das alle Dateien freigibt, auf die gerade kein
+ * Stream zeigt – auch die der eben fertigen Spur, deren MDFile Logic danach noch an FileRecordDisable gibt (use-after-free). Auf dem Mac
+ * verhindert das meist, dass noch asynchrone Schreibaufträge offen sind (dann kehrt CheckDisposeFiles sofort zurück); hier ist der
+ * Datei-Faden schneller. Der Aufruf in NewFile wird durch nop ersetzt; Prime und Exit räumen weiter auf. Logic 12.3 arm64,
+ * MAAudioEngine +0x6ee2f4 = bl 0x711058. Aus mit CLOKE_LOGIC_KEEPFILES=0. */
+static void patch_newfile_dispose(void) {
+    const char *v = getenv("CLOKE_LOGIC_KEEPFILES");
+    if (v && *v == '0') return;
+    const char *base = mae_base();
+    if (!base) return;
+    uint32_t *ins = (uint32_t *)(base + 0x6ee2f4);
+    uint32_t want = 0x94000000u | (uint32_t)(((0x711058 - 0x6ee2f4) / 4) & 0x3ffffff);
+    if (*ins != want) { fprintf(stderr, "[clogic] NewFile-Patch: unerwarteter Befehl %#x, nicht gepatcht\n", *ins); return; }
+    long pg = (long)ins & ~0x3fffL;
+    if (mprotect((void *)pg, 0x4000, PROT_READ | PROT_WRITE)) { perror("[clogic] mprotect NewFile"); return; }
+    *ins = 0xd503201f;   /* nop */
+    mprotect((void *)pg, 0x4000, PROT_READ | PROT_EXEC);
+    sys_icache_invalidate(ins, 4);
+    fprintf(stderr, "[clogic] MD::NewFile: CheckDisposeFiles abgeschaltet\n");
+}
+static void hook_mdca_vtable(void) {
+    if (!getenv("CLOKE_LOGIC_MDCA_TRACE")) return;
+    const char *base = mae_base();
     if (!base) { fprintf(stderr, "[clogic] MAAudioEngine nicht gefunden\n"); return; }
     void **vt = (void **)(base + 0xe02070);
     Dl_info chk;   /* Probe: Eintrag +0xa8 muss in MAAudioEngine auf MDCA::Start zeigen */
@@ -110,6 +136,7 @@ static void hook_mdca_vtable(void) {
 
 __attribute__((constructor)) static void init(void) {
     hook_mdca_vtable();
+    patch_newfile_dispose();
     fprintf(stderr, "[clogic] trace loaded\n");
     Class c = objc_getClass("NSApplication");
     Method m = c ? class_getInstanceMethod(c, sel_registerName("setDelegate:")) : NULL;

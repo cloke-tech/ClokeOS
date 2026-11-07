@@ -169,7 +169,7 @@ static void report_free_of_n(uint64_t v, uint32_t maxshown) {
   for (uint32_t k = 0; k < n && shown < maxshown; k++) {
     freerec *r = &freering[(freepos - 1 - k) % FREERING];
     Dl_info dd;   /* Freigaben aus CoreFoundation (Wiederverwendung des Speichers) überspringen */
-    if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1) && dladdr((void *)(uintptr_t)r->ra[0], &dd) && dd.dli_fname && strstr(dd.dli_fname, "CoreFoundation")) continue;
+    if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1) && dladdr((void *)(uintptr_t)r->ra[0], &dd) && dd.dli_fname && (strstr(dd.dli_fname, "CoreFoundation") || strstr(dd.dli_fname, "libc++"))) continue;   /* Wiederverwendung (CF, std::string) überspringen */
     if (r->p && v >= r->p && v < r->p + (r->size ? r->size : 1)) {
       out("  freigegeben (Block "); hex(r->p); out(", Größe "); hex(r->size); out(") von:\n");
       for (int j = 0; j < 4; j++) if (r->ra[j]) frame("    frei", r->ra[j]);
@@ -201,6 +201,15 @@ static void *exc_thread(void *arg) {
       { static const int dr[] = { 0, 22 };   /* die ersten vier Wörter hinter x0 und x22 (Empfänger, Schleifenobjekt) */
         for (unsigned q = 0; q < 2; q++) { uint64_t w; out("  ["); out(dr[q] ? "x22" : "x0"); out("]");
           for (int k = 0; k < 4; k++) { out(" "); if (rd64(st.__x[dr[q]] + 8 * k, &w)) hex(w); else out("?"); } out("\n"); } }
+      { const char *dr = getenv("CRASHPC_DUMPREG");   /* CRASHPC_DUMPREG=<n>: 0x400 Bytes um x<n> (ab -0x100) als Text, nicht druckbare Bytes als '.' */
+        if (dr) {
+          uint64_t base = st.__x[atoi(dr) & 31] - 0x100, w; char line[80];
+          for (int k = 0; k < 0x400; k += 64) {
+            int n = 0;
+            for (int j = 0; j < 64; j += 8) { if (!rd64(base + k + j, &w)) { w = 0; } for (int b = 0; b < 8; b++) { unsigned char ch = (unsigned char)(w >> (8 * b)); line[n++] = ch >= 32 && ch < 127 ? (char)ch : '.'; } }
+            line[n] = 0; out("  dump+"); hex((uint64_t)k); out(" "); out(line); out("\n");
+          }
+        } }
       { uint64_t v, isa;
         if (getenv("CRASHPC_OBJC")) {   /* Selektor/Empfänger nur auf Wunsch: bei Nicht-Objekten stürzt sonst der Bericht ab */
           if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
@@ -242,7 +251,7 @@ static void *exc_thread(void *arg) {
     }
     { out("  --- Freigaben der Blöcke, auf die Register und Stapel zeigen ---\n");
       static const int regs[] = { 0, 1, 2, 19, 20, 21, 22, 23, 24 };
-      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], 3); }
+      for (unsigned q = 0; q < sizeof regs / sizeof *regs; q++) if (st.__x[regs[q]] > 0x100000000ULL) { out("  x"); hex((uint64_t)regs[q]); out("\n"); report_free_of_n(st.__x[regs[q]], regs[q] == 19 ? 8 : 3); }
       for (uint64_t a = st.__sp; a < st.__sp + 0x100; a += 8) { uint64_t v; if (rd64(a, &v) && v > 0x100000000ULL) report_free_of(v); } }
     _exit(139);
   }
