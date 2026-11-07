@@ -920,10 +920,31 @@ static int gen_string(Insn *I) {
 	Addr as = {6, 20, 0}, ad = {7, 20, 0};
 	uint32_t *loop = 0, *cz = 0;
 	if (I->rep) { cz = cp; E(0xB4000000 | 1); }  // cbz x1, done (später)
+	uint32_t *skip1 = 0, *skip2 = 0;
+	if (I->rep) {   // breite Schleife (32 Byte je Durchlauf) für den Hauptteil; der Rest und überlappende Bereiche laufen elementweise
+		int lg = sz == 1 ? 0 : sz == 2 ? 1 : sz == 4 ? 2 : 3;
+		lsr_i(T0, 1, 5 - lg, 1); skip1 = cp; E(0xB4000000 | T0);                           // cbz T0, schmal
+		if (I->strop == 0) { alu_r(SUB_, T1, 7, 6, 1); addsub_i(1, 0, T1, T1, 1, 1); lsr_i(T1, T1, 5, 1); skip2 = cp; E(0xB4000000 | T1); }   // 0 < rdi-rsi <= 32: Überlappung -> schmal
+		if (I->strop == 0) alu_r(ADD_, T2, 6, 20, 1);
+		alu_r(ADD_, T3, 7, 20, 1);
+		if (I->strop == 1) E(0x4E000C00 | (1 << lg) << 16 | 0 << 5 | 16);                  // dup v16.<T>, x0/w0
+		uint32_t *wl = cp;
+		if (I->strop == 0) E(0xACC00000u | 2 << 15 | 17 << 10 | T2 << 5 | 16);            // ldp q16, q17, [T2], #32
+		if (I->strop == 0) E(0xAC800000u | 2 << 15 | 17 << 10 | T3 << 5 | 16);            // stp q16, q17, [T3], #32
+		else E(0xAC800000u | 2 << 15 | 16 << 10 | T3 << 5 | 16);                           // stp q16, q16, [T3], #32
+		addsub_i(1, 0, T0, T0, 1, 1); { int64_t off = wl - cp; E(0xB5000000 | (off & 0x7ffff) << 5 | T0); }
+		lsr_i(T0, 1, 5 - lg, 1); lsl_i(T1, T0, 5, 1);                                      // erledigte Blöcke / Bytes
+		if (I->strop == 0) alu_r(ADD_, 6, 6, T1, 1);
+		alu_r(ADD_, 7, 7, T1, 1);
+		lsl_i(T0, T0, 5 - lg, 1); alu_r(SUB_, 1, 1, T0, 1);
+		*skip1 |= (cp - skip1) << 5; if (skip2) *skip2 |= (cp - skip2) << 5;
+		{ uint32_t *c2 = cp; E(0xB4000000 | 1); (void)c2; }   // cbz x1, done (Ziel wird unten gesetzt)
+		skip2 = cp - 1;
+	}
 	loop = cp;
 	if (I->strop == 0) { ldst(1, sz, 0, T0, as); ldst(0, sz, 0, T0, ad); addsub_i(0, 0, 6, 6, sz, 1); addsub_i(0, 0, 7, 7, sz, 1); }
 	else { ldst(0, sz, 0, 0, ad); addsub_i(0, 0, 7, 7, sz, 1); }
-	if (I->rep) { addsub_i(1, 0, 1, 1, 1, 1); { int64_t off = loop - cp; E(0xB5000000 | (off & 0x7ffff) << 5 | 1); } *cz |= (cp - cz) << 5; }
+	if (I->rep) { addsub_i(1, 0, 1, 1, 1, 1); { int64_t off = loop - cp; E(0xB5000000 | (off & 0x7ffff) << 5 | 1); } *cz |= (cp - cz) << 5; if (skip2) *skip2 |= (cp - skip2) << 5; }
 	return 1;
 }
 

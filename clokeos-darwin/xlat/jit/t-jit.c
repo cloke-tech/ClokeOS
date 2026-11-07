@@ -34,6 +34,27 @@ int cmain(long *sp) {
 	for (int i = 0; i < 300; i++) buf1[i] = (char)(i * 3);
 	char *s = buf1, *d = buf2; long n = 300; __asm__ volatile("rep movsb" : "+S"(s), "+D"(d), "+c"(n) :: "memory");
 	int same = 1; for (int i = 0; i < 300; i++) if (buf1[i] != buf2[i]) same = 0; CHECK(same, "rep movsb");
+	{   // breite rep-Schleifen: Rest, Überlappung (Wiederholung des Musters), stos mit mehreren Elementgrößen
+		static unsigned char a[400], b[800], ref[400]; int ok = 1;
+		for (int n = 1; n < 150; n += 7) for (int off = 0; off < 40; off += 3) {
+			for (int i = 0; i < 400; i++) a[i] = (unsigned char)(i * 5 + n); for (int i = 0; i < 400; i++) ref[i] = a[i];
+			char *s = (char *)a, *d = (char *)a + off; long cnt = n;
+			__asm__ volatile("rep movsb" : "+S"(s), "+D"(d), "+c"(cnt) :: "memory");
+			for (int i = 0; i < n; i++) ref[off + i] = ref[i];   // byteweise vorwärts: bei Überlappung Musterwiederholung
+			for (int i = 0; i < 400; i++) if (a[i] != ref[i]) ok = 0;
+			if (cnt != 0 || s != (char *)a + n || d != (char *)a + off + n) ok = 0;
+		}
+		for (int n = 1; n < 70; n += 5) {
+			for (int i = 0; i < 800; i++) b[i] = 0x11;
+			unsigned long v = 0x0123456789abcdefUL; char *d = (char *)b + 3; long cnt = n;
+			__asm__ volatile("rep stosq" : "+D"(d), "+c"(cnt) : "a"(v) : "memory");
+			for (int i = 0; i < n * 8; i++) if (b[3 + i] != (unsigned char)(v >> (8 * (i & 7)))) ok = 0;
+			if (b[2] != 0x11 || b[3 + n * 8] != 0x11 || d != (char *)b + 3 + n * 8) ok = 0;
+			d = (char *)b + 5; cnt = n; __asm__ volatile("rep stosb" : "+D"(d), "+c"(cnt) : "a"(0x5a) : "memory");
+			for (int i = 0; i < n; i++) if (b[5 + i] != 0x5a) ok = 0;
+		}
+		CHECK(ok, "rep movs/stos breit");
+	}
 	u64 x = 1000000007, y = 0; for (int i = 1; i < 20000; i++) { y += x / i + x % i; } CHECK(y == 12337590237ULL || y > 0, "div");
 	{   // selbstverändernder Code: Funktion "mov eax, imm32; ret" in einer RWX-Seite, wiederholt umgeschrieben und aufgerufen; Daten in derselben Seite
 		unsigned char *pg = (unsigned char *)sc(197, 0, 4096, 7, 0x1002, -1, 0); int ok = 1;
