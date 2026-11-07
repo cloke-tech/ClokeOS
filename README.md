@@ -425,5 +425,12 @@ Important: Apple's trademarks, icons and fonts must not be used. ClokeOS uses it
 ## Credits
 
 - Wallpapers: 13 artworks by [Pixel Makes Art](https://www.instagram.com/pixelmakesart) (Instagram), used with permission. Thank you!
+- **Built on the work of others.** ClokeOS would not exist without these projects. Where ClokeOS changes one of them, the changes are on a `clokeos` branch of a fork, so the authors can see what was done and take whatever is useful (each fork's `CLOKEOS.md` says what the branch holds):
+  - [PureDarwin](https://github.com/PureDarwin/PureDarwin) (fork: [cloke-tech/PureDarwin](https://github.com/cloke-tech/PureDarwin)): the Darwin 20.5 base, kernel build, drivers and objc4/dyld; ClokeOS adds driver fixes (Realtek network, USB HID, HD audio, ACPI topology) and an objc4 fix.
+  - [xnu-loader](https://github.com/PureDarwin/xnu-loader) (fork: [cloke-tech/xnu-loader](https://github.com/cloke-tech/xnu-loader)): the EFI boot loader; ClokeOS adds the boot logo and a 24-bit framebuffer hand-off.
+  - [Darling](https://github.com/darlinghq/darling) with [darling-cocotron](https://github.com/darlinghq/darling-cocotron), [darling-corefoundation](https://github.com/darlinghq/darling-corefoundation) and [darling-foundation](https://github.com/darlinghq/darling-foundation) (forks under [cloke-tech](https://github.com/cloke-tech)): the Mac frameworks for running Mac apps; ClokeOS builds them on PureDarwin's objc4 and dyld, for x86_64 and arm64, with its own fix-ups (`clokeos-darwin/macapps/patches`).
+  - [Raven](https://github.com/mirkobrombin/raven) (fork: [cloke-tech/raven](https://github.com/cloke-tech/raven), GPL-3.0): runs Windows programs; ClokeOS ported it from Linux to XNU.
+  - [ravynOS](https://github.com/ravynsoft/ravynOS) (fork: [cloke-tech/ravynos](https://github.com/cloke-tech/ravynos)): the HD audio driver (`RavynHDAudio`) that PureDarwin ships; ClokeOS fixes the amplifier setup and matches AMD controllers.
+  - [Unicorn](https://www.unicorn-engine.org/) (GPL-2.0): the CPU core of the x86_64-on-arm64 translation layer.
 - PureDarwin, Darwin and XNU (Apple Public Source License 2.0); Darling for the Mac frameworks; the Linux `rtw88` driver (Realtek, GPL-2.0 or BSD-3-Clause) as the reference for the Wi-Fi driver, firmware from `linux-firmware` under Realtek's redistribution licence.
 - Chinese, Japanese and Korean glyphs: [Noto Sans CJK](https://github.com/notofonts/noto-cjk) (SIL Open Font License 1.1), fetched at build time.
