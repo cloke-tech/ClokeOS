@@ -146,6 +146,8 @@ static uint8_t *guest_reserved;
 #define GP_NONE 0xff
 static uint8_t *gprot;
 static uint32_t *cflushes;   // Zähler je Hostseite: wie oft sie wegen Schreibzugriff entwertet wurde
+static uint8_t **cbits;      // je Codeseite eine Bitkarte (ein Bit je Byte der Hostseite) der übersetzten Quellbytes
+static uint64_t unprot[64]; static int nunprot;   // Codeseiten, die nach einem harmlosen Schreibzugriff vorübergehend offen sind
 static uint64_t code_lo, code_hi;
 static int reserve_guest(void) {
 	if (guest_reserved) return 0;
@@ -159,7 +161,7 @@ static int reserve_guest(void) {
 			if (p == MAP_FAILED) continue;
 			if ((uint64_t)p + n > top) { munmap(p, n); continue; }
 			guest_reserved = p; DELTA = (uint64_t)p; RESERVE = n;
-				gprot = malloc(n >> 12); memset(gprot, GP_NONE, n >> 12); cflushes = calloc(n >> 14, 4);
+				gprot = malloc(n >> 12); memset(gprot, GP_NONE, n >> 12); cflushes = calloc(n >> 14, 4); cbits = calloc(n >> 14, sizeof(void *));
 			if (getenv("UCRUN_JIT_TRACE")) fprintf(stderr, "jit: Gastfenster %p, %llu GiB\n", p, (unsigned long long)(n >> 30));
 			return 0;
 		}
@@ -175,7 +177,7 @@ uint64_t jit_guest_delta(void) { return guest_reserved ? DELTA : 0; }
 #define HPAGE 16384ULL
 static uint64_t *cset; static uint32_t cset_n, cset_cap;   // Codeseiten (Hostseiten-Nummer = Gastadresse >> 14), offene Adressierung, 0 = frei (Seite 0 gibt es nicht)
 static volatile int smc_pending;
-#define SMC_MAX_FLUSHES 400
+#define SMC_MAX_FLUSHES 0xffffffffu
 static int cset_has(uint64_t pg) {
 	if (!cset_cap) return 0;
 	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) { if (!cset[h]) return 0; if (cset[h] == pg + 1) return 1; }
@@ -196,7 +198,24 @@ static void cset_add(uint64_t pg) {
 	}
 	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (!cset[h]) { cset[h] = pg + 1; cset_n++; break; }
 }
+static void cbits_set(uint64_t a, uint64_t n) {   // Quellbytes [a, a+n) als übersetzt vermerken
+	while (n) {
+		uint64_t pg = a >> 14, off = a & 16383, k = 16384 - off < n ? 16384 - off : n;
+		if (!cbits[pg]) cbits[pg] = calloc(2048, 1);
+		for (uint64_t i = off; i < off + k; i++) cbits[pg][i >> 3] |= 1 << (i & 7);
+		a += k; n -= k;
+	}
+}
+static int cbits_hit(uint64_t pg, uint64_t off, uint64_t n) {   // sind Bytes [off, off+n) der Seite übersetzt?
+	if (!cbits[pg]) return 0;
+	for (uint64_t i = off; i < off + n && i < 16384; i++) if (cbits[pg][i >> 3] & (1 << (i & 7))) return 1;
+	return 0;
+}
+static int keep_open;   // gerade wird ein Befehl nach einem harmlosen Schreibfehler wiederholt: die Seiten noch nicht wieder schützen
+static void reprotect_open(void) { if (keep_open) return; for (int i = 0; i < nunprot; i++) host_apply(unprot[i]); nunprot = 0; }
 static void cset_clear(void) {   // alle Codeseiten wieder normal schützen
+	for (uint32_t i = 0; i < cset_cap; i++) if (cset[i] && cset[i] != ~0ULL) { free(cbits[cset[i] - 1]); cbits[cset[i] - 1] = 0; }
+	nunprot = 0;
 	for (uint32_t i = 0; i < cset_cap; i++) if (cset[i]) { uint64_t pg = cset[i] - 1; int tomb = cset[i] == ~0ULL; cset[i] = 0; if (!tomb) host_apply(pg); }
 	cset_n = 0;
 }
@@ -290,6 +309,16 @@ static int smc_fault(uint64_t addr) {
 	if (!guest_reserved || addr < DELTA || addr >= DELTA + RESERVE) return 0;
 	uint64_t pg = (addr - DELTA) >> 14;
 	if (!cset_has(pg)) return 0;
+	if (!cbits_hit(pg, (addr - DELTA) & 16383, 8) && !(((addr - DELTA) & 16383) >= 8 && cbits_hit(pg, ((addr - DELTA) & 16383) - 8, 8)) && nunprot < 64) {
+		// harmloser Schreibzugriff: die Seite enthält übersetzten Code, aber nicht an dieser Stelle. Seite vorübergehend öffnen (der Befehl läuft nochmal),
+		// beim nächsten Eintritt in den Verteiler (neuer Block, jit_run) wird sie wieder geschützt.
+		uint8_t any = 0, mapped = 0;
+		for (int i = 0; i < 4; i++) { uint8_t v = gprot[pg * 4 + i]; if (v != GP_NONE) { mapped = 1; any |= v; } }
+		int prot = PROT_NONE; if (mapped) { if (any & (PROT_READ | PROT_EXEC)) prot |= PROT_READ; if (any & PROT_WRITE) prot |= PROT_READ | PROT_WRITE; }
+		mprotect((void *)(DELTA + pg * HPAGE), HPAGE, prot);
+		unprot[nunprot++] = pg;
+		return 2;
+	}
 	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (cset[h] == pg + 1) { cset[h] = ~0ULL; break; }   // Grabstein: Suche geht weiter, Eintrag zählt nicht mehr
 	uint8_t any = 0, mapped = 0;
 	for (int i = 0; i < 4; i++) { uint8_t v = gprot[pg * 4 + i]; if (v != GP_NONE) { mapped = 1; any |= v; } }
@@ -303,7 +332,7 @@ static int smc_fault(uint64_t addr) {
 // ------------------------------------------------------------------------------------------------ Decoder
 enum { OP_FB, OP_NOP, OP_MOV, OP_LEA, OP_ALU, OP_INC, OP_DEC, OP_NEG, OP_NOT, OP_MUL1, OP_IMUL1, OP_DIV, OP_IDIV, OP_IMUL2,
        OP_SHIFT, OP_PUSH, OP_POP, OP_CALL, OP_CALLI, OP_RET, OP_JMP, OP_JMPI, OP_JCC, OP_SETCC, OP_CMOV, OP_MOVZX, OP_MOVSX,
-       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE, OP_INT3, OP_UD2 };
+       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE, OP_INT3, OP_UD2, OP_CMPXCHG, OP_XADD, OP_ROT, OP_BS, OP_POPCNT, OP_BT };
 typedef struct { uint8_t k, n, hi; } Opd;  // k: 0 -, 1 Register, 2 Speicher, 3 Immediate
 typedef struct {
 	int op, sz, ssz, cc, alu, len, rep, count, live, cl, imm3, strop, branchy, followed;
@@ -373,7 +402,7 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 	int osz = W ? 8 : opsz16 ? 2 : 4;
 	int fl = flen(p, &I->branchy);
 	#define FAIL do { I->op = OP_FB; I->len = fl; return; } while (0)
-	if (lock || addr32) FAIL;
+	if (addr32) FAIL;   // lock wird ignoriert (ein Gastthread je Host-Thread); cmpxchg/xadd sind trotzdem atomar
 	uint8_t op = p[i++];
 	int regf = 0; Opd rmo = {0};
 	// ModRM lesen: setzt regf, rmo (Register oder Speicher) für Operandengröße msz
@@ -398,6 +427,11 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 		if (o2 >= 0x40 && o2 <= 0x4f) { int cc = o2 & 15; if (cc == 10 || cc == 11 || osz == 2) FAIL; MODRM(osz); I->op = OP_CMOV; I->cc = cc; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 == 0xaf) { if (osz == 2) FAIL; MODRM(osz); I->op = OP_IMUL2; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 == 0xb6 || o2 == 0xb7 || o2 == 0xbe || o2 == 0xbf) { int ss = (o2 & 1) ? 2 : 1; MODRM(ss); I->op = (o2 < 0xb8) ? OP_MOVZX : OP_MOVSX; I->sz = osz; I->ssz = ss; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
+		if (o2 == 0xb0 || o2 == 0xb1 || o2 == 0xc0 || o2 == 0xc1) { int s8 = (o2 & 1) ? osz : 1; if (s8 < 4) FAIL; MODRM(s8); I->op = (o2 & 0xfe) == 0xb0 ? OP_CMPXCHG : OP_XADD; I->sz = s8; I->d = rmo; I->s = mkreg(regf, s8, rex); I->len = i; return; }
+		if (o2 == 0xbc || o2 == 0xbd) { if (osz == 2) FAIL; MODRM(osz); I->op = OP_BS; I->alu = o2 == 0xbc ? 0 : 1; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }   // (rep wird überlesen: tzcnt/lzcnt laufen wie bsf/bsr, wie in der emulierten CPU)
+		if (o2 == 0xb8 && rep == 1) { if (osz == 2) FAIL; MODRM(osz); I->op = OP_POPCNT; I->sz = osz; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
+		if (o2 == 0xa3 || o2 == 0xab || o2 == 0xb3 || o2 == 0xbb) { if (osz == 2) FAIL; MODRM(osz); if (rmo.k != 1) FAIL; I->op = OP_BT; I->alu = o2 == 0xa3 ? 0 : o2 == 0xab ? 1 : o2 == 0xb3 ? 2 : 3; I->sz = osz; I->d = rmo; I->s = mkreg(regf, osz, rex); I->len = i; return; }
+		if (o2 == 0xba) { if (osz == 2) FAIL; MODRM(osz); int k = regf & 7; if (k < 4) FAIL; I->op = OP_BT; I->alu = k - 4; I->sz = osz; I->d = rmo; I->s.k = 3; I->imm = p[i++]; I->len = i; return; }
 		if (o2 >= 0xc8 && o2 <= 0xcf) { if (osz == 2) FAIL; I->op = OP_BSWAP; I->sz = osz; I->d = mkreg((o2 & 7) | B, osz, rex); I->len = i; return; }
 		{
 			int sop, arg, fl, msz, fmt, pfx = rep == 1 ? 0xf3 : rep == 2 ? 0xf2 : opsz16 ? 0x66 : 0, ok = 0;
@@ -464,8 +498,10 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 		I->len = i; return;
 	case 0xc0: case 0xc1: case 0xd0: case 0xd1: case 0xd2: case 0xd3: {
 		int s8 = (op & 1) ? osz : 1; MODRM(s8); int k = regf & 7;
-		if (k == 0 || k == 1 || k == 2 || k == 3) FAIL;  // rol/ror/rcl/rcr: Unicorn
-		I->op = OP_SHIFT; I->alu = k == 4 || k == 6 ? 4 : k == 5 ? 5 : 7; I->sz = s8; I->d = rmo;
+		if (k == 2 || k == 3 || (k < 2 && s8 < 4)) FAIL;  // rcl/rcr, 8/16-Bit-Rotationen: Unicorn
+		I->op = k < 2 ? OP_ROT : OP_SHIFT;
+		if (k < 2) I->alu = k;
+		else I->alu = k == 4 || k == 6 ? 4 : k == 5 ? 5 : 7; I->sz = s8; I->d = rmo;
 		if (op == 0xc0 || op == 0xc1) { I->s.k = 3; I->imm = p[i++]; } else if (op == 0xd0 || op == 0xd1) { I->s.k = 3; I->imm = 1; } else I->cl = 1;
 		I->imm &= (s8 == 8 ? 63 : 31);
 		if (!I->cl && I->imm == 0) FAIL;
@@ -620,6 +656,7 @@ static void exit_fb(uint64_t pc, int count, uint64_t end) {
 static void set_fs_alu(int alu) { fs = (alu == 0 || alu == 2) ? FS_ADD : (alu == 3 || alu == 5 || alu == 7) ? FS_SUB : FS_LOGIC; }
 
 #include "jit_sse_gen.inc"
+#include "jit_int_gen.inc"
 
 static int gen_alu(Insn *I) {
 	int alu = I->alu, sz = I->sz, live = I->live, cmp = alu == 7 || alu == 8, is64 = sz == 8;
@@ -784,6 +821,12 @@ static int gen_insn(Insn *I) {
 	switch (I->op) {
 	case OP_NOP: return 1;
 	case OP_SSE: return gen_sse(I);
+	case OP_CMPXCHG: return gen_cmpxchg(I);
+	case OP_XADD: return gen_xadd(I);
+	case OP_ROT: return gen_rot(I);
+	case OP_BS: return gen_bs(I);
+	case OP_POPCNT: return gen_popcnt(I);
+	case OP_BT: return gen_bt(I);
 	case OP_MOV: {
 		Opd *d = &I->d, *s = &I->s;
 		if (s->k == 3) {
@@ -878,7 +921,8 @@ static int gen_string(Insn *I) {
 }
 
 typedef struct { uint64_t pc; uint32_t off; uint8_t fs, len; } IMap;
-typedef struct { uint64_t pc; uint32_t *code; int nf; } Blk;
+typedef struct { uint64_t pc; uint32_t *code; int nf; uint32_t ep; } Blk;   // ep: Gültigkeitsrunde (jit_flush erhöht sie, ohne die Tabelle zu leeren)
+static uint32_t cur_ep = 1;
 #define BTAB (1u << 16)
 static Blk btab[BTAB]; static int nblk;
 typedef struct { uint32_t *start; uint32_t i0, i1; } BRange;
@@ -889,17 +933,17 @@ uint64_t jit_flush_epoch;
 
 static Blk *blk_lookup(uint64_t pc) {
 	uint32_t h = (uint32_t)((pc ^ (pc >> 16)) * 2654435761u) & (BTAB - 1);
-	for (;;) { Blk *b = &btab[h]; if (!b->code) return 0; if (b->pc == pc) return b; h = (h + 1) & (BTAB - 1); }
+	for (;;) { Blk *b = &btab[h]; if (b->ep != cur_ep) return 0; if (b->pc == pc) return b; h = (h + 1) & (BTAB - 1); }
 }
 static Blk *blk_add(uint64_t pc, uint32_t *code, int nf) {
 	uint32_t h = (uint32_t)((pc ^ (pc >> 16)) * 2654435761u) & (BTAB - 1);
-	while (btab[h].code) h = (h + 1) & (BTAB - 1);
-	btab[h].pc = pc; btab[h].code = code; btab[h].nf = nf; nblk++; return &btab[h];
+	while (btab[h].ep == cur_ep) h = (h + 1) & (BTAB - 1);
+	btab[h].pc = pc; btab[h].code = code; btab[h].nf = nf; btab[h].ep = cur_ep; nblk++; return &btab[h];
 }
 
 void jit_flush(void) {
 	cset_clear(); smc_pending = 0;
-	code_lo = ~0ULL; code_hi = 0; jit_flush_epoch++; memset(btab, 0, sizeof btab); nblk = 0; cp = code_blocks; nbr = nim = 0; flushed = 1;
+	code_lo = ~0ULL; code_hi = 0; jit_flush_epoch++; cur_ep++; nblk = 0; cp = code_blocks; nbr = nim = 0; flushed = 1;
 	if (gctx) memset((void *)gctx->jcache, 0, 4096 * 16);
 }
 
@@ -913,6 +957,7 @@ static void safe_decode(uint64_t pc, Insn *I) {
 }
 static Blk *translate(uint64_t pc) {
 	if (cp + 16384 > code_end || nblk > 40000) jit_flush();
+	reprotect_open();
 	pthread_jit_write_protect_np(0);
 	static Insn ins[MAXI + 2]; int n = 0; uint64_t cur = pc; int follows = 0, term = 0;
 	while (n < MAXI && !term) {
@@ -940,7 +985,8 @@ static Blk *translate(uint64_t pc) {
 		Insn *I = &ins[i]; I->live = L; int rd = 0, wr = 0;
 		switch (I->op) {
 		case OP_ALU: wr = 1; if (I->alu == 2 || I->alu == 3) rd = 1; break;
-		case OP_NEG: case OP_MUL1: case OP_IMUL1: case OP_IMUL2: wr = 1; break;
+		case OP_NEG: case OP_MUL1: case OP_IMUL1: case OP_IMUL2: case OP_CMPXCHG: case OP_XADD: case OP_BS: case OP_POPCNT: wr = 1; break;
+		case OP_ROT: if (I->cl) rd = 1; break;
 		case OP_SHIFT: if (!I->cl) wr = 1; else rd = 1; break;
 		case OP_JCC: case OP_SETCC: case OP_CMOV: case OP_FB: case OP_SYSCALL: rd = 1; break;
 		case OP_DIV: case OP_IDIV: rd = 1; break;
@@ -955,6 +1001,7 @@ static Blk *translate(uint64_t pc) {
 		Insn *I = &ins[i]; if (I->len <= 0) continue;
 		for (uint64_t pg = I->pc >> 14; pg <= (I->pc + I->len - 1) >> 14; pg++)
 			if (pg < (RESERVE >> 14) && !cset_has(pg) && cflushes[pg] < SMC_MAX_FLUSHES && gprot[pg * 4] != GP_NONE) { cset_add(pg); host_apply(pg); }
+		if (I->pc + I->len <= RESERVE && cset_has(I->pc >> 14)) cbits_set(I->pc, I->len);
 	}
 	if (nbr == cbr) { cbr = cbr ? cbr * 2 : 4096; branges = realloc(branges, cbr * sizeof *branges); }
 	uint32_t *start = cp; branges[nbr].start = start; branges[nbr].i0 = nim;
@@ -1103,7 +1150,7 @@ static void fault_handler(int sig, siginfo_t *si, void *uc_) {
 	if (m->fs == FS_SUB) nz ^= 0x20000000ULL;
 	if (m->fs == FS_FCMP) { uint64_t N = nz >> 31 & 1, Z = nz >> 30 & 1, V = nz >> 28 & 1; nz = (N | V) << 29 | (Z | V) << 30 | V << 8; }
 	if (m->fs != FS_CTX) { gctx->nzcv = nz; gctx->expl = 0; }
-	gctx->rip = m->pc; gctx->fb_end = m->len ? m->pc + m->len : 0; gctx->aux = (uint64_t)si->si_addr; gctx->count = 1; gctx->status = smc ? JIT_RETRY : JIT_FAULT;
+	gctx->rip = m->pc; gctx->fb_end = m->len ? m->pc + m->len : 0; gctx->aux = (uint64_t)si->si_addr; gctx->count = 1; gctx->status = smc == 1 ? JIT_RETRY : smc == 2 ? JIT_RETRY_OPEN : JIT_FAULT;
 	uc->uc_mcontext->__ss.__pc = (uint64_t)g_E2;
 	uc->uc_mcontext->__ss.__x[19] = (uint64_t)gctx;
 }
@@ -1137,10 +1184,12 @@ int jit_init(JitCtx *c) {
 int jit_run(JitCtx *c) {
 	typedef uint64_t (*enter_fn)(JitCtx *, void *);
 	if (smc_pending) jit_flush();
+	reprotect_open();
 	Blk *b = blk_lookup(c->rip); if (!b) b = translate(c->rip);
 	pthread_jit_write_protect_np(1);
 	for (;;) {
 		((enter_fn)(void *)g_enter)(c, b->code);
+		if (c->status == JIT_RETRY_OPEN) { keep_open = 1; b = translate(c->rip); keep_open = 0; pthread_jit_write_protect_np(1); continue; }   // harmloser Schreibzugriff auf eine Codeseite: Befehl wiederholen
 		if (c->status == JIT_RETRY) { jit_flush(); b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }   // Schreibzugriff auf Codeseite: alles entwerten, neu übersetzen
 		if (c->status != JIT_MISS) return (int)c->status;
 		uint64_t pc = c->next_pc; uint32_t *site = (uint32_t *)c->exit_site;

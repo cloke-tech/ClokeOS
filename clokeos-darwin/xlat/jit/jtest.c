@@ -70,10 +70,11 @@ static int pick_cc(void) { for (int k = 0; k < 64; k++) { int cc = rn(16); if (c
 static int rsz(void) { static const int s[] = {1, 2, 4, 4, 8, 8}; return s[rn(6)]; }
 #define CFOF 0x801u
 #define ALLF 0x8c1u
+static int need_aligned;   // cmpxchg/xadd (LSE) verlangen ausgerichtete Speicheroperanden
 static void gen_one(Buf *B) {
 	int sz = rsz(), w = sz == 8, p66 = sz == 2, reg = rn(16), rm = rn(16), mem = rn(2), alu = rn(8);
 	uint8_t op[3];
-	switch (rn(30)) {
+	switch (rn(36)) {
 	case 0: case 1: case 2: case 3: {  // ALU r/m,r  /  r,r/m
 		op[0] = alu * 8 + (rn(2) ? 2 : 0) + (sz > 1); emit_rm(B, p66, w, op, 1, reg, mem, rm, sz == 1, 0, 0); B->wf = 1; B->undef = 0; break; }
 	case 4: case 5: {  // ALU imm
@@ -108,8 +109,8 @@ static void gen_one(Buf *B) {
 		if (form == 0) { op[0] = sz == 1 ? 0xc0 : 0xc1; int c = rn(sz == 8 ? 64 : 32); emit_rm(B, p66, w, op, 1, k, mem, rm, sz == 1, 1, c); B->undef = c == 1 ? 0x10 : (CFOF | 0x10) & ~1u | 0x800 | 0x10; if (c != 1) B->undef = 0x800 | 0x10; if (c == 0) B->undef = ALLF; }
 		else if (form == 1) { op[0] = sz == 1 ? 0xd0 : 0xd1; emit_rm(B, p66, w, op, 1, k, mem, rm, sz == 1, 0, 0); B->undef = 0x10; }
 		else { op[0] = sz == 1 ? 0xd2 : 0xd3; emit_rm(B, p66, w, op, 1, k, mem, rm, sz == 1, 0, 0); B->undef = ALLF; }
-		if (k >= 0 && k <= 3) B->undef = ALLF;
-		B->wf = 1; break; }
+		if (k == 0 || k == 1) B->undef = form == 1 ? 0 : 0x800; else if (k <= 3) B->undef = ALLF;
+		B->wf = (k == 0 || k == 1) ? 3 : 1; break; }   // rol/ror lassen SF/ZF/PF/AF unverändert: vorher undefinierte Flags bleiben es
 	case 13: case 14: case 15: {  // mov
 		int k = rn(5);
 		if (k == 0) { op[0] = 0x88 + (sz > 1); emit_rm(B, p66, w, op, 1, reg, mem, rm, sz == 1, 0, 0); }
@@ -149,6 +150,14 @@ static void gen_one(Buf *B) {
 		else if (k == 2) { op[0] = 0x0f; op[1] = 0xa2; put8(B, 0x0f); put8(B, 0xa2); B->undef = 0; }   // cpuid -> Unicorn
 		else { put8(B, 0xfc); }  // cld
 		break; }
+	case 30: case 31: {   // cmpxchg / xadd (32/64 Bit), mit und ohne lock
+		if (sz < 4) { sz = 4; p66 = 0; w = 0; } if (rn(2)) put8(B, 0xf0);
+		op[0] = 0x0f; op[1] = (rn(2) ? 0xb0 : 0xc0) + 1; if (mem) need_aligned = 1;
+		emit_rm(B, 0, w, op, 2, reg, mem, rm, 0, 0, 0); B->wf = 1; B->undef = 0; break; }
+	case 32: { if (sz == 2) { sz = 4; p66 = 0; w = 0; } if (sz == 1) { sz = 4; w = 0; } if (rn(2)) put8(B, 0xf3); op[0] = 0x0f; op[1] = 0xbc + rn(2); emit_rm(B, 0, w, op, 2, reg, mem, rm, 0, 0, 0); B->wf = 1; B->undef = 0x881 /* nur ZF */; break; }
+	case 33: { if (sz < 4) { sz = 4; w = 0; } put8(B, 0xf3); op[0] = 0x0f; op[1] = 0xb8; emit_rm(B, 0, w, op, 2, reg, mem, rm, 0, 0, 0); B->wf = 1; B->undef = 0; break; }
+	case 34: { if (sz < 4) { sz = 4; w = 0; } op[0] = 0x0f; op[1] = 0xa3 + 8 * rn(4); emit_rm(B, 0, w, op, 2, reg, 0, rm, 0, 0, 0); B->wf = 1; B->undef = 0x8c0; break; }
+	case 35: { if (sz < 4) { sz = 4; w = 0; } op[0] = 0x0f; op[1] = 0xba; emit_rm(B, 0, w, op, 2, 4 + rn(4), mem, rm, 0, 1, rn(64)); B->wf = 1; B->undef = 0x8c0; break; }
 	case 29: { op[0] = 0x0f; op[1] = 0xaf; emit_rm(B, p66, w, op, 2, reg, mem, rm, 0, 0, 0); B->wf = 1; B->undef = 0xc4 | 0x10; if (sz == 1 || sz == 2) { B->n = B->n; } break; }
 	}
 }
@@ -222,7 +231,7 @@ static void gen_sse_one(Buf *B) {
 	}
 }
 static int gen_seq(Buf *B, uint64_t slot) {
-	memset(B, 0, sizeof *B); B->base = slot;
+	memset(B, 0, sizeof *B); B->base = slot; need_aligned = 0;
 	int n = 1 + rn(4); uint32_t um = 0; int have = 0; cur_undef = 0; cur_fp = 0;
 	for (int i = 0; i < n; i++) {
 		if (B->n > 60) break;
@@ -233,7 +242,8 @@ static int gen_seq(Buf *B, uint64_t slot) {
 		if (want_pjcc) {   // hinter comis: bedingte Sprünge über einen Befehl, auch jp/jnp
 			static const int ccs[] = {2, 3, 4, 5, 6, 7, 10, 11}; for (int q = 0; q < 1; q++) { put8(B, 0x70 + ccs[rn(8)]); put8(B, 3); put8(B, 0x83); put8(B, 0xc0); put8(B, 1); }
 		}
-		if (B->wf == 1) { um = B->undef; cur_undef = um; have = 1; } else if (B->wf == 2) { /* inc/dec: CF bleibt */ }
+		if (B->wf == 3) { um |= B->undef; cur_undef = um; have = 1; }
+		else if (B->wf == 1) { um = B->undef; cur_undef = um; have = 1; } else if (B->wf == 2) { /* inc/dec: CF bleibt */ }
 	}
 	put8(B, 0x0f); put8(B, 0x05);
 	return (int)um;
@@ -278,6 +288,7 @@ int main(int argc, char **argv) {
 	if (!code_h || !data_h) { fprintf(stderr, "jit_guest_alloc fehlgeschlagen\n"); return 2; }
 	c.pend = (volatile uint32_t *)calloc(1, 4);
 	if (uc_open(UC_ARCH_X86, UC_MODE_64, &uc)) return 2;
+	uc_ctl_set_cpu_model(uc, UC_CPU_X86_NEHALEM);   // wie in Raven (SSE4.2, POPCNT, kein LZCNT/BMI/AVX)
 	{ uint64_t cr = 0; uc_reg_read(uc, UC_X86_REG_CR0, &cr); cr = (cr & ~4ULL) | 2; uc_reg_write(uc, UC_X86_REG_CR0, &cr); uc_reg_read(uc, UC_X86_REG_CR4, &cr); cr |= 0x600; uc_reg_write(uc, UC_X86_REG_CR4, &cr); }   // SSE einschalten wie ein Betriebssystem
 	uc_mem_map_ptr(uc, CODE, CODE_N, UC_PROT_ALL, code_h); uc_mem_map_ptr(uc, DATA, DATA_N, UC_PROT_ALL, data_h);
 	setvbuf(stdout, NULL, _IOLBF, 0);
@@ -292,6 +303,7 @@ int main(int argc, char **argv) {
 		uint64_t r0[16], ef0 = 2 | (rn(2) ? 1 : 0) | (rn(2) ? 4 : 0) | (rn(2) ? 0x10 : 0) | (rn(2) ? 0x40 : 0) | (rn(2) ? 0x80 : 0) | (rn(2) ? 0x800 : 0);
 		for (int i = 0; i < 16; i++) r0[i] = pool64();
 		for (int i = 0; i < 16; i++) if (B.ptr & (1u << i)) r0[i] = DATA + 0x4000 + (rnd() % 0x100);
+		if (need_aligned) for (int i = 0; i < 16; i++) if (B.ptr & (1u << i)) r0[i] &= ~15ULL;
 		for (int i = 0; i < 16; i++) if (B.idx & (1u << i)) r0[i] = rn(8);
 		r0[4] = DATA + 0x8000 + (rn(4) * 8); if (B.ptr & (1u << 4)) r0[4] = DATA + 0x8000;
 		if (B.ptr & (1u << 6)) r0[6] = DATA + 0x2000 + rn(64);

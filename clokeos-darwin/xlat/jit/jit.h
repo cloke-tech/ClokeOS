@@ -12,7 +12,8 @@
 #define JIT_FAULT 5     // Host-Zugriffsfehler im Gast-Befehl rip; aux = Adresse
 #define JIT_INT3 6      // int3: rip = Adresse hinter dem Befehl
 #define JIT_UD 7        // ud2: rip = Adresse des Befehls
-#define JIT_RETRY 8     // intern: Schreibzugriff auf eine Codeseite
+#define JIT_RETRY 8     // intern: Schreibzugriff auf übersetzten Code
+#define JIT_RETRY_OPEN 9  // intern: Schreibzugriff auf eine Codeseite, aber nicht auf übersetzte Bytes
 
 typedef struct JitCtx {
 	uint64_t r[16];            // 0
