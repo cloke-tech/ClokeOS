@@ -2,6 +2,8 @@
  *   Der Starter ruft SetSetupAppFactoryCB(cb) (Logic.framework) und dann NSApplicationMain; cb führt zu setupAppFactorySharedInstance
  *   (LogicAppFramework, Swift-AppFactory). Beide werden per __interpose gemeldet, dazu jeder Aufruf von -[NSApplication setDelegate:].
  * Nur für Logic: ohne die Symbole lässt sich die Bibliothek in anderen Programmen nicht laden. */
+#include <dirent.h>
+#include <execinfo.h>
 #include <stdio.h>
 #include <dlfcn.h>
 #include <string.h>
@@ -57,7 +59,7 @@ AE_TRACE("DriverDeviceID", _Z14DriverDeviceIDi22MDAudioDriverDirection)
 AE_TRACE("MDInitDDS", _Z9MDInitDDSv)
 AE_TRACE("MSuperclass::SetLaunchingAudioDevice", _ZN11MSuperclass23SetLaunchingAudioDeviceEb)
 
-/* CLOKE_LOGIC_PATHS=<Teilstring>: Dateizugriffe (open/stat/lstat/access/getattrlist), deren Pfad den Teilstring enthält, mit Ergebnis melden
+/* CLOKE_LOGIC_PATHS=<Teilstring>: Dateizugriffe (open/stat/lstat/access/getattrlist/opendir/fopen), deren Pfad den Teilstring enthält, mit Ergebnis melden
  * (z. B. ".caf", um zu sehen, wo Logic Samples sucht) */
 static const char *path_watch(void) { static const char *w = (const char *)1; if (w == (const char *)1) w = getenv("CLOKE_LOGIC_PATHS"); return w; }
 static void path_log(const char *fn, const char *p, int r) { const char *w = path_watch(); if (w && p && strstr(p, w)) fprintf(stderr, "[clogic] %s(%s) -> %d\n", fn, p, r); }
@@ -67,10 +69,19 @@ static int my_lstat(const char *p, struct stat *st) { int r = lstat(p, st); path
 static int my_access(const char *p, int m) { int r = access(p, m); path_log("access", p, r); return r; }
 extern int getattrlist(const char *, void *, void *, size_t, unsigned int);
 static int my_getattrlist(const char *p, void *a, void *b, size_t n, unsigned int o) { int r = getattrlist(p, a, b, n, o); path_log("getattrlist", p, r); return r; }
+/* Pfade mit '%' (URL-kodiert) zusätzlich mit Aufrufkette melden: so findet man die Stelle, die eine URL nicht dekodiert */
+static void pct_bt(const char *p) {
+    if (!path_watch() || !p || !strchr(p, '%')) return;
+    void *f[16]; int n = backtrace(f, 16);
+    for (int i = 1; i < n; i++) { Dl_info di; if (dladdr(f[i], &di) && di.dli_fname) fprintf(stderr, "[clogic]   %%-bt %s +0x%lx %s\n", strrchr(di.dli_fname, '/') + 1, (unsigned long)((char *)f[i] - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : ""); }
+}
+static DIR *my_opendir(const char *p) { DIR *d = opendir(p); path_log("opendir", p, d ? 0 : -1); if (!d) pct_bt(p); return d; }
+static FILE *my_fopen(const char *p, const char *m) { FILE *f = fopen(p, m); path_log("fopen", p, f ? 0 : -1); return f; }
 
 __attribute__((used, section("__DATA,__interpose"))) static struct { void *n, *o; } interposers[] = {
     { (void *)my_open, (void *)open }, { (void *)my_stat, (void *)stat }, { (void *)my_lstat, (void *)lstat },
     { (void *)my_access, (void *)access }, { (void *)my_getattrlist, (void *)getattrlist },
+    { (void *)my_opendir, (void *)opendir }, { (void *)my_fopen, (void *)fopen },
     { (void *)my_set, (void *)SetSetupAppFactoryCB },
     { (void *)my_setup, (void *)setupAppFactorySharedInstance },
     { (void *)my_MDCoreAudioNewDriver, (void *)MDCoreAudioNewDriver },

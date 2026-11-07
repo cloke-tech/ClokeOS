@@ -828,3 +828,18 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * Still open: Logic does not open any `.caf` (traced with `CLOKE_LOGIC_PATHS=.caf` in `libclogictrace`, which logs open/stat/lstat/access/getattrlist),
   so the drum kit is decided "not available" before any sample access; the drum track stays the substitute tone.
 * `macapps/deploy-tree.sh` now creates the target folder and its missing parents (before, a missing target silently wrote nothing) and reports debugfs errors.
+
+### Round 49: drum samples load, drum track matches the Mac
+
+* **Cause:** Darling's `CFURLEnumeratorPushURL` opened folders with the URL path (`CFURLCopyPath`), which is still percent-encoded
+  (`/var/root/Music/Logic%20Pro%20Library.bundle/Plug-In%20Settings/Sampler/`). So `-[NSFileManager enumeratorAtURL:…]` found nothing in any folder with
+  a space, and Logic's sampler scan ("Scanning Sampler Instruments") never saw an `.exs`; the Drum Kit Designer then played its ~92 Hz substitute.
+  Fix: `darling-corefoundation/CFURLEnumerator.c.sed` uses `CFURLGetFileSystemRepresentation`. Affects every Mac app that enumerates a folder with spaces.
+* Found with `libclogictrace`: `CLOKE_LOGIC_PATHS` now also logs `opendir`/`fopen`, and a failed `opendir` of a path with `%` prints its call chain.
+* Image (not in the repo): Drum Kit Designer kits are `Plug-In Settings/Sampler/z_Internal/Drum Kit Designer/…` in the library (20 MB, found by name
+  through the scan); Jump also needs `Sampler/Guitar/Vintage Strat.exs` (once the scan works, a missing instrument shows NSCocoaErrorDomain 4 at load).
+* **Result:** exported drum track vs the Mac's: RMS 0.0319 vs 0.0317, envelope r 0.98, waveform r 0.90, every octave band within 0.1 dB, offset 0.
+* Dead end: copying Logic's content database (`~/Music/Audio Music Apps/Databases/ContentDatabaseV01.db`, Core Data + SQLite FTS) crashes Logic in
+  MASearchKit (`dispatch_sync` on a NULL queue; ClokeOS's Core Data has no store). Not needed: the folder scan is enough.
+* Note: Darling's Foundation maps `NSDirectoryEnumerationSkipsSubdirectoryDescendants` to `kCFURLEnumeratorDescendRecursively` and CF descends when the flag
+  is *not* set; both inverted, so Foundation callers work, direct CF callers get the opposite. Left as is.
