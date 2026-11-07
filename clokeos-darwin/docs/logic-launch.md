@@ -918,4 +918,8 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * Traces: `CLOKE_CT_TRACE=1` (CTLineDraw font/colour/position, call chain for transparent colours), `CLOKE_CG_TRACE=1` (call chain of
   CGColors created as (0,0,0,0)), `CLOKE_LAYER_TRACE=1` (layer background per view); `CLOKE_TRACE` logs `colorNamed:` misses,
   transparent MAAsset colours with their source string; F12 dump shows table delegates, prepared cells and backgrounds.
+* Onyx2D transparency layers now draw into their own surface and are composited at the end (before, everything went straight to the
+  destination and an empty layer was laid over it). No visible change in Logic yet; the instrument icons are still missing: Logic draws
+  them through AppKit/layers, not with its own `CGContextDrawImage`/`CGContextClipToMask` calls (`CLOKE_CGCALL_TRACE=1` logs the image,
+  mask and blend-mode calls an app makes, with caller offsets).
 * Trap: two scripts typing into the same VM serial console at once garble each other (zsh stuck in a `dquote>` prompt).
