@@ -26,11 +26,39 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import urllib.request
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-VERSION = "0.1"
-STATE = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "cloke", "installed.json")
+# Pythons urllib.request lädt unter macOS _scproxy (liest die Proxy-Einstellungen über
+# SystemConfiguration). Das gibt es auf ClokeOS nicht (dlopen schlägt fehl, cloke startete gar nicht);
+# ohne das Modul gelten die Umgebungsvariablen http_proxy/https_proxy.
+if sys.platform == "darwin":
+    try:
+        import _scproxy  # noqa: F401
+    except ImportError:
+        import types
+        _m = types.ModuleType("_scproxy")
+        _m._get_proxy_settings = lambda: {"exclude_simple": False, "exceptions": []}
+        _m._get_proxies = lambda: {}
+        sys.modules["_scproxy"] = _m
+import urllib.error  # noqa: E402
+import urllib.request  # noqa: E402
+
+VERSION = "0.2"
+HOME = os.path.expanduser("~")
+DATA = os.path.join(os.environ.get("XDG_DATA_HOME", os.path.join(HOME, ".local/share")), "cloke")
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.join(HOME, ".cache")), "cloke")
+STATE = os.path.join(DATA, "installed.json")            # Benutzer-Bereich
+SYSTEM_STATE = "/var/lib/cloke/installed.json"          # systemweit (nur root)
+APPS_INDEX = os.environ.get("CLOKE_APPS_INDEX", "https://raw.githubusercontent.com/cloke-tech/ClokeOS-Apps/main/index.json")
+USER_APPS = os.path.join(HOME, "Applications")
+OFFLINE = bool(os.environ.get("CLOKE_OFFLINE"))
+FAILED = set()   # Befehle, die zuletzt fehlschlugen (leere Ausgabe heißt dann nicht "keine Treffer")
+
+# Homebrew liegt auf ClokeOS nicht im PATH jeder Shell (arm64: /opt/homebrew, x86_64: /usr/local).
+for _b in ("/opt/homebrew/bin", "/usr/local/bin"):
+    if os.path.exists(_b + "/brew") and _b not in os.environ.get("PATH", "").split(":"):
+        os.environ["PATH"] = os.environ.get("PATH", "") + ":" + _b
 
 # Which OS this program is running on. ClokeOS is Darwin, so it counts as macOS.
 HOST = {"darwin": "macos", "linux": "linux", "win32": "windows", "cygwin": "windows"}.get(sys.platform, "linux")
@@ -46,7 +74,9 @@ OS_ORDER = {
 
 # backend -> (OS it installs for, command it needs, sort rank inside that OS)
 BACKENDS = {
-    "brew": ("macos", "brew", 0),
+    "apps": ("macos", None, 0),
+    "brew": ("macos", "brew", 1),
+    "apk": ("linux", None, -1),
     "dnf": ("linux", "dnf", 0),
     "apt": ("linux", "apt-get", 1),
     "pacman": ("linux", "pacman", 2),
@@ -89,6 +119,7 @@ class Pkg:
     def __init__(self, backend, pid, name, desc="", version="", score=0, kind=""):
         self.backend, self.id, self.name, self.desc, self.version, self.score, self.kind = backend, pid, name, desc, version, score, kind
         self.os = BACKENDS[backend][0]
+        self.nobottle = False   # Homebrew-Formel ohne Bottle für dieses System (Bauen aus dem Quelltext geht auf ClokeOS nicht)
 
     def label(self):
         n = self.name if self.name else self.id
@@ -126,15 +157,64 @@ def match_score(query, *names):
     return best
 
 
+def drop_to_brew_owner(cmd):
+    """Homebrew lehnt root ab. Läuft cloke als root (z. B. auf der Konsole), startet brew als Besitzer
+    des Präfix. Gibt (Optionen für subprocess, env) zurück. Kein preexec_fn: der ist in Threads nicht sicher
+    (Python 3.13 bricht auf ClokeOS beim fork aus einem Thread ab)."""
+    if os.name == "nt" or os.geteuid() != 0 or not cmd or os.path.basename(cmd[0]) != "brew":
+        return None, None
+    exe = shutil.which("brew")
+    if not exe:
+        return None, None
+    st = os.stat(os.path.realpath(exe))
+    if st.st_uid == 0:
+        return None, None
+    import pwd
+    try:
+        home = pwd.getpwuid(st.st_uid).pw_dir
+    except KeyError:
+        home = "/tmp"
+    env = dict(os.environ, HOME=home, USER=pwd.getpwuid(st.st_uid).pw_name if home != "/tmp" else "nobody")
+
+    return {"user": st.st_uid, "group": st.st_gid}, env
+
+
+def popen_kw(cmd):
+    opts, env = drop_to_brew_owner(cmd)
+    return dict(opts, env=env) if opts else {}
+
+
+def call(cmd):
+    """Befehl mit sichtbarer Ausgabe; Rückgabewert wie subprocess.call, aber mit klarer Meldung."""
+    try:
+        return subprocess.call(cmd, **popen_kw(cmd))
+    except OSError as e:
+        err(f"cannot run {cmd[0]}: {e.strerror or e}")
+        return 127
+
+
 def run(cmd, timeout=60, check=False):
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **popen_kw(cmd))
     except (OSError, subprocess.TimeoutExpired):
+        FAILED.add(cmd[0])
         return ""
+    if r.returncode != 0 and (r.stderr or "").strip():
+        FAILED.add(cmd[0])
     return r.stdout if (r.returncode == 0 or not check) else ""
 
 
+def err(msg):
+    print(f"cloke: {msg}", file=sys.stderr)
+
+
+def note(msg):
+    print(f"cloke: {msg}", file=sys.stderr)
+
+
 def have(backend):
+    if backend == "apk":
+        return tux_root() is not None
     cmd = BACKENDS[backend][1]
     return True if cmd is None else shutil.which(cmd) is not None
 
@@ -220,8 +300,7 @@ def appimage_feed():
     global _APPIMAGE_FEED
     if _APPIMAGE_FEED is None:
         try:
-            with urllib.request.urlopen("https://appimage.github.io/feed.json", timeout=20) as r:
-                _APPIMAGE_FEED = json.load(r).get("items", [])
+            _APPIMAGE_FEED = json.loads(fetch_url("https://appimage.github.io/feed.json", 20)).get("items", [])
         except Exception:
             _APPIMAGE_FEED = []
     return _APPIMAGE_FEED
@@ -238,7 +317,7 @@ def search_appimage(q):
     return out
 
 
-SEARCHERS = {"brew": search_brew, "dnf": search_dnf, "apt": search_apt, "pacman": search_pacman, "flatpak": search_flatpak,
+SEARCHERS = {"apps": lambda q: search_apps(q), "apk": lambda q: search_apk(q), "brew": search_brew, "dnf": search_dnf, "apt": search_apt, "pacman": search_pacman, "flatpak": search_flatpak,
              "appimage": search_appimage, "winget": search_winget, "choco": search_choco}
 
 
@@ -254,9 +333,17 @@ def find(q, only_os=None, only_backend=None):
     """Return the candidate packages, at most one per backend, ordered for choosing."""
     cat_name, cat = catalog_entry(q)
     wanted = [b for b in BACKENDS if (not only_backend or b == only_backend) and (not only_os or BACKENDS[b][0] == only_os)]
+    if HOST != "macos":
+        wanted = [b for b in wanted if b not in ("apps", "apk")]
+    if HOST != "linux":
+        wanted = [b for b in wanted if b != "appimage"]   # AppImages laufen nur auf einem echten Linux
+    if HOST != "linux" and have("apk") and not only_backend:
+        # Mit einem Alpine unter tux gibt es echte Linux-Pakete (apk); die Kataloge von dnf, apt, flatpak
+        # wären nur Namen, die in diesem Alpine nicht installierbar sind.
+        wanted = [b for b in wanted if BACKENDS[b][0] != "linux" or b == "apk"]
     live = [b for b in wanted if have(b)]
     with ThreadPoolExecutor(max_workers=8) as ex:
-        results = dict(zip(live, ex.map(lambda b: SEARCHERS[b](q), live)))
+        results = dict(zip(live, ex.map(lambda b: cached_search(b, q), live)))
     picks = []
     for b in wanted:
         cands = sorted((p for p in results.get(b, []) if p.score), key=lambda p: (-p.score, p.kind == "cask", len(p.id)))
@@ -272,6 +359,13 @@ def find(q, only_os=None, only_backend=None):
         cands = [p for p in cands if p.score >= (3 if b == "appimage" else 2)]
         if cands:
             picks.append(cands[0])
+            if b == "brew" and cands[0].kind != "cask":
+                # Versionierte Formeln (python@3.12, node@20 ...) als weitere Wahl
+                base = cands[0].id.split("@")[0]
+                extra = sorted((p for p in cands[1:] if p.id.startswith(base + "@") and p.kind != "cask"),
+                               key=lambda p: [int(x) if x.isdigit() else 0 for x in re.split(r"[.@]", p.id)], reverse=True)
+                if cands[0].id == base:
+                    picks.extend(extra[:3])
     picks.sort(key=lambda p: (OS_ORDER.index(p.os), BACKENDS[p.backend][2]))
     return picks
 
@@ -281,7 +375,7 @@ def recommended(picks):
     versions (a Linux layer is the better bet than Raven; one that is set up wins), then a native GUI
     cask (often built for the wrong CPU), then Windows versions (Raven first when installed)."""
     def rank(p):
-        ok = not p.layer() or layer_available(p.layer())
+        ok = (not p.layer() or layer_available(p.layer())) and not p.nobottle
         if p.os == HOST and p.kind != "cask":
             cls = 0
         elif p.os == "linux":
@@ -290,7 +384,7 @@ def recommended(picks):
             cls = 2
         else:
             cls = 3
-        return (cls, 0 if ok else 1, OS_ORDER.index(p.os), BACKENDS[p.backend][2])
+        return (1 if p.nobottle else 0, cls, 0 if ok else 1, OS_ORDER.index(p.os), BACKENDS[p.backend][2])
     return min(range(len(picks)), key=lambda i: rank(picks[i]))
 
 
@@ -300,7 +394,10 @@ def layer_command(layer):
         return ["raven"] if shutil.which("raven") else None
     if layer == "linux":
         spec = os.environ.get("CLOKE_LINUX_LAYER", "")
-        return spec.split() if spec and shutil.which(spec.split()[0]) else None
+        if spec:
+            return spec.split() if shutil.which(spec.split()[0]) else None
+        root = tux_root()
+        return ["tux", "-r", root] if root else None
     return None
 
 
@@ -308,16 +405,36 @@ def layer_available(layer):
     return layer_command(layer) is not None
 
 
+def tux_root():
+    """Wurzel des Linux-Systems (Alpine) für tux, oder None."""
+    root = os.environ.get("TUX_ROOT", "/TUX")
+    return root if shutil.which("tux") and os.path.exists(root + "/sbin/apk") else None
+
+
 # ---------------------------------------------------------------- install / remove
 def sudo():
     return [] if (os.name == "nt" or os.geteuid() == 0 or not shutil.which("sudo")) else ["sudo"]
+
+
+class NeedRoot(Exception):
+    pass
+
+
+def elevate(cmd, what):
+    """Befehl, der root braucht: direkt als root, sonst mit sudo (falls es das gibt), sonst klare Meldung."""
+    if os.geteuid() == 0:
+        return cmd
+    if shutil.which("sudo"):
+        return ["sudo"] + cmd
+    raise NeedRoot(f"{what} needs root and this system has no sudo. Run cloke as root, or choose a version that installs "
+                   f"for your user (macOS apps and Homebrew packages do).")
 
 
 def native_cmd(p, action):
     b, i = p.backend, p.id
     if b == "brew":
         cask = i.startswith("cask:")
-        base = ["brew", action] + (["--cask"] if cask else []) + [i.replace("cask:", "")]
+        base = ["brew", action] + (["--cask"] if cask else (["--force-bottle"] if action == "install" else [])) + [i.replace("cask:", "")]
         return base
     if b == "dnf":
         return sudo() + ["dnf", "-y", "install" if action == "install" else "remove", i]
@@ -325,6 +442,8 @@ def native_cmd(p, action):
         return sudo() + ["apt-get", "-y", "install" if action == "install" else "remove", i]
     if b == "pacman":
         return sudo() + (["pacman", "-S", "--noconfirm", i] if action == "install" else ["pacman", "-R", "--noconfirm", i])
+    if b == "apk":
+        return ["/sbin/apk", "add", i] if action == "install" else ["/sbin/apk", "del", i]
     if b == "flatpak":
         return ["flatpak", "-y", "install", "flathub", i] if action == "install" else ["flatpak", "-y", "uninstall", i]
     if b == "winget":
@@ -339,8 +458,7 @@ def appimage_install(p):
     if not m:
         print("cloke: no download source for this AppImage", file=sys.stderr)
         return 1
-    with urllib.request.urlopen(f"https://api.github.com/repos/{m.group(1).rstrip('/')}/releases/latest", timeout=30) as r:
-        assets = json.load(r).get("assets", [])
+    assets = json.loads(fetch_url(f"https://api.github.com/repos/{m.group(1).rstrip('/')}/releases/latest", 30)).get("assets", [])
     arch = "aarch64|arm64" if ARCH in ("arm64", "aarch64") else "x86_64|amd64"
     cand = [a for a in assets if a["name"].lower().endswith(".appimage") and re.search(arch, a["name"].lower())] or \
            [a for a in assets if a["name"].lower().endswith(".appimage")]
@@ -351,7 +469,7 @@ def appimage_install(p):
     os.makedirs(dest, exist_ok=True)
     path = os.path.join(dest, cand[0]["name"])
     print(f"Downloading {cand[0]['name']}")
-    urllib.request.urlretrieve(cand[0]["browser_download_url"], path)
+    save_url(cand[0]["browser_download_url"], path, 300)
     os.chmod(path, 0o755)
     print(f"Installed {path}")
     p.id = path
@@ -363,9 +481,7 @@ def winget_manifest_installer(pid):
     parts = pid.split(".")
     base = f"manifests/{pid[0].lower()}/" + "/".join(parts)
     def api(path):
-        req = urllib.request.Request("https://api.github.com/repos/microsoft/winget-pkgs/contents/" + path, headers={"Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
+        return json.loads(fetch_url("https://api.github.com/repos/microsoft/winget-pkgs/contents/" + path, 30))
     entries = api(base)
     versions = [e["name"] for e in entries if e["type"] == "dir"]
     if not versions:
@@ -373,8 +489,7 @@ def winget_manifest_installer(pid):
     key = lambda v: [int(x) if x.isdigit() else 0 for x in re.split(r"[.\-]", v)]
     ver = sorted(versions, key=key)[-1]
     raw = f"https://raw.githubusercontent.com/microsoft/winget-pkgs/master/{base}/{ver}/{pid}.installer.yaml"
-    with urllib.request.urlopen(raw, timeout=30) as r:
-        text = r.read().decode()
+    text = fetch_url(raw, 30).decode()
     blocks = re.split(r"\n- ", text)
     best = None
     for blk in blocks:
@@ -403,7 +518,7 @@ def windows_via_raven(p):
     tmp = tempfile.mkdtemp(prefix="cloke-")
     fn = os.path.join(tmp, os.path.basename(url.split("?")[0]) or "setup.exe")
     print(f"Downloading {url}")
-    urllib.request.urlretrieve(url, fn)
+    save_url(url, fn, 300)
     t = typ.lower()
     if fn.lower().endswith(".msi") or t in ("msi", "wix"):
         cmd = wine + ["/usr/libexec/raven/msiexec.exe", "/i", fn, "/qn"]
@@ -417,39 +532,480 @@ def windows_via_raven(p):
     return subprocess.call(cmd)
 
 
-def do_install(p):
-    layer = p.layer()
-    if layer:
-        lc = layer_command(layer)
-        if lc is None:
-            hint = {"raven": "Raven is not installed on this system.",
-                    "linux": "No Linux layer set up: set CLOKE_LINUX_LAYER to a command that runs its arguments in Linux, e.g. 'cloke-linux --'."}.get(layer, "Needs the macOS layer.")
-            print(f"cloke: {p.label()} needs a compatibility layer. {hint}", file=sys.stderr)
-            return 2
-        if layer == "raven":
-            return windows_via_raven(p)
-        cmd = native_cmd(p, "install")
-        print("Running in the Linux layer:", " ".join(cmd))
-        return subprocess.call(lc + cmd) if cmd else 1
-    if p.backend == "appimage":
-        return appimage_install(p)
-    cmd = native_cmd(p, "install")
-    print("Running:", " ".join(cmd))
-    return subprocess.call(cmd)
+# ---------------------------------------------------------------- Cache und Netz
+def reason(e):
+    if isinstance(e, urllib.error.HTTPError):
+        return f"HTTP {e.code}"
+    if isinstance(e, urllib.error.URLError):
+        return str(e.reason)
+    return str(e) or e.__class__.__name__
 
 
-def load_state():
+try:
+    import ssl  # noqa: F401
+    HAVE_SSL = True
+except ImportError:      # Pythons auf ClokeOS hat kein ssl-Modul; https geht dann über curl
+    HAVE_SSL = False
+
+
+def use_curl(url):
+    return url.startswith("https:") and not HAVE_SSL and shutil.which("curl") is not None
+
+
+def curl(url, timeout, out=None):
+    cmd = ["curl", "-fsSL", "--max-time", str(timeout), "-A", "cloke/" + VERSION, url] + (["-o", out] if out else [])
+    r = subprocess.run(cmd, capture_output=True, timeout=timeout + 10)
+    if r.returncode != 0:
+        msg = {6: "cannot resolve the host", 7: "cannot connect", 22: "server refused the request", 28: "timed out",
+               35: "TLS handshake failed", 60: "certificate not trusted"}.get(r.returncode, (r.stderr or b"").decode(errors="replace").strip() or f"curl exit {r.returncode}")
+        raise OSError(msg)
+    return r.stdout
+
+
+def fetch_url(url, timeout=25):
+    if use_curl(url):
+        return curl(url, timeout)
+    req = urllib.request.Request(url, headers={"User-Agent": "cloke/" + VERSION})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def save_url(url, path, timeout=60):
+    """URL in eine Datei laden (ohne alles im Speicher zu halten)."""
+    if use_curl(url):
+        curl(url, timeout, out=path)
+        return
+    req = urllib.request.Request(url, headers={"User-Agent": "cloke/" + VERSION})
+    with urllib.request.urlopen(req, timeout=timeout) as r, open(path, "wb") as f:
+        shutil.copyfileobj(r, f)
+
+
+def cache_path(key):
+    return os.path.join(CACHE, re.sub(r"[^A-Za-z0-9._-]", "_", key) + ".json")
+
+
+def cache_read(key):
     try:
-        with open(STATE) as f:
+        with open(cache_path(key)) as f:
+            d = json.load(f)
+        return d["data"], d["time"]
+    except (OSError, ValueError, KeyError):
+        return None, 0
+
+
+def cache_write(key, data):
+    try:
+        os.makedirs(CACHE, exist_ok=True)
+        tmp = cache_path(key) + f".{os.getpid()}"
+        with open(tmp, "w") as f:
+            json.dump({"time": time.time(), "data": data}, f)
+        os.replace(tmp, cache_path(key))
+    except OSError:
+        pass   # der Cache ist nur eine Hilfe; ein schreibgeschütztes Home darf nichts kaputt machen
+
+
+_NOTED = set()
+
+
+def stale_note(what, ts):
+    if what not in _NOTED:
+        _NOTED.add(what)
+        note(f"{what}: using the offline cache from {time.strftime('%Y-%m-%d %H:%M', time.localtime(ts))}")
+
+
+def cached_json(key, ttl, fetch, what):
+    """Frische Daten, wenn möglich; sonst der Cache (auch ein alter), wenn das Netz fehlt. Löst bei
+    fehlendem Netz ohne Cache die Ausnahme der Abfrage aus."""
+    data, ts = cache_read(key)
+    if data is not None and (OFFLINE or time.time() - ts < ttl):
+        if OFFLINE:
+            stale_note(what, ts)
+        return data
+    if OFFLINE:
+        raise RuntimeError("offline mode and nothing cached")
+    try:
+        data = fetch()
+    except Exception as e:  # noqa: BLE001
+        old, ts = cache_read(key)
+        if old is not None:
+            stale_note(what, ts)
+            return old
+        raise
+    cache_write(key, data)
+    return data
+
+
+def row_pkg(r):
+    return Pkg(r["backend"], r["id"], r["name"], r["desc"], r["version"], r["score"], r["kind"])
+
+
+def pkg_rows(pkgs):
+    return [{"backend": p.backend, "id": p.id, "name": p.name, "desc": p.desc, "version": p.version, "score": p.score, "kind": p.kind}
+            for p in pkgs]
+
+
+NET_BACKENDS = {"appimage", "winget", "choco", "flatpak"}
+
+
+def cached_search(b, q):
+    """Suche eines Backends mit Offline-Cache. Lokale Datenbanken (brew, apk, dnf, apt) werden direkt
+    gefragt; wenn der Befehl scheitert oder offline gearbeitet wird, gilt die letzte Antwort."""
+    if b == "apps":
+        return SEARCHERS[b](q)
+    key = f"search-{b}-{norm(q)}"
+    old, ts = cache_read(key)
+    if OFFLINE and (b in NET_BACKENDS or old is not None):
+        if old is None:
+            return []
+        stale_note(f"{b} search", ts)
+        return [row_pkg(r) for r in old]
+    cmd0 = "tux" if b == "apk" else (BACKENDS[b][1] or "")
+    FAILED.discard(cmd0)
+    res = SEARCHERS[b](q)
+    if res:
+        cache_write(key, pkg_rows(res))
+        return res
+    if cmd0 in FAILED and old is not None:
+        stale_note(f"{b} search", ts)
+        return [row_pkg(r) for r in old]
+    return res
+
+
+def fill_brew_versions(picks):
+    def one(p):
+        key = "brewinfo-" + p.id
+        try:
+            d = cached_json(key, 86400, lambda: json.loads(run(["brew", "info", "--json=v2"] + (["--cask"] if p.id.startswith("cask:") else []) +
+                                                                [p.id.replace("cask:", "")], 120) or "null"), "brew info")
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            if p.id.startswith("cask:"):
+                c = d["casks"][0]
+                p.version, p.desc = str(c.get("version", "")), c.get("desc") or ""
+            else:
+                f = d["formulae"][0]
+                p.version, p.desc = f["versions"]["stable"], f.get("desc") or ""
+                files = ((f.get("bottle") or {}).get("stable") or {}).get("files") or {}
+                tag = "arm64_big_sur" if ARCH in ("arm64", "aarch64") else "big_sur"
+                p.nobottle = HOST == "macos" and not (tag in files or "all" in files)
+        except (TypeError, KeyError, IndexError):
+            pass
+    todo = [p for p in picks if p.backend == "brew" and not p.version]
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        list(ex.map(one, todo))
+
+
+# ---------------------------------------------------------------- Programme aus ClokeOS-Apps
+def load_index():
+    def fetch():
+        if "://" not in APPS_INDEX:
+            with open(APPS_INDEX) as f:
+                return json.load(f)
+        return json.loads(fetch_url(APPS_INDEX))
+    try:
+        return cached_json("apps-index", 600, fetch, "app index")
+    except Exception as e:  # noqa: BLE001
+        err(f"cannot read the app index ({APPS_INDEX}): {reason(e)}. No cached copy yet - connect once, or set CLOKE_APPS_INDEX to a file.")
+        return None
+
+
+def search_apps(q):
+    idx = load_index()
+    out = []
+    if not idx:
+        return out
+    arch = "arm64" if ARCH in ("arm64", "aarch64") else "x86_64"
+    for a in idx.get("apps", []):
+        s = match_score(q, a.get("name", ""), a.get("name_de", ""), a["id"].split(".")[-1], a["id"])
+        if s:
+            out.append(Pkg("apps", a["id"], a["name"], a.get("category", ""), a.get("version", ""), s))
+    for k in idx.get("packages", []):
+        s = match_score(q, k.get("name", ""), k["id"])
+        if s and arch in (k.get("arch") or {}):
+            out.append(Pkg("apps", k["id"], k["name"], "package (system-wide)", k.get("version", ""), s, kind="package"))
+    return out
+
+
+def apps_entry(pid):
+    idx = load_index()
+    if not idx:
+        return None, None
+    for a in idx.get("apps", []):
+        if a["id"] == pid:
+            return "app", a
+    for k in idx.get("packages", []):
+        if k["id"] == pid:
+            arch = "arm64" if ARCH in ("arm64", "aarch64") else "x86_64"
+            return "package", dict(k, package=(k.get("arch") or {}).get(arch))
+    return None, None
+
+
+def sha256_file(path):
+    import hashlib
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def download(url, sha, label):
+    """Paket laden und gegen die Prüfsumme des Index prüfen; geprüfte Pakete bleiben im Cache,
+    so geht eine Neuinstallation auch ohne Netz."""
+    import hashlib
+    pkgdir = os.path.join(CACHE, "pkgs")
+    os.makedirs(pkgdir, exist_ok=True)
+    final = os.path.join(pkgdir, (sha or hashlib.sha256(url.encode()).hexdigest()) + ".tgz")
+    if os.path.exists(final) and (not sha or sha256_file(final) == sha):
+        print(f"Using cached package {os.path.basename(final)[:12]}...")
+        return final
+    if OFFLINE:
+        raise RuntimeError(f"{label} is not in the cache and cloke is offline")
+    print(f"Downloading {url}")
+    tmp = final + f".part{os.getpid()}"
+    try:
+        save_url(url, tmp, 120)
+    except Exception as e:  # noqa: BLE001
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise RuntimeError(f"download failed ({reason(e)}): {url}") from e
+    got = sha256_file(tmp)
+    if sha and got != sha:
+        os.remove(tmp)
+        raise RuntimeError(f"checksum mismatch for {label} (expected {sha[:12]}..., got {got[:12]}...); nothing was installed")
+    os.replace(tmp, final)
+    return final
+
+
+def extract_members(tgz, dest, strip=None):
+    import tarfile
+    with tarfile.open(tgz) as t:
+        members = t.getmembers()
+        if strip:
+            keep = []
+            for m in members:
+                if m.name.startswith(strip):
+                    m.name = m.name[len(strip):]
+                    if m.name:
+                        keep.append(m)
+            members = keep
+        try:
+            t.extractall(dest, members, filter="data")
+        except TypeError:   # Python ohne Extraktionsfilter
+            for m in members:
+                if m.name.startswith("/") or ".." in m.name.split("/"):
+                    raise RuntimeError("unsafe path in package: " + m.name)
+            t.extractall(dest, members)
+    return [m.name for m in members]
+
+
+def reexec_with_sudo(why):
+    if os.environ.get("CLOKE_REEXEC") or not shutil.which("sudo"):
+        raise NeedRoot(f"{why} and this system has no sudo. Run cloke as root, or install for your user (no --system).")
+    print(f"{why}; asking sudo")
+    os.environ["CLOKE_REEXEC"] = "1"
+    os.execvp("sudo", ["sudo", "-E", sys.executable, os.path.abspath(__file__)] + sys.argv[1:])
+
+
+def apps_install(p):
+    kind, ent = apps_entry(p.id)
+    if not ent or not ent.get("package"):
+        raise RuntimeError(f"'{p.id}' is not in the app index for {ARCH}")
+    pk = ent["package"]
+    if kind == "app" and SCOPE == "user" and ent.get("category") == "system":
+        raise RuntimeError(f"{p.name} belongs to the system image (/System/Applications); use --system to put it there")
+    if kind == "package" and SCOPE == "user":
+        raise RuntimeError(f"{p.name} is a system-wide package (it installs below /opt); use --system")
+    tgz = download(pk["url"], pk.get("sha256"), p.name)
+    if kind == "app" and SCOPE == "user":
+        os.makedirs(USER_APPS, exist_ok=True)
+        target = os.path.join(USER_APPS, os.path.basename(ent["path"]))
+        shutil.rmtree(target, ignore_errors=True)
+        extract_members(tgz, USER_APPS, strip="Applications/")
+        print(f"Installed {target}")
+        return ent.get("version", ""), target
+    # systemweit
+    probe = os.path.dirname(ent["path"]) if kind == "app" else "/opt"
+    if os.geteuid() != 0 and not os.access(probe, os.W_OK):
+        reexec_with_sudo(f"{probe} is not writable for {os.environ.get('USER', 'you')}")
+    if kind == "app":
+        shutil.rmtree(ent["path"], ignore_errors=True)
+    extract_members(tgz, "/")
+    if p.id == "webkit":
+        os.makedirs("/usr/local/libexec/webkit2gtk-4.1", exist_ok=True)
+        for n in ("WebKitNetworkProcess", "WebKitWebProcess"):
+            dst = f"/usr/local/libexec/webkit2gtk-4.1/{n}"
+            if os.path.lexists(dst):
+                os.remove(dst)
+            os.symlink(f"/opt/webkit/bin/{n}", dst)
+        subprocess.call(["sysctl", "-w", "net.local.dgram.maxdgram=16384", "net.local.dgram.recvspace=262144"], stdout=subprocess.DEVNULL)
+    path = ent["path"] if kind == "app" else "/opt/" + p.id
+    print(f"Installed {path}")
+    for r in ent.get("recommends", []):
+        print(f"Recommended: cloke install {r}")
+    return ent.get("version", ""), path
+
+
+def apps_remove(row):
+    path = row.get("path") or ""
+    ok = (path.startswith(USER_APPS + "/") or path.startswith("/Applications/") or path.startswith("/System/Applications/")) and path.endswith(".app")
+    if not ok:
+        err(f"will not delete '{path}' (not an app bundle in an Applications folder); remove it by hand")
+        return 1
+    if not os.path.exists(path):
+        note(f"{path} is already gone")
+        return 0
+    if not os.access(os.path.dirname(path), os.W_OK) and os.geteuid() != 0:
+        reexec_with_sudo(f"{os.path.dirname(path)} is not writable for {os.environ.get('USER', 'you')}")
+    shutil.rmtree(path)
+    print(f"Removed {path}")
+    return 0
+
+
+# ---------------------------------------------------------------- Linux-Pakete (Alpine unter tux)
+def search_apk(q):
+    lc = layer_command("linux")
+    out = []
+    if not lc:
+        return out
+    for line in run(lc + ["/sbin/apk", "search", "-v", q]).splitlines():
+        m = re.match(r"^(.+?)-(\d[^-]*-r\d+)(?: - (.*))?$", line.strip())
+        if m:
+            out.append(Pkg("apk", m.group(1), m.group(1), m.group(3) or "", m.group(2), match_score(q, m.group(1))))
+    return out
+
+
+def linux_cmd(args, needs_root):
+    lc = layer_command("linux")
+    if not lc:
+        raise RuntimeError("no Linux layer: /TUX with tux is missing (set CLOKE_LINUX_LAYER for another one)")
+    cmd = lc + args
+    return elevate(cmd, "Installing Linux packages (they go into /TUX)") if needs_root else cmd
+
+
+# ---------------------------------------------------------------- Windows über Raven
+def windows_via_raven(p):
+    wine = layer_command("raven")  # die Befehlszeile der Schicht (eine Liste)
+    try:
+        info = winget_manifest_installer(p.id)
+    except Exception as e:  # noqa: BLE001
+        err(f"could not read the winget manifest ({reason(e)})")
+        return 1
+    if not info:
+        err("no installer found for this package")
+        return 1
+    url, typ, _ = info
+    tmp = tempfile.mkdtemp(prefix="cloke-")
+    fn = os.path.join(tmp, os.path.basename(url.split("?")[0]) or "setup.exe")
+    print(f"Downloading {url}")
+    try:
+        save_url(url, fn, 300)
+    except Exception as e:  # noqa: BLE001
+        err(f"download failed ({reason(e)})")
+        return 1
+    t = typ.lower()
+    if fn.lower().endswith(".msi") or t in ("msi", "wix"):
+        cmd = wine + ["/usr/libexec/raven/msiexec.exe", "/i", fn, "/qn"]
+    elif t == "inno":
+        cmd = wine + [fn, "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]
+    elif t in ("nullsoft", "nsis"):
+        cmd = wine + [fn, "/S"]
+    else:
+        cmd = wine + [fn]
+    print("Running installer through Raven:", " ".join(cmd))
+    return call(cmd)
+
+
+# ---------------------------------------------------------------- install / remove
+def do_install(p):
+    """Installiert p. Gibt (Rückgabecode, Version, Pfad) zurück."""
+    layer = p.layer()
+    try:
+        if p.backend == "apps":
+            v, path = apps_install(p)
+            return 0, v, path
+        if layer:
+            lc = layer_command(layer)
+            if lc is None:
+                hint = {"raven": "Raven is not installed on this system (it runs 64-bit x86 Windows programs only).",
+                        "linux": "No Linux layer set up: tux with /TUX is missing, or set CLOKE_LINUX_LAYER to a command that runs its arguments in Linux."}.get(layer, "Needs the macOS layer.")
+                err(f"{p.label()} needs a compatibility layer. {hint}")
+                return 2, "", ""
+            if layer == "raven":
+                return windows_via_raven(p), p.version, ""
+            if p.backend == "apk":
+                cmd = linux_cmd(native_cmd(p, "install"), True)
+                print("Running:", " ".join(cmd))
+                return call(cmd), p.version, ""
+            cmd = native_cmd(p, "install")
+            print("Running in the Linux layer:", " ".join(cmd))
+            return (call(lc + cmd) if cmd else 1), p.version, ""
+        if p.backend == "appimage":
+            rc = appimage_install(p)
+            return rc, "", p.id if rc == 0 else ""
+        if p.backend == "brew" and not shutil.which("brew"):
+            err("Homebrew is not set up on this system. Run 'cloke bootstrap brew' as a normal user first.")
+            return 2, "", ""
+        if p.nobottle:
+            err(f"Homebrew has no bottle of {p.id} for this macOS (Big Sur) and ClokeOS cannot build from source (no compiler). "
+                f"Try another version of it ('cloke search {p.id.split('@')[0]}').")
+            return 2, "", ""
+        cmd = native_cmd(p, "install")
+        print("Running:", " ".join(cmd))
+        return call(cmd), p.version, ""
+    except NeedRoot as e:
+        err(str(e))
+        return 3, "", ""
+    except RuntimeError as e:
+        err(str(e))
+        return 1, "", ""
+
+
+def state_file(scope):
+    return SYSTEM_STATE if scope == "system" and os.geteuid() == 0 else STATE
+
+
+def load_state(path=None):
+    try:
+        with open(path or STATE) as f:
             return json.load(f)
     except (OSError, ValueError):
         return []
 
 
-def save_state(rows):
-    os.makedirs(os.path.dirname(STATE), exist_ok=True)
-    with open(STATE, "w") as f:
-        json.dump(rows, f, indent=1)
+def all_state():
+    rows = load_state(STATE)
+    return rows + [dict(r, scope="system") for r in load_state(SYSTEM_STATE) if r not in rows]
+
+
+def save_state(rows, path=None):
+    path = path or STATE
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(rows, f, indent=1)
+    except OSError as e:
+        err(f"could not write {path}: {e.strerror or e}")
+
+
+def record(row):
+    path = state_file(row.get("scope", "user"))
+    rows = [r for r in load_state(path) if not (r["backend"] == row["backend"] and r["id"] == row["id"])]
+    rows.append(row)
+    save_state(rows, path)
+
+
+def forget(row):
+    for path in {STATE, SYSTEM_STATE}:
+        rows = load_state(path)
+        keep = [r for r in rows if not (r["backend"] == row["backend"] and r["id"] == row["id"])]
+        if len(keep) != len(rows):
+            save_state(keep, path)
+
+
+def vkey(v):
+    return [int(x) if x.isdigit() else 0 for x in re.split(r"[.\-_+]", v or "")]
 
 
 # ---------------------------------------------------------------- commands
@@ -458,14 +1014,29 @@ def show(picks, rec):
         extra = ""
         if p.layer():
             extra = f"  [via {p.layer()}{'' if layer_available(p.layer()) else ', not installed'}]"
-        print(f"{i}. {p.label()}{extra}")
+        ver = f"  {p.version}" if p.version else ""
+        if p.nobottle:
+            extra += "  [no Big Sur bottle, cannot be installed]"
+        print(f"{i}. {p.label()}{ver}{extra}")
     return rec
 
 
-def cmd_search(a):
-    picks = find(a.name, a.os, a.__dict__.get("from_"))
+def candidates(a):
+    picks = find(a.name, a.os, a.from_)
+    fill_brew_versions(picks)
     if not picks:
-        print(f"cloke: nothing found for '{a.name}'")
+        hints = []
+        if HOST == "macos" and not shutil.which("brew") and not a.from_:
+            hints.append("Homebrew is not set up, so its packages are not searched ('cloke bootstrap brew')")
+        if OFFLINE:
+            hints.append("offline mode: only cached results are used")
+        print(f"cloke: nothing found for '{a.name}'" + ("".join(f"\n       ({h})" for h in hints)))
+    return picks
+
+
+def cmd_search(a):
+    picks = candidates(a)
+    if not picks:
         return 1
     rec = recommended(picks)
     if a.json:
@@ -480,9 +1051,8 @@ def cmd_search(a):
 
 
 def cmd_install(a):
-    picks = find(a.name, a.os, a.__dict__.get("from_"))
+    picks = candidates(a)
     if not picks:
-        print(f"cloke: nothing found for '{a.name}'")
         return 1
     rec = recommended(picks)
     if len(picks) == 1:
@@ -500,98 +1070,235 @@ def cmd_install(a):
             elif ans.isdigit() and 1 <= int(ans) <= len(picks):
                 choice = int(ans) - 1
             else:
-                print("cloke: invalid choice", file=sys.stderr)
+                err("invalid choice")
                 return 1
     p = picks[choice]
     print(f"\nInstalling {p.label()}")
-    rc = do_install(p)
+    rc, ver, path = do_install(p)
     if rc == 0:
-        rows = [r for r in load_state() if not (r["backend"] == p.backend and r["id"] == p.id)]
-        rows.append({"name": a.name, "backend": p.backend, "id": p.id, "os": p.os})
-        save_state(rows)
+        record({"name": a.name, "backend": p.backend, "id": p.id, "os": p.os, "version": ver or p.version, "scope": SCOPE,
+                "path": path, "time": int(time.time())})
     return rc
 
 
 def cmd_remove(a):
-    rows = load_state()
+    rows = all_state()
     hit = [r for r in rows if norm(r["name"]) == norm(a.name) or norm(r["id"]) == norm(a.name)]
     if not hit:
-        print(f"cloke: '{a.name}' was not installed by cloke")
+        err(f"'{a.name}' was not installed by cloke (see 'cloke list')")
         return 1
     rc = 0
     for r in hit:
         p = Pkg(r["backend"], r["id"], r["name"])
-        if p.backend == "appimage":
-            try:
-                os.remove(p.id)
-            except OSError:
-                pass
-        else:
-            cmd = native_cmd(p, "remove")
-            lc = layer_command(p.layer()) if p.layer() else []
-            if p.layer() == "raven":
-                print(f"cloke: remove {r['name']} with its own uninstaller (run it with raven)", file=sys.stderr)
-                cmd = None
-            if cmd:
+        try:
+            if p.backend == "apps":
+                rc1 = apps_remove(r)
+                if r["id"] == "webkit":
+                    err("package 'webkit' stays in /opt/webkit; remove it with: rm -rf /opt/webkit")
+            elif p.backend == "appimage":
+                try:
+                    os.remove(r.get("path") or p.id)
+                except OSError:
+                    pass
+                rc1 = 0
+            elif p.layer() == "raven":
+                err(f"remove {r['name']} with its own uninstaller (run it with raven)")
+                rc1 = 0
+            elif p.backend == "apk":
+                cmd = linux_cmd(native_cmd(p, "remove"), True)
+                print("Running:", " ".join(cmd))
+                rc1 = call(cmd)
+            else:
+                cmd = native_cmd(p, "remove")
+                lc = layer_command(p.layer()) if p.layer() else []
                 print("Running:", " ".join((lc or []) + cmd))
-                rc = subprocess.call((lc or []) + cmd) or rc
-        rows.remove(r)
-    save_state(rows)
+                rc1 = call((lc or []) + cmd)
+        except (NeedRoot, RuntimeError) as e:
+            err(str(e))
+            rc1 = 3
+        if rc1 == 0:
+            forget(r)
+        rc = rc1 or rc
     return rc
 
 
 def cmd_list(a):
-    rows = load_state()
+    rows = all_state()
     for r in rows:
-        print(f"{r['name']:24s} {OS_LABEL[r['os']]:8s} {r['backend']}")
+        print(f"{r['name']:24s} {r.get('version') or '-':14s} {OS_LABEL.get(r['os'], r['os']):8s} {r['backend']:9s} {r.get('scope', 'user')}")
     if not rows:
         print("nothing installed through cloke yet")
     return 0
 
 
-def cmd_update(a):
-    rc = 0
-    for b in sorted({r["backend"] for r in load_state()}):
-        if not have(b) and b != "appimage":
-            continue
-        cmd = {"brew": ["brew", "upgrade"], "dnf": sudo() + ["dnf", "-y", "upgrade"], "apt": sudo() + ["apt-get", "-y", "upgrade"],
-               "pacman": sudo() + ["pacman", "-Syu", "--noconfirm"], "flatpak": ["flatpak", "-y", "update"],
-               "winget": ["winget", "upgrade", "--all"], "choco": ["choco", "upgrade", "all", "-y"]}.get(b)
-        if cmd:
-            print("Running:", " ".join(cmd))
-            rc = subprocess.call(cmd) or rc
-    return rc
-
-
-def cmd_backends(a):
-    print(f"cloke {VERSION} on {OS_LABEL[HOST]} ({ARCH})\n")
-    for b, (osn, _, _) in BACKENDS.items():
-        print(f"  {b:9s} {OS_LABEL[osn]:8s} {'yes' if have(b) else 'no'}")
-    print("\nCompatibility layers:")
-    print(f"  raven (Windows programs)  {'yes' if layer_available('raven') else 'no'}")
-    print(f"  linux (CLOKE_LINUX_LAYER) {'yes' if layer_available('linux') else 'no'}")
+def cmd_info(a):
+    picks = candidates(a)
+    if not picks:
+        return 1
+    rec = recommended(picks)
+    for i, p in enumerate(picks, 1):
+        print(f"{i}. {p.label()}{' (recommended)' if i - 1 == rec else ''}")
+        print(f"   id:        {p.id}")
+        if p.version:
+            print(f"   version:   {p.version}")
+        if p.desc:
+            print(f"   about:     {p.desc}")
+        if p.layer():
+            print(f"   runs via:  {p.layer()}{'' if layer_available(p.layer()) else ' (not installed)'}")
+        if p.backend == "apps":
+            kind, ent = apps_entry(p.id)
+            if ent:
+                pk = ent.get("package") or {}
+                if kind == "app" and ent.get("category") != "system":
+                    print(f"   installs:  {USER_APPS}/{os.path.basename(ent['path'])} (or {ent['path']} with --system)")
+                else:
+                    print(f"   installs:  {ent.get('path') or '/opt/' + p.id} (system-wide, needs --system)")
+                if pk:
+                    print(f"   download:  {pk.get('size', '?')} bytes, sha256 {str(pk.get('sha256', ''))[:16]}...")
+                if ent.get("recommends"):
+                    print(f"   recommends: {', '.join(ent['recommends'])}")
+        elif p.backend in ("brew", "apk"):
+            print("   installs:  " + ("for your user (Homebrew prefix)" if p.backend == "brew" else "into /TUX (needs root or sudo)"))
+        inst = [r for r in all_state() if r["backend"] == p.backend and r["id"] == p.id]
+        if inst:
+            print(f"   installed: {inst[0].get('version') or '-'} ({inst[0].get('scope', 'user')})")
     return 0
 
 
+def cmd_update(a):
+    global SCOPE
+    rc = 0
+    rows = all_state()
+    arow = [r for r in rows if r["backend"] == "apps"]
+    if arow:
+        idx = load_index()
+        for r in arow:
+            kind, ent = apps_entry(r["id"]) if idx else (None, None)
+            if not ent:
+                continue
+            if vkey(ent.get("version")) > vkey(r.get("version")):
+                print(f"Updating {r['name']} {r.get('version') or '?'} -> {ent['version']}")
+                SCOPE = r.get("scope", "user")
+                try:
+                    v, path = apps_install(Pkg("apps", r["id"], r["name"]))
+                    record(dict(r, version=v, path=path, time=int(time.time())))
+                except (NeedRoot, RuntimeError) as e:
+                    err(str(e))
+                    rc = 1
+            else:
+                print(f"{r['name']} {r.get('version') or ''} is up to date")
+    for b in sorted({r["backend"] for r in rows} - {"apps"}):
+        if not have(b) and b != "appimage":
+            err(f"{b}: backend not available on this system, skipped")
+            continue
+        try:
+            cmds = {"brew": [["brew", "update"], ["brew", "upgrade"]],
+                    "apk": [linux_cmd(["/sbin/apk", "update"], True), linux_cmd(["/sbin/apk", "upgrade"], True)] if b == "apk" else [],
+                    "dnf": [sudo() + ["dnf", "-y", "upgrade"]], "apt": [sudo() + ["apt-get", "-y", "upgrade"]],
+                    "pacman": [sudo() + ["pacman", "-Syu", "--noconfirm"]], "flatpak": [["flatpak", "-y", "update"]],
+                    "winget": [["winget", "upgrade", "--all"]], "choco": [["choco", "upgrade", "all", "-y"]]}.get(b, [])
+        except (NeedRoot, RuntimeError) as e:
+            err(str(e))
+            rc = 3
+            continue
+        for cmd in cmds:
+            print("Running:", " ".join(cmd))
+            rc = call(cmd) or rc
+    return rc
+
+
+def cmd_bootstrap(a):
+    if a.name != "brew":
+        err("bootstrap knows: brew")
+        return 2
+    if shutil.which("brew"):
+        print("Homebrew is already set up: " + shutil.which("brew"))
+        return 0
+    tool = shutil.which("clokeos-install-homebrew")
+    if not tool:
+        err("clokeos-install-homebrew not found; install Homebrew by hand")
+        return 1
+    if os.geteuid() == 0:
+        err("Homebrew refuses to run as root. Run 'cloke bootstrap brew' as a normal user.")
+        return 1
+    return call([tool])
+
+
+def cmd_cache(a):
+    if a.name == "clear":
+        shutil.rmtree(CACHE, ignore_errors=True)
+        print("cache cleared")
+        return 0
+    size = n = 0
+    for d, _, fs in os.walk(CACHE):
+        for f in fs:
+            n += 1
+            size += os.path.getsize(os.path.join(d, f))
+    print(f"{CACHE}: {n} files, {size / 1e6:.1f} MB (searches, the app index, downloaded packages)")
+    print("'cloke cache clear' empties it; --offline (or CLOKE_OFFLINE=1) uses only the cache")
+    return 0
+
+
+def cmd_backends(a):
+    print(f"cloke {VERSION} on {OS_LABEL[HOST]} ({ARCH}), default scope: {SCOPE}\n")
+    for b, (osn, _, _) in BACKENDS.items():
+        if HOST != "macos" and b in ("apps", "apk"):
+            continue
+        print(f"  {b:9s} {OS_LABEL[osn]:8s} {'yes' if have(b) else 'no'}")
+    print("\nCompatibility layers:")
+    print(f"  raven (Windows programs)  {'yes' if layer_available('raven') else 'no'}")
+    print(f"  linux (tux + /TUX, or CLOKE_LINUX_LAYER) {'yes' if layer_available('linux') else 'no'}")
+    print(f"\nsudo: {'yes' if shutil.which('sudo') else 'no (system-wide installs need a root shell)'}   user apps: {USER_APPS}   cache: {CACHE}")
+    return 0
+
+
+SCOPE = "user"
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog="cloke", description="one package manager for macOS, Linux and Windows software")
+    global SCOPE, OFFLINE
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--offline", action="store_true", help="use only cached data")
+    g = common.add_mutually_exclusive_group()
+    g.add_argument("--system", action="store_true", help="install system-wide (sudo when needed)")
+    g.add_argument("--user", action="store_true", help="install for the current user (default unless root)")
+    ap = argparse.ArgumentParser(prog="cloke", description="one package manager for macOS, Linux and Windows software", parents=[common])
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("install", "search", "remove"):
-        sp = sub.add_parser(name)
+    for name in ("install", "search", "remove", "info"):
+        sp = sub.add_parser(name, parents=[common])
         sp.add_argument("name")
         sp.add_argument("-y", "--yes", action="store_true")
         sp.add_argument("--from", dest="from_", choices=list(BACKENDS))
         sp.add_argument("--os", choices=["macos", "linux", "windows"])
         sp.add_argument("--json", action="store_true")
+    for name in ("bootstrap", "cache"):
+        sp = sub.add_parser(name, parents=[common])
+        sp.add_argument("name", nargs="?", default="" if name == "cache" else None)
     for name in ("list", "update", "backends"):
-        sub.add_parser(name)
+        sub.add_parser(name, parents=[common])
     a = ap.parse_args(argv)
-    fn = {"install": cmd_install, "search": cmd_search, "remove": cmd_remove, "list": cmd_list,
-          "update": cmd_update, "backends": cmd_backends}.get(a.cmd)
+    for x in ("system", "user", "offline"):
+        if not hasattr(a, x):
+            setattr(a, x, False)
+    if not hasattr(a, "from_"):
+        a.from_ = None
+    if not hasattr(a, "os"):
+        a.os = None
+    OFFLINE = OFFLINE or a.offline
+    SCOPE = "system" if (a.system or (os.geteuid() == 0 and not a.user)) else "user"
+    fn = {"install": cmd_install, "search": cmd_search, "remove": cmd_remove, "list": cmd_list, "info": cmd_info,
+          "update": cmd_update, "backends": cmd_backends, "bootstrap": cmd_bootstrap, "cache": cmd_cache}.get(a.cmd)
     if not fn:
         print(__doc__)
         return 2
-    return fn(a)
+    try:
+        return fn(a)
+    except KeyboardInterrupt:
+        err("interrupted")
+        return 130
+    except NeedRoot as e:
+        err(str(e))
+        return 3
 
 
 if __name__ == "__main__":
