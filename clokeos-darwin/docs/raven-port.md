@@ -207,14 +207,16 @@ radio buttons of the license page sit on a black strip with black text (TNewChec
 clipped. Clicking OK on the language dialog works. Rule for tests: copy `overlay-desktop/usr/bin/raven` into a VM that was
 not rebuilt, or the GUI parts do not show.
 
-### Clipped header fixed, black radio strip still open (2026-11-07)
+### Inno wizard: radio strip and header fixed (2026-11-07)
 
-`DrawThemeParentBackground` shifted the control's context by `window->x - parent->x`, but a child's position is already in its
-parent's client area, so the shift was wrong whenever the parent itself was not at 0,0: the parent's background landed beside the
-control. Now the shift is the child's own position (theme.cpp). That fixed the clipped wizard header ("License Agreement" is
-whole now). The radio buttons of the license page are still on a black strip, though their parent fill reaches the DC with the
-right shift and a white brush (trace: WM_ERASEBKGND to the page, `FillRect(dc, page client, white)`, then the themed radio and
-its text). What is still unknown is why those pixels end up black; `FillRect` writes alpha 0, so the compositor's use of alpha
-for child windows is the next suspect. Tried and reverted: a parent-background fill inside raven-user32's button.c.
-Test notes: the dialog opens at a different place each run, so press Return (`vmctl.py xkey Return`) instead of clicking OK, and
-the desktop session logs out to the greeter after about 40 minutes without input.
+Both glitches had one cause in `DrawThemeParentBackground` (theme.cpp). Window positions are screen positions, so the shift
+`window->x - parent->x` was right, but the control's DC kept its bounds, clip and visible region in the control's own
+coordinates while the origin moved to the parent's: every pixel of the parent's background was then rejected by
+`DesktopDC::contains` (trace: `fill ... changed=0`) and the control kept its black initial pixels (the radio strip) or got a
+misplaced fill (the clipped header). The bounds and clips now move with the origin for the duration of the call. The license
+page of the Inno Setup wizard now shows both radio buttons and the whole header. (A first attempt that shifted by the child's
+position alone looked right for the header only by accident; it was wrong, as the trace showed screen positions.)
+
+Diagnostics added: `RAVEN_TRACE_FILL=1` prints every FillRect (dc, rect, origin, colour, whether a pixel changed) and every
+`DrawThemeParentBackground` shift. Test notes: the dialog opens at a different place each run, so press Return
+(`vmctl.py xkey Return`) instead of clicking OK; the desktop session logs out to the greeter after about 40 minutes without input.

@@ -228,6 +228,23 @@ index 26451b4..2829ba1 100644
  			const uint32_t width = header[1], height = header[2];
  			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
  				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {
+diff --git a/native/desktop/gdi_api.cpp b/native/desktop/gdi_api.cpp
+index cdf405b..3896534 100644
+--- a/native/desktop/gdi_api.cpp
++++ b/native/desktop/gdi_api.cpp
+@@ -1355,6 +1355,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+ 				throw uint32_t(handle > 0 && handle <= 32 ? 120 : 6);
+ 			Painter painter(objects, dc);
+ 			painter.fill(rect.left, rect.top, rect.right, rect.bottom, *brush);
++			if (std::getenv("RAVEN_TRACE_FILL")) {
++				const auto *target = objects.bitmap(dc.bitmap);
++				std::fprintf(stderr, "fill dc=%llx window=%llx rect=%d,%d,%d,%d origin=%d,%d color=%06x hollow=%d changed=%d bitmap=%ux%u\n", (unsigned long long)call[0], (unsigned long long)dc.window,
++					int(rect.left), int(rect.top), int(rect.right), int(rect.bottom), int(dc.origin_x), int(dc.origin_y), unsigned(brush->color), brush->hollow ? 1 : 0, painter.changed() ? 1 : 0,
++					target ? unsigned(target->width) : 0U, target ? unsigned(target->height) : 0U);
++			}
+ 			if (painter.changed())
+ 				touched(dc);
+ 			call.ret(1);
 diff --git a/native/desktop/objects.cpp b/native/desktop/objects.cpp
 index 7713b09..ea6369d 100644
 --- a/native/desktop/objects.cpp
@@ -242,19 +259,45 @@ index 7713b09..ea6369d 100644
  	}
  	return *text_engine;
 diff --git a/native/desktop/theme.cpp b/native/desktop/theme.cpp
-index 089a377..a98c6d1 100644
+index 089a377..6ccab2b 100644
 --- a/native/desktop/theme.cpp
 +++ b/native/desktop/theme.cpp
-@@ -521,7 +521,8 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
- 			call.ret(e_fail);
- 			return;
+@@ -523,6 +523,10 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
  		}
--		const int32_t dx = window->x - parent->x, dy = window->y - parent->y;
-+		// A child's position is in its parent's client area, which is the surface the parent draws on.
-+		const int32_t dx = window->x, dy = window->y;
+ 		const int32_t dx = window->x - parent->x, dy = window->y - parent->y;
  		const uint64_t parent_handle = window->parent;
++		if (std::getenv("RAVEN_TRACE_FILL"))
++			std::fprintf(stderr, "themeparent window=%llx at %d,%d size %dx%d outer=%d,%d parent=%llx at %d,%d dc origin=%d,%d dx,dy=%d,%d\n", (unsigned long long)call[0], int(window->x), int(window->y),
++				int(window->width), int(window->height), int(window->outer.left), int(window->outer.top), (unsigned long long)parent_handle, int(parent->x), int(parent->y),
++				int(dc->origin_x), int(dc->origin_y), int(dx), int(dy));
  		const auto saved_x = dc->origin_x, saved_y = dc->origin_y;
  		const auto saved_clip = dc->application_clip;
+ 		if (call[2])
+@@ -532,11 +536,24 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
+ 			dc->application_clip->offset(dx, dy);
+ 		dc->origin_x -= dx;
+ 		dc->origin_y -= dy;
++		// The control's bounds and clips are in its own coordinates; the parent draws in its own, dx and dy further on, so they move too
++		// or every pixel of the parent's drawing falls outside them.
++		const auto saved_bounds = dc->bounds;
++		const auto saved_regions = std::array{dc->clip, dc->visible};
++		if (dc->bounds) {
++			dc->bounds->left += dx; dc->bounds->right += dx;
++			dc->bounds->top += dy; dc->bounds->bottom += dy;
++		}
++		if (dc->clip) dc->clip->offset(dx, dy);
++		if (dc->visible) dc->visible->offset(dx, dy);
+ 		send(parent_handle, 0x14, call[1], 0);
+ 		send(parent_handle, 0x318, call[1], 4);
+ 		if (auto *again = objects.dc(call[1])) {
+ 			again->origin_x = saved_x;
+ 			again->origin_y = saved_y;
++			again->bounds = saved_bounds;
++			again->clip = saved_regions[0];
++			again->visible = saved_regions[1];
+ 			again->application_clip = saved_clip;
+ 		}
+ 		call.ret(s_ok);
 diff --git a/native/desktop/windows.cpp b/native/desktop/windows.cpp
 index 0616ece..7be193b 100644
 --- a/native/desktop/windows.cpp
