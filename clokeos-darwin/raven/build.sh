@@ -14,7 +14,7 @@ need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gc
 case "$CLOKE_ARCH" in
   x86_64) R="$WORK/raven"; triple=x86_64; skia_cpu=x64; meson_family=x86_64 ;;
   arm64) R="$WORK/raven-arm64"; triple=arm64; skia_cpu=arm64; meson_family=aarch64
-    [ -f "$WORK/download/unicorn/build-arm64/libunicorn-static.a" ] || { echo "Raven (arm64) ohne Unicorn übersprungen: Quelle nach $WORK/download/unicorn/src klonen (siehe xlat/build.sh)" >&2; exit 0; } ;;
+    [ -f "$WORK/download/unicorn/src/CMakeLists.txt" ] || { echo "Raven (arm64) ohne Unicorn übersprungen: Quelle nach $WORK/download/unicorn/src klonen (siehe xlat/build.sh)" >&2; exit 0; } ;;
   *) echo "Raven gibt es nur für x86_64 und arm64" >&2; exit 0 ;;
 esac
 
@@ -23,6 +23,20 @@ REV=387c718393777983d38a43d269df1ff13bfb5c04
 src="$R/src"
 build="$R/build"
 mkdir -p "$R"
+if [ "$CLOKE_ARCH" = arm64 ]; then
+  # Unicorn mit unicorn-fast.patch (Stores ohne Nachschlagen der Speicherabbildung, pause als nop): eine eigene Kopie, damit xlat's
+  # ucrun bei seiner Version bleibt
+  uni="$R/unicorn"
+  if [ ! -f "$uni/build-arm64/libunicorn-static.a" ] || [ "$(cat "$uni/.patch" 2>/dev/null)" != "$(shasum "$HERE/raven/unicorn-fast.patch" | cut -d' ' -f1)" ]; then
+    rm -rf "$uni"; mkdir -p "$uni/build-arm64"
+    cp -R "$WORK/download/unicorn/src" "$uni/src"
+    (cd "$uni/src" && patch -p1 -s < "$HERE/raven/unicorn-fast.patch")
+    (cd "$uni/build-arm64" && cmake ../src -DCMAKE_BUILD_TYPE=Release -DUNICORN_ARCH="x86;aarch64" -DBUILD_SHARED_LIBS=OFF \
+      -DUNICORN_BUILD_TESTS=OFF -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
+      -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_C_FLAGS=-fno-stack-check >/dev/null && make -j6 unicorn >/dev/null)
+    shasum "$HERE/raven/unicorn-fast.patch" | cut -d' ' -f1 > "$uni/.patch"
+  fi
+fi
 if [ ! -d "$src/.git" ]; then
   git clone -q https://github.com/mirkobrombin/raven.git "$src"
 fi
@@ -157,7 +171,7 @@ if [ "$CLOKE_ARCH" = arm64 ]; then
   # arm64 läuft auf dem Mac selbst: ohne Toolchain-Datei (als Cross-Build fänden die Werkzeuge der Regeln ihren Pfad nicht)
   toolchain_args="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
   # das Image liefert libxcb statisch: die Authentifizierungsbibliotheken kommen dazu
-  unicorn_args="-DRAVEN_UNICORN=ON -DRAVEN_UNICORN_DIR=$WORK/download/unicorn"
+  unicorn_args="-DRAVEN_UNICORN=ON -DRAVEN_UNICORN_DIR=$R/unicorn"
   link_args=("-DCMAKE_EXE_LINKER_FLAGS=$sys/lib/libXau.a $sys/lib/libXdmcp.a")
 fi
 cmake -G Ninja -S "$src" -B "$build" $toolchain_args -DCMAKE_BUILD_TYPE=Release \
