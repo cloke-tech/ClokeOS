@@ -700,3 +700,7 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   Like the colour files, nothing derived from Logic goes into the repository.
 * `+[NSTabViewItem tabViewItemWithViewController:]`, `-viewController`/`-setViewController:` (Logic's inspector tabs had no items; nil identifier into a dictionary).
 * Still open: ~250 non-fatal nils from `-[MAButtonCell _bufferedImageForMAButtonState:…cellSize:]` (likely zero cell sizes: no Auto Layout).
+* `-[NSMutableDictionary setObject:forKeyedSubscript:]` with nil removes the key, as documented by Apple; Darling's threw (it forwarded to `setObject:forKey:`). That was the source of the ~270
+  "Cannot set nil" exceptions (MAToolKit button images, inspector tab identifiers, …), fatal when raised while drawing (`patches/darling-corefoundation/NSDictionary.m.sed`).
+* `-[NSBitmapImageRep bitmapImageRepByRetaggingWithColorSpace:]` returns the same pixels (was a stub returning nil); `CGRectApplyAffineTransform` computes the bounding box (was a stub returning the input).
+* Now Logic opens `Jump.logicx` without crashing and shows an error: "The operation couldn't be completed. (NSCocoaErrorDomain error 256)" (a generic read error) — next to find out which read fails.
