@@ -22,7 +22,11 @@
  *            schreibt sie auf dem Mac mit Apples AppKit; für andere Bundles macht das -imageForResource:, appkit/nsbundle_images.m)
  *   NSTabViewItem: tabViewItemWithViewController:, viewController/setViewController: (Kennung = der Controller, Ansicht und Titel von ihm)
  *   NSWorkspace: type:conformsToType: (gleich, oder über die UTTypeConformsTo-Listen, die Info.plist des Programms erklärt, transitiv; dazu
- *            public.item/public.data/public.content für alles), isFilePackageAtPath: (Ordner mit Endung)
+ *            public.item/public.data/public.content für alles), isFilePackageAtPath: (Ordner mit Endung),
+ *            typeOfFile:error: (Typbezeichner über NSURLTypeIdentifierKey); auch in Cocotrons MacWorkspace, wo sie Platzhalter waren
+ *   CAShapeLayer: path, fillColor, strokeColor, fillRule, lineCap, lineJoin, lineDashPattern (Objekte) und lineWidth, miterLimit, strokeStart,
+ *            strokeEnd, lineDashPhase (CGFloat) als gespeicherte Werte mit KVC-tauglichen Zugriffsmethoden (Cocotrons Klasse ist leer; Logic Pro
+ *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird damit nichts.
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
@@ -38,6 +42,8 @@
 #import <objc/runtime.h>
 #import <objc/message.h>
 #include <string.h>
+#include <ctype.h>
+#include <stdio.h>
 
 /* Gewicht wie NSFontWeight (-1 … 1); ab Medium (0.23) fett, mehr Stufen hat Cocotrons Schriftwahl nicht */
 static id f_sys_weight(Class c, SEL s, CGFloat size, CGFloat weight) {
@@ -243,6 +249,36 @@ static BOOL ws_is_package(id self, SEL s, NSString *path) {
     return [[path pathExtension] length] > 0;
 }
 
+static id ws_type_of_file(id self, SEL s, NSString *path, NSError **error) {
+    id uti = nil;
+    [[NSURL fileURLWithPath: path] getResourceValue: &uti forKey: NSURLTypeIdentifierKey error: error];
+    return uti;
+}
+
+/* gespeicherte Eigenschaften je Selektor: Schlüssel ist die Adresse des (internierten) Getter-Selektors */
+static id shape_get_obj(id self, SEL s) { return objc_getAssociatedObject(self, (const void *) s); }
+static CGFloat shape_get_float(id self, SEL s) {
+    NSNumber *n = objc_getAssociatedObject(self, (const void *) s);
+    if (n) return [n doubleValue];
+    return (s == sel_registerName("lineWidth") || s == sel_registerName("strokeEnd")) ? 1.0 : (s == sel_registerName("miterLimit") ? 10.0 : 0.0);
+}
+static SEL getter_for_setter(SEL s) {
+    const char *n = sel_getName(s);   /* setXyz: -> xyz */
+    char buf[128];
+    size_t len = strlen(n);
+    if (len < 5 || len - 4 >= sizeof buf) return s;
+    memcpy(buf, n + 3, len - 4);
+    buf[len - 4] = 0;
+    buf[0] = (char) tolower((unsigned char) buf[0]);
+    return sel_registerName(buf);
+}
+static void shape_set_obj(id self, SEL s, id v) {
+    objc_setAssociatedObject(self, (const void *) getter_for_setter(s), v, OBJC_ASSOCIATION_RETAIN);
+}
+static void shape_set_float(id self, SEL s, CGFloat v) {
+    objc_setAssociatedObject(self, (const void *) getter_for_setter(s), [NSNumber numberWithDouble: v], OBJC_ASSOCIATION_RETAIN);
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -270,12 +306,19 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
-    class_addMethod(objc_getClass("NSWorkspace"), sel_registerName("type:conformsToType:"), (IMP)ws_conforms, "c@:@@");
-    {   /* Cocotrons MacWorkspace meldet isFilePackageAtPath: als nicht umgesetzt: ersetzen */
-        Class mw = objc_getClass("MacWorkspace");
-        SEL sel = sel_registerName("isFilePackageAtPath:");
-        if (mw && class_getInstanceMethod(mw, sel)) method_setImplementation(class_getInstanceMethod(mw, sel), (IMP)ws_is_package);
-        class_addMethod(objc_getClass("NSWorkspace"), sel, (IMP)ws_is_package, "c@:@");
+    {   /* Cocotrons MacWorkspace (die einzige NSWorkspace-Unterklasse) hat diese als "nicht umgesetzt": dort ersetzen */
+        Class mw = objc_getClass("MacWorkspace"), nw = objc_getClass("NSWorkspace");
+        struct { const char *sel; IMP imp; const char *types; } ws[] = {
+            { "isFilePackageAtPath:", (IMP)ws_is_package, "c@:@" },
+            { "type:conformsToType:", (IMP)ws_conforms, "c@:@@" },
+            { "typeOfFile:error:", (IMP)ws_type_of_file, "@@:@^@" },
+        };
+        for (size_t i = 0; i < sizeof ws / sizeof *ws; i++) {
+            SEL sel = sel_registerName(ws[i].sel);
+            Method m = mw ? class_getInstanceMethod(mw, sel) : NULL;
+            if (m) method_setImplementation(m, ws[i].imp);
+            class_addMethod(nw, sel, ws[i].imp, ws[i].types);
+        }
     }
     {
         Class tv = objc_getClass("NSTabViewItem");
@@ -289,6 +332,22 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
         if (m) o_image_named = method_setImplementation(m, (IMP) image_named);
     }
     class_addMethod(objc_getClass("NSWindow"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
+    {
+        Class shape = objc_getClass("CAShapeLayer");
+        const char *objs[] = { "path", "fillColor", "strokeColor", "fillRule", "lineCap", "lineJoin", "lineDashPattern" };
+        const char *floats[] = { "lineWidth", "miterLimit", "strokeStart", "strokeEnd", "lineDashPhase" };
+        char setter[64];
+        for (size_t i = 0; shape && i < sizeof objs / sizeof *objs; i++) {
+            class_addMethod(shape, sel_registerName(objs[i]), (IMP)shape_get_obj, "@@:");
+            snprintf(setter, sizeof setter, "set%c%s:", toupper((unsigned char) objs[i][0]), objs[i] + 1);
+            class_addMethod(shape, sel_registerName(setter), (IMP)shape_set_obj, "v@:@");
+        }
+        for (size_t i = 0; shape && i < sizeof floats / sizeof *floats; i++) {
+            class_addMethod(shape, sel_registerName(floats[i]), (IMP)shape_get_float, "d@:");
+            snprintf(setter, sizeof setter, "set%c%s:", toupper((unsigned char) floats[i][0]), floats[i] + 1);
+            class_addMethod(shape, sel_registerName(setter), (IMP)shape_set_float, "v@:d");
+        }
+    }
     class_addMethod(objc_getClass("NSScreen"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
     class_addMethod(objc_getClass("CALayer"), sel_registerName("contentsScale"), (IMP)one_scale, "d@:");
     class_addMethod(objc_getClass("CALayer"), sel_registerName("setContentsScale:"), (IMP)ignore_scale, "v@:d");

@@ -93,7 +93,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont, o_imgnamed, o_bundleimg, o_imgfile, o_typeurl, o_docclass, o_readurl, o_readlx;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont, o_imgnamed, o_bundleimg, o_imgfile, o_typeurl, o_docclass, o_readurl, o_readlx, o_docinit, o_docinitalt;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -240,7 +240,21 @@ static BOOL h_readlx(id s, SEL c, NSURL *u, NSError **e) {
             (!r && e && *e) ? [[*e description] UTF8String] : "");
     return r;
 }
+static id h_docinit(id s, SEL c) {
+    fprintf(stderr, "[clokeos-trace] CLgSongDocument init ->\n");
+    id r = ((id (*)(id, SEL))o_docinit)(s, c);
+    fprintf(stderr, "[clokeos-trace] CLgSongDocument init <- %p\n", r);
+    return r;
+}
+static id h_docinitalt(id s, SEL c, NSURL *u, NSString *t, NSInteger alt, NSError **e) {
+    fprintf(stderr, "[clokeos-trace] CLgSongDocument initWithContentsOfURL:%s alt:%ld ->\n", [[u path] UTF8String] ?: "", (long) alt);
+    id r = ((id (*)(id, SEL, id, id, NSInteger, NSError **))o_docinitalt)(s, c, u, t, alt, e);
+    fprintf(stderr, "[clokeos-trace] CLgSongDocument initWithContentsOfURL <- %p %s\n", r, (!r && e && *e) ? [[*e description] UTF8String] : "");
+    return r;
+}
 + (void)hooks {
+    { Method m = class_getInstanceMethod(NSClassFromString(@"CLgSongDocument"), @selector(init)); if (m) o_docinit = method_setImplementation(m, (IMP)h_docinit); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"CLgSongDocument"), sel_registerName("initWithContentsOfURL:ofType:withAlternativeIndex:error:")); if (m) o_docinitalt = method_setImplementation(m, (IMP)h_docinitalt); }
     { Method m = class_getInstanceMethod(NSClassFromString(@"NSDocumentController"), @selector(typeForContentsOfURL:error:)); if (m) o_typeurl = method_setImplementation(m, (IMP)h_typeurl); }
     { Method m = class_getInstanceMethod(NSClassFromString(@"NSDocumentController"), @selector(documentClassForType:)); if (m) o_docclass = method_setImplementation(m, (IMP)h_docclass); }
     { Method m = class_getInstanceMethod(NSClassFromString(@"CLgSongDocument"), @selector(readFromURL:ofType:error:)); if (m) o_readurl = method_setImplementation(m, (IMP)h_readurl); }

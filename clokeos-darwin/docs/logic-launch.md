@@ -708,3 +708,7 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   `isFilePackageAtPath:` (directory with an extension; Cocotron's MacWorkspace had it unimplemented). `CLgSongDocument` picks its read path with `type:conformsToType:`.
 * `-[NSDocumentController makeDocumentWithContentsOfURL:ofType:error:]` uses `-initWithContentsOfURL:ofType:error:` (passes the error back, as on macOS).
 * `CLOKE_TRACE` also logs `typeForContentsOfURL:`, `documentClassForType:`, `-[CLgSongDocument readFromURL:ofType:error:]` and `_readLogicXProjectFromURL:error:` with results.
+* `MacWorkspace` (Cocotron's only NSWorkspace subclass) declared `type:conformsToType:`/`typeOfFile:error:`/`isFilePackageAtPath:` as unimplemented stubs, so the NSWorkspace versions never ran; they are now replaced there too.
+* `CAShapeLayer` gets stored, KVC-compatible properties (path, fill/stroke colour, line width, caps, dash, stroke start/end); Logic's asset manager sets them with `setValue:forKey:` while building the
+  project window, and the exception, caught inside Logic, became the "error 256". Nothing draws them yet.
+* Still error 256: `-[CLgSongDocument readFromURL:ofType:error:]` is never reached; tracing `init` and `initWithContentsOfURL:ofType:withAlternativeIndex:error:` next.
