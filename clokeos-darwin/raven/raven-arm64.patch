@@ -1,0 +1,971 @@
+--- a/native/CMakeLists.txt
++++ b/native/CMakeLists.txt
+@@ -71,18 +71,35 @@
+ add_test(NAME module_set_contracts COMMAND module_set_test)
+ set_tests_properties(module_set_contracts PROPERTIES TIMEOUT 10)
+ 
+-if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$")
++# ClokeOS arm64: the guest's x86-64 code runs in Unicorn (platform/unicorn_guest.cpp, GPL-2.0) instead of natively
++option(RAVEN_UNICORN "Run the guest's x86-64 code in Unicorn (arm64 hosts)" OFF)
++set(RAVEN_UNICORN_DIR "$ENV{HOME}/ClokeOS-work-wine/download/unicorn" CACHE PATH "Unicorn source and build-arm64 directories")
++if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64)$" OR RAVEN_UNICORN)
++    if(RAVEN_UNICORN)
++        # No bootstrap program: the gate lives in the emulated memory. The target stays for the tests that name it.
++        file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/bootstrap_dummy.cpp "int main() { return 0; }\n")
++        add_executable(raven-bootstrap ${CMAKE_CURRENT_BINARY_DIR}/bootstrap_dummy.cpp)
++    else()
+     enable_language(ASM)
+     add_executable(raven-bootstrap cpu/bootstrap.S)
+     target_compile_options(raven-bootstrap PRIVATE -fno-sanitize=all)
+-    if(APPLE)
++    endif()
++    if(RAVEN_UNICORN)
++    elseif(APPLE)
+         target_link_options(raven-bootstrap PRIVATE -nostdlib -static -Wl,-e,_start,-pagezero_size,0x1000,-image_base,0x700000000000)
+     else()
+     target_link_options(raven-bootstrap PRIVATE -fno-sanitize=all -nostdlib -static
+         -Wl,-no-pie,-Ttext-segment=0x700000000000,-e,_start,--build-id=none)
+     endif()
+-    add_library(raven_cpu STATIC cpu/native_cpu.cpp $<$<BOOL:${APPLE}>:platform/mach_guest.cpp> $<$<BOOL:${APPLE}>:platform/context_darwin.cpp> nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
++    add_library(raven_cpu STATIC cpu/native_cpu.cpp $<$<AND:$<BOOL:${APPLE}>,$<NOT:$<BOOL:${RAVEN_UNICORN}>>>:platform/mach_guest.cpp> $<$<BOOL:${RAVEN_UNICORN}>:platform/unicorn_guest.cpp> $<$<BOOL:${APPLE}>:platform/context_darwin.cpp> nt/normalization.cpp nt/environment.cpp nt/system.cpp nt/firmware.cpp nt/interfaces.cpp nt/providers.cpp nt/api.cpp nt/unwind.cpp nt/seh.cpp nt/apiset.cpp nt/system_exports.cpp nt/text.cpp nt/paths.cpp nt/file_api.cpp nt/ansi_api.cpp nt/shlwapi_api.cpp nt/registry_api.cpp nt/shell_api.cpp nt/platform_api.cpp nt/hash.cpp nt/version_api.cpp nt/system_api.cpp nt/process_api.cpp nt/actctx.cpp nt/security_api.cpp nt/access_token.cpp nt/event.cpp nt/mutex.cpp nt/child_api.cpp nt/child_process.cpp nt/winsock_api.cpp nt/host_api.cpp nt/pipe.cpp nt/job_api.cpp nt/wave_api.cpp nt/mmio_api.cpp nt/inherit.cpp nt/handle_channel.cpp nt/elevation.cpp nt/snapshot.cpp nt/restart.cpp nt/service_api.cpp nt/crypt32_api.cpp nt/bcrypt_api.cpp nt/authenticode.cpp nt/process_info_api.cpp nt/font_service.cpp nt/shader_service.cpp nt/canvas_service.cpp nt/sync_api.cpp nt/threads.cpp nt/thread_api.cpp nt/text_api.cpp nt/console.cpp nt/console_api.cpp nt/memory_api.cpp nt/guest_allocator.cpp nt/module_api.cpp nt/loader.cpp nt/tls.cpp nt/exceptions.cpp nt/resources.cpp nt/memory.cpp nt/objects.cpp nt/object_api.cpp nt/heap.cpp desktop/objects.cpp desktop/nonclient.cpp desktop/api.cpp desktop/surface.cpp desktop/windows.cpp desktop/system.cpp desktop/user_api.cpp desktop/window_manager.cpp desktop/window_ansi.cpp desktop/menu_manager.cpp desktop/shared_pixels.cpp desktop/foreign_surface.cpp desktop/user_ext.cpp desktop/scrollbar.cpp desktop/window_long.cpp desktop/child_frame.cpp desktop/gdi.cpp desktop/gdi_api.cpp desktop/gdi_text.cpp desktop/theme.cpp)
+     target_include_directories(raven_cpu PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
++    if(RAVEN_UNICORN)
++        set(UC_BUILD ${RAVEN_UNICORN_DIR}/build-arm64)
++        target_compile_definitions(raven_cpu PUBLIC RAVEN_UNICORN=1)
++        target_include_directories(raven_cpu PUBLIC ${RAVEN_UNICORN_DIR}/src/include)
++        target_link_libraries(raven_cpu PUBLIC ${UC_BUILD}/libunicorn-static.a ${UC_BUILD}/libx86_64-softmmu.a
++            ${UC_BUILD}/libaarch64-softmmu.a ${UC_BUILD}/libunicorn-common.a)
++    endif()
+     set(NLS_SOURCE ${CMAKE_CURRENT_SOURCE_DIR}/upstream/reactos-nls)
+     file(SHA256 ${NLS_SOURCE}/c_1252.txt NLS_TEXT_HASH)
+     if(NOT NLS_TEXT_HASH STREQUAL "d606b8bf22f35178703d201cf81c45783bc211f0437f0d17db61c13fe53f1c69")
+--- a/native/cpu/native_cpu.cpp
++++ b/native/cpu/native_cpu.cpp
+@@ -1928,7 +1928,11 @@
+ 				// The clock is read every few probes: reading it at each one was the costliest part of the spin. The pause keeps the probes
+ 				// from taking the lines the guest is writing its request to.
+ 				for (unsigned spins = 1; !ready() && (spins++ % 4 || std::chrono::steady_clock::now() < spin_until);)
++#if defined(__x86_64__)
+ 					__builtin_ia32_pause();
++#else
++					__asm__ volatile("yield");
++#endif
+ 				if (!ready())
+ 					state->execution_wait(ready, until);
+ 				if (command() || queued_pending())
+--- a/native/desktop/windows.cpp
++++ b/native/desktop/windows.cpp
+@@ -20,7 +20,7 @@
+ #include <poll.h>
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+-#include <x86intrin.h>
++#include "platform/x86_compat.h"
+ #include <thread>
+ #include <utility>
+ 
+--- a/native/nt/providers.cpp
++++ b/native/nt/providers.cpp
+@@ -34,7 +34,7 @@
+ 
+ #include <unistd.h>
+ #include <sys/mman.h>
+-#include <x86intrin.h>
++#include "platform/x86_compat.h"
+ #include <algorithm>
+ #include <fstream>
+ #include <iostream>
+--- a/native/nt/system_api.cpp
++++ b/native/nt/system_api.cpp
+@@ -7,7 +7,9 @@
+ #include <algorithm>
+ #include <array>
+ #include <chrono>
++#if defined(__x86_64__)
+ #include <cpuid.h>
++#endif
+ #include <cstring>
+ #include <ctime>
+ #include <filesystem>
+@@ -561,6 +563,7 @@
+ 		call.ret(1);
+ 	});
+ 	registry.add("IsProcessorFeaturePresent", 1, [](ApiCall &call) {
++#if defined(__x86_64__)
+ 		unsigned a = 0, b = 0, c = 0, d = 0;
+ 		__get_cpuid(1, &a, &b, &c, &d);
+ 		const unsigned leaf1_ecx = c, leaf1_edx = d;
+@@ -568,6 +571,11 @@
+ 		if (__get_cpuid_max(0, nullptr) >= 7) {
+ 			__cpuid_count(7, 0, a, b7, c, d);
+ 		}
++#else
++		// arm64 host: the guest runs in Unicorn as a Nehalem (SSE3, SSSE3, CX16, SSE4.1/4.2, POPCNT; no AVX)
++		const unsigned leaf1_ecx = 1u | 1u << 9 | 1u << 13 | 1u << 19 | 1u << 20 | 1u << 23, leaf1_edx = 1u << 23 | 1u << 25 | 1u << 26;
++		const unsigned b7 = 0;
++#endif
+ 		bool present;
+ 		switch (call.u32(0)) {
+ 		case 2: case 14: present = leaf1_ecx >> 13 & 1; break;
+--- a/native/pe/loaded_image.cpp
++++ b/native/pe/loaded_image.cpp
+@@ -23,8 +23,11 @@
+ 		throw std::runtime_error("PE is not an executable image");
+ 	if (!base || base % 65536 || base >= limit || size > limit - base)
+ 		throw std::runtime_error("invalid guest image base");
++#if !(defined(__APPLE__) && defined(__aarch64__))
++	// ClokeOS arm64: the guest runs in Unicorn on 4 KiB pages of its own, so the host page size does not matter
+ 	if (sysconf(_SC_PAGESIZE) != static_cast<long>(page_size))
+ 		throw std::runtime_error("shared PE images require 4096-byte host pages");
++#endif
+ 	if (size > 1024ULL * 1024 * 1024)
+ 		throw std::runtime_error("PE image exceeds initial mapping size limit");
+ 	protections.resize((size + page_size - 1) / page_size, PROT_NONE);
+--- a/native/platform/context_darwin.cpp
++++ b/native/platform/context_darwin.cpp
+@@ -1,6 +1,26 @@
+ // ClokeOS: see context_darwin.h
+ #ifdef __APPLE__
++#if defined(__aarch64__)
++// arm64: x19-x28, fp, lr and d8-d15 are saved (AAPCS64); makecontext puts function and arguments into x19-x21
+ __asm__(
++	".text\n.p2align 2\n"
++	".globl _raven_context_switch\n"
++	"_raven_context_switch:\n"
++	"\tsub sp, sp, #160\n"
++	"\tstp x19, x20, [sp, #0]\n\tstp x21, x22, [sp, #16]\n\tstp x23, x24, [sp, #32]\n\tstp x25, x26, [sp, #48]\n"
++	"\tstp x27, x28, [sp, #64]\n\tstp x29, x30, [sp, #80]\n"
++	"\tstp d8, d9, [sp, #96]\n\tstp d10, d11, [sp, #112]\n\tstp d12, d13, [sp, #128]\n\tstp d14, d15, [sp, #144]\n"
++	"\tmov x9, sp\n\tstr x9, [x0]\n"
++	"\tldr x9, [x1]\n\tmov sp, x9\n"
++	"\tldp x19, x20, [sp, #0]\n\tldp x21, x22, [sp, #16]\n\tldp x23, x24, [sp, #32]\n\tldp x25, x26, [sp, #48]\n"
++	"\tldp x27, x28, [sp, #64]\n\tldp x29, x30, [sp, #80]\n"
++	"\tldp d8, d9, [sp, #96]\n\tldp d10, d11, [sp, #112]\n\tldp d12, d13, [sp, #128]\n\tldp d14, d15, [sp, #144]\n"
++	"\tadd sp, sp, #160\n\tret\n"
++	".globl _raven_context_start\n"
++	"_raven_context_start:\n"
++	"\tmov x0, x20\n\tmov x1, x21\n\tblr x19\n\tbrk #1\n");
++#else
++__asm__(
+ 	".text\n"
+ 	".globl _raven_context_switch\n"
+ 	"_raven_context_switch:\n"
+@@ -16,3 +36,4 @@
+ 	"\tcallq *%r12\n"
+ 	"\tud2\n");
+ #endif
++#endif
+--- a/native/platform/context_darwin.h
++++ b/native/platform/context_darwin.h
+@@ -29,6 +29,18 @@
+ 	va_end(arguments);
+ 	auto top = reinterpret_cast<uintptr_t>(context->uc_stack.ss_sp) + context->uc_stack.ss_size;
+ 	top &= ~uintptr_t(15);
++#if defined(__aarch64__)
++	{
++		auto *arm = reinterpret_cast<uint64_t *>(top - 160);
++		std::memset(arm, 0, 160);
++		arm[0] = reinterpret_cast<uint64_t>(function);     // x19
++		arm[1] = first;                                    // x20
++		arm[2] = second;                                   // x21
++		arm[11] = reinterpret_cast<uint64_t>(&raven_context_start);   // x30: the first "return" enters the start stub
++		context->stack_pointer = arm;
++		return;
++	}
++#endif
+ 	auto *frame = reinterpret_cast<uint64_t *>(top - 9 * 8);
+ 	frame[0] = 0;                                        // r15
+ 	frame[1] = second;                                   // r14: second argument
+--- a/native/platform/mach_guest.h
++++ b/native/platform/mach_guest.h
+@@ -14,7 +14,10 @@
+ #include <span>
+ #include <string>
+ #include <thread>
++#ifndef RAVEN_UNICORN
+ #include <mach/kern_return.h>
++#endif
++#include <memory>
+ #include <sys/types.h>
+ #include <sys/uio.h>
+ 
+@@ -126,7 +129,15 @@
+ 	// the lowest free 64 KiB aligned gap below `limit` for a 32-bit guest's allocation
+ 	uint64_t low_gap(uint64_t size, uint64_t limit);
+ 
++#ifdef RAVEN_UNICORN
++public:
++	struct Emu;
+ private:
++	// ClokeOS arm64: the guest's x86-64 code runs in Unicorn inside this process (unicorn_guest.cpp)
++	std::unique_ptr<Emu> emu;
++	std::chrono::steady_clock::time_point deadline;
++#else
++private:
+ 	struct Event {
+ 		enum Kind { stopped, exited } kind;
+ 		int status;
+@@ -161,6 +172,7 @@
+ 	uint64_t last_address = 0;
+ 	uint64_t gs_base = 0;
+ 	std::map<uint64_t, uint64_t> host_views;
++#endif
+ };
+ 
+ }
+--- /dev/null
++++ b/native/platform/unicorn_guest.cpp
+@@ -0,0 +1,740 @@
++// ClokeOS arm64: guest-process control with Unicorn, see mach_guest.h
++// Raven drives its x86-64 guest with ptrace-like calls (cpu/native_cpu.cpp). On x86_64 hosts the guest is a real process; on arm64
++// there is no x86 code to run natively, so the guest lives in a Unicorn engine inside this process and the same calls are answered
++// from it: registers from uc_reg_read/write, memory from guest regions that are host memory mapped into the engine, stops from the
++// hooks (int3, syscall instruction, faults). Unicorn is GPL-2.0, Raven GPL-3.0.
++#ifdef RAVEN_UNICORN
++#include "platform/mach_guest.h"
++
++#include <algorithm>
++#include <atomic>
++#include <cerrno>
++#include <csignal>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <iostream>
++#include <map>
++#include <memory>
++#include <mutex>
++#include <stdexcept>
++#include <sys/mman.h>
++#include <sys/wait.h>
++#include <unicorn/unicorn.h>
++#include <vector>
++
++#include "platform/darwin_compat.h"
++#undef ptrace
++
++namespace {
++
++std::mutex children_lock;
++std::mutex images_lock;
++std::map<int, std::pair<void *, size_t>> images;
++std::map<pid_t, raven::NativeChild *> children;
++
++// The gate of the bootstrap of x86_64 hosts: int3; syscall; int3; ud2, at the address that program was linked at
++constexpr uint64_t gate_address = 0x700000000000ULL;
++constexpr uint64_t anywhere_start = 0x100000000000ULL;
++constexpr uint64_t host_page = 0x4000;
++
++uint64_t round_up(uint64_t value, uint64_t granule) { return (value + granule - 1) & ~(granule - 1); }
++
++uint32_t unicorn_rights(int protection)
++{
++	uint32_t rights = 0;
++	if (protection & PROT_READ) rights |= UC_PROT_READ;
++	if (protection & PROT_WRITE) rights |= UC_PROT_WRITE;
++	if (protection & PROT_EXEC) rights |= UC_PROT_EXEC;
++	return rights;
++}
++
++[[noreturn]] void fail(const std::string &what, uc_err result)
++{
++	throw std::runtime_error("native " + what + ": " + uc_strerror(result));
++}
++
++// Host memory a guest region is made of; it is released with the last region that uses it.
++struct HostBlock {
++	void *base = nullptr;
++	size_t size = 0;
++	bool mapped = false;   // made with mmap (anonymous or a shared object), not the storage of a PE image
++	~HostBlock()
++	{
++		if (mapped && base)
++			munmap(base, size);
++	}
++};
++
++struct Region {
++	uint64_t size = 0;
++	uint8_t *host = nullptr;   // the host memory of the region's first byte
++	std::shared_ptr<HostBlock> block;
++};
++
++}
++
++void raven_register_image(int descriptor, void *storage, size_t size)
++{
++	std::lock_guard lock(images_lock);
++	images[descriptor] = {storage, size};
++}
++
++void raven_unregister_image(int descriptor)
++{
++	std::lock_guard lock(images_lock);
++	images.erase(descriptor);
++}
++
++uint64_t raven_low_gap(pid_t pid, uint64_t size, uint64_t limit)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	return child ? child->low_gap(size, limit) : 0;
++}
++
++long raven_ptrace(enum __ptrace_request request, pid_t pid, void *address, void *data)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) {
++		errno = ESRCH;
++		return -1;
++	}
++	return child->request(request, address, data);
++}
++
++ssize_t raven_process_vm_readv(pid_t pid, const struct iovec *local, unsigned long, const struct iovec *remote, unsigned long, unsigned long)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) { errno = ESRCH; return -1; }
++	return child->read_memory(reinterpret_cast<uint64_t>(remote->iov_base), local->iov_base, local->iov_len);
++}
++
++ssize_t raven_process_vm_writev(pid_t pid, const struct iovec *local, unsigned long, const struct iovec *remote, unsigned long, unsigned long)
++{
++	raven::NativeChild *child = nullptr;
++	{
++		std::lock_guard lock(children_lock);
++		const auto found = children.find(pid);
++		if (found != children.end())
++			child = found->second;
++	}
++	if (!child) { errno = ESRCH; return -1; }
++	return child->write_memory(reinterpret_cast<uint64_t>(remote->iov_base), local->iov_base, local->iov_len);
++}
++
++namespace raven {
++
++struct NativeChild::Emu {
++	uc_engine *uc = nullptr;
++	uc_hook hooks[8] = {};
++	size_t hook_count = 0;
++	// The guest's regions by start address; they never overlap.
++	std::map<uint64_t, Region> regions;
++	// What stopped the guest last, as a Linux signal with the siginfo fields ptrace would report
++	bool stopped = true, run = false, step = false, happened = false;
++	int signal = 0, code = 0;
++	uint64_t address = 0;
++	uint64_t syscall_number = uint64_t(-1);
++	// The size of a pending timeout and the stop reason a hook recorded
++	uint64_t stop_rip = 0;
++	std::atomic<bool> closing{false};
++
++	uint64_t rip() const
++	{
++		uint64_t value = 0;
++		uc_reg_read(uc, UC_X86_REG_RIP, &value);
++		return value;
++	}
++	void set_rip(uint64_t value) { uc_reg_write(uc, UC_X86_REG_RIP, &value); }
++
++	// The lowest free gap of `size` bytes in [low, limit) on a 64 KiB boundary
++	uint64_t find_gap(uint64_t size, uint64_t low, uint64_t limit) const
++	{
++		uint64_t candidate = round_up(low, 0x10000);
++		for (const auto &[base, region] : regions) {
++			if (base + region.size <= candidate)
++				continue;
++			if (base >= candidate && base - candidate >= size)
++				break;
++			candidate = round_up(base + region.size, 0x10000);
++		}
++		return candidate < limit && limit - candidate >= size ? candidate : 0;
++	}
++
++	bool overlaps(uint64_t address_, uint64_t size) const
++	{
++		auto next = regions.upper_bound(address_);
++		if (next != regions.end() && next->first < address_ + size)
++			return true;
++		if (next != regions.begin()) {
++			--next;
++			if (next->first + next->second.size > address_)
++				return true;
++		}
++		return false;
++	}
++
++	// Gives the guest address range back: the pieces of regions inside it are unmapped, the rest of a region stays.
++	void unmap(uint64_t address_, uint64_t size)
++	{
++		const uint64_t end = address_ + size;
++		auto it = regions.upper_bound(address_);
++		if (it != regions.begin())
++			--it;
++		while (it != regions.end() && it->first < end) {
++			const uint64_t base = it->first, top = base + it->second.size;
++			if (top <= address_) { ++it; continue; }
++			const uint64_t from = std::max(base, address_), to = std::min(top, end);
++			uc_mem_unmap(uc, from, to - from);
++			Region region = std::move(it->second);
++			it = regions.erase(it);
++			if (from > base) {
++				Region left{from - base, region.host, region.block};
++				regions.emplace(base, std::move(left));
++			}
++			if (to < top) {
++				Region right{top - to, region.host + (to - base), region.block};
++				it = regions.emplace(to, std::move(right)).first;
++				++it;
++			}
++		}
++	}
++
++	// Maps host memory into the guest at `where`
++	void map(uint64_t where, uint64_t size, int protection, uint8_t *host, std::shared_ptr<HostBlock> block)
++	{
++		const auto result = uc_mem_map_ptr(uc, where, size, unicorn_rights(protection), host);
++		if (result != UC_ERR_OK)
++			fail("mmap", result);
++		regions.emplace(where, Region{size, host, std::move(block)});
++	}
++
++	const Region *find(uint64_t address_) const
++	{
++		auto it = regions.upper_bound(address_);
++		if (it == regions.begin())
++			return nullptr;
++		--it;
++		return address_ < it->first + it->second.size ? &it->second : nullptr;
++	}
++};
++
++namespace {
++
++// The hooks record why the guest stopped and end the emulation.
++struct Stops {
++	NativeChild::Emu *emu;
++};
++
++void on_interrupt(uc_engine *uc, uint32_t number, void *user)
++{
++	auto *emu = static_cast<NativeChild::Emu *>(user);
++	emu->happened = true;
++	emu->address = 0;
++	switch (number) {
++	case 3:
++		emu->signal = SIGTRAP;
++		emu->code = TRAP_BRKPT;
++		break;
++	case 1:
++		emu->signal = SIGTRAP;
++		emu->code = TRAP_TRACE;
++		break;
++	case 0:
++		emu->signal = SIGFPE;
++		emu->code = 1;
++		break;
++	case 6:
++		emu->signal = SIGILL;
++		emu->code = 1;
++		break;
++	default:
++		emu->signal = SIGSEGV;
++		emu->code = 0x80;
++	}
++	if (std::getenv("RAVEN_TRACE_STOPS"))
++		std::fprintf(stderr, "raven: guest interrupt %u at rip=%llx -> signal %d\n", number, (unsigned long long)emu->rip(), emu->signal);
++	uc_emu_stop(uc);
++}
++
++void on_syscall(uc_engine *uc, void *user)
++{
++	auto *emu = static_cast<NativeChild::Emu *>(user);
++	emu->happened = true;
++	emu->signal = SIGTRAP | 0x80;
++	emu->code = 0;
++	uint64_t rax = 0;
++	uc_reg_read(uc, UC_X86_REG_RAX, &rax);
++	emu->syscall_number = rax & 0xffffff;
++	uc_emu_stop(uc);
++}
++
++bool on_memory(uc_engine *uc, uc_mem_type type, uint64_t address, int, int64_t, void *user)
++{
++	auto *emu = static_cast<NativeChild::Emu *>(user);
++	emu->happened = true;
++	emu->signal = SIGSEGV;
++	const bool protection = type == UC_MEM_READ_PROT || type == UC_MEM_WRITE_PROT || type == UC_MEM_FETCH_PROT;
++	emu->code = protection ? 2 : 1;
++	emu->address = address;
++	if (std::getenv("RAVEN_TRACE_STOPS"))
++		std::fprintf(stderr, "raven: guest memory fault type=%d address=%llx rip=%llx\n", int(type), (unsigned long long)address, (unsigned long long)emu->rip());
++	uc_emu_stop(uc);
++	return false;
++}
++
++}
++
++NativeChild::NativeChild(std::span<const int>, const std::string &, std::chrono::milliseconds timeout)
++	: emu(std::make_unique<Emu>()), deadline(std::chrono::steady_clock::now() + timeout)
++{
++	static std::atomic<pid_t> next_pid{0x40000000};
++	pid = next_pid.fetch_add(1);
++	auto &e = *emu;
++	uc_err result = uc_open(UC_ARCH_X86, UC_MODE_64, &e.uc);
++	if (result != UC_ERR_OK)
++		fail("uc_open", result);
++	// A CPU with SSE4.2 and POPCNT but no AVX, which Unicorn cannot run
++	uc_ctl_set_cpu_model(e.uc, UC_CPU_X86_NEHALEM);
++	const auto add = [&](int type, void *callback, uint64_t begin, uint64_t end, int extra) {
++		uc_hook hook;
++		result = extra >= 0 ? uc_hook_add(e.uc, &hook, type, callback, &e, begin, end, extra) : uc_hook_add(e.uc, &hook, type, callback, &e, begin, end);
++		if (result != UC_ERR_OK)
++			fail("uc_hook_add", result);
++		e.hooks[e.hook_count++] = hook;
++	};
++	add(UC_HOOK_INTR, reinterpret_cast<void *>(on_interrupt), 1, 0, -1);
++	add(UC_HOOK_INSN, reinterpret_cast<void *>(on_syscall), 1, 0, UC_X86_INS_SYSCALL);
++	add(UC_HOOK_MEM_READ_UNMAPPED | UC_HOOK_MEM_WRITE_UNMAPPED | UC_HOOK_MEM_FETCH_UNMAPPED | UC_HOOK_MEM_READ_PROT | UC_HOOK_MEM_WRITE_PROT |
++		UC_HOOK_MEM_FETCH_PROT, reinterpret_cast<void *>(on_memory), 1, 0, -1);
++	{
++		std::lock_guard lock(children_lock);
++		children[pid] = this;
++	}
++	// The gate page: int3; syscall; int3; ud2. The guest starts stopped right after the first int3, as the bootstrap does.
++	gate = gate_address;
++	auto block = std::make_shared<HostBlock>();
++	block->size = host_page;
++	block->base = mmap(nullptr, block->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++	if (block->base == MAP_FAILED) {
++		block->base = nullptr;
++		throw std::runtime_error("native gate: cannot allocate host memory");
++	}
++	block->mapped = true;
++	const uint8_t code[] = {0xcc, 0x0f, 0x05, 0xcc, 0x0f, 0x0b};
++	std::memcpy(block->base, code, sizeof code);
++	e.map(gate, 0x1000, PROT_READ | PROT_EXEC, static_cast<uint8_t *>(block->base), block);
++	// SSE needs CR0.EM clear and CR4.OSFXSR and OSXMMEXCPT set, as an operating system leaves them; Unicorn starts with them off
++	uint64_t control = 0;
++	uc_reg_read(e.uc, UC_X86_REG_CR0, &control);
++	control = (control & ~uint64_t(4)) | 2;
++	uc_reg_write(e.uc, UC_X86_REG_CR0, &control);
++	uc_reg_read(e.uc, UC_X86_REG_CR4, &control);
++	control |= 0x600;
++	uc_reg_write(e.uc, UC_X86_REG_CR4, &control);
++	uint64_t selector = 0x33;
++	uc_reg_write(e.uc, UC_X86_REG_CS, &selector);
++	selector = 0x2b;
++	uc_reg_write(e.uc, UC_X86_REG_SS, &selector);
++	e.set_rip(gate + 1);
++	e.stopped = true;
++	e.signal = SIGTRAP;
++	e.code = TRAP_BRKPT;
++}
++
++NativeChild::~NativeChild()
++{
++	stop();
++}
++
++void NativeChild::set_timeout(std::chrono::milliseconds timeout)
++{
++	if (timeout.count() <= 0)
++		throw std::runtime_error("native execution requires a positive timeout");
++	deadline = std::chrono::steady_clock::now() + timeout;
++}
++
++void NativeChild::enable_parallel()
++{
++	throw std::runtime_error("parallel native execution is not supported with Unicorn");
++}
++
++pid_t NativeChild::clone_task(uint64_t)
++{
++	throw std::runtime_error("parallel native execution is not supported with Unicorn");
++}
++
++void NativeChild::stop()
++{
++	if (pid != -1) {
++		std::lock_guard lock(children_lock);
++		children.erase(pid);
++	}
++	pid = -1;
++	if (emu && emu->uc) {
++		for (size_t index = 0; index < emu->hook_count; ++index)
++			uc_hook_del(emu->uc, emu->hooks[index]);
++		emu->hook_count = 0;
++		emu->regions.clear();
++		uc_close(emu->uc);
++		emu->uc = nullptr;
++	}
++}
++
++// Runs the guest until it stops, as waitpid does for a traced process: the wait status of a stop is the signal in the second byte
++int NativeChild::wait(const std::function<bool()> *)
++{
++	if (!emu || !emu->uc)
++		return -1;
++	auto &e = *emu;
++	if (!e.run)
++		return -1;
++	e.run = false;
++	const auto now = std::chrono::steady_clock::now();
++	if (now >= deadline)
++		return -1;
++	const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
++	e.happened = false;
++	const uint64_t start = e.rip();
++	const uc_err result = uc_emu_start(e.uc, start, ~uint64_t(0), uint64_t(remaining), e.step ? 1 : 0);
++	e.step = false;
++	e.stopped = true;
++	if (e.happened) {
++		// int3: the guest stopped after the instruction, as on x86; the syscall instruction: execution continues after it
++		if (e.signal == (SIGTRAP | 0x80)) {
++			// Unicorn leaves rip after the instruction by itself
++		}
++	} else if (result == UC_ERR_OK) {
++		// A single step ends without a hook; a longer run ending without one was the timeout
++		if (e.step || remaining <= 0) {
++			e.signal = SIGTRAP;
++			e.code = TRAP_TRACE;
++		} else {
++			uint64_t after = e.rip();
++			if (std::chrono::steady_clock::now() >= deadline) {
++				e.happened = false;
++				(void)after;
++				return -1;
++			}
++			e.signal = SIGTRAP;
++			e.code = TRAP_TRACE;
++		}
++	} else {
++		switch (result) {
++		case UC_ERR_INSN_INVALID:
++			e.signal = SIGILL;
++			e.code = 1;
++			e.address = e.rip();
++			break;
++		case UC_ERR_EXCEPTION:
++			e.signal = SIGSEGV;
++			e.code = 0x80;
++			e.address = 0;
++			break;
++		default:
++			e.signal = SIGSEGV;
++			e.code = 1;
++			e.address = e.rip();
++		}
++		if (std::getenv("RAVEN_TRACE_STOPS"))
++			std::fprintf(stderr, "raven: guest stopped with %s at rip=%llx -> signal %d\n", uc_strerror(result), (unsigned long long)e.rip(), e.signal);
++	}
++	return (e.signal << 8) | 0x7f;
++}
++
++ssize_t NativeChild::read_memory(uint64_t address, void *buffer, size_t size)
++{
++	if (!emu || !emu->uc || uc_mem_read(emu->uc, address, buffer, size) != UC_ERR_OK) {
++		errno = EFAULT;
++		return -1;
++	}
++	return ssize_t(size);
++}
++
++ssize_t NativeChild::write_memory(uint64_t address, const void *buffer, size_t size)
++{
++	if (!emu || !emu->uc || uc_mem_write(emu->uc, address, buffer, size) != UC_ERR_OK) {
++		errno = EFAULT;
++		return -1;
++	}
++	return ssize_t(size);
++}
++
++uint64_t NativeChild::low_gap(uint64_t size, uint64_t limit)
++{
++	return emu ? emu->find_gap(size, 0x20000, limit) : 0;
++}
++
++namespace {
++
++// ptrace's register block and Unicorn's registers
++constexpr int register_ids[] = {UC_X86_REG_R15, UC_X86_REG_R14, UC_X86_REG_R13, UC_X86_REG_R12, UC_X86_REG_RBP, UC_X86_REG_RBX, UC_X86_REG_R11,
++	UC_X86_REG_R10, UC_X86_REG_R9, UC_X86_REG_R8, UC_X86_REG_RAX, UC_X86_REG_RCX, UC_X86_REG_RDX, UC_X86_REG_RSI, UC_X86_REG_RDI};
++
++}
++
++long NativeChild::request(enum __ptrace_request operation, void *address, void *data)
++{
++	if (!emu || !emu->uc) {
++		errno = ESRCH;
++		return -1;
++	}
++	auto &e = *emu;
++	switch (operation) {
++	case PTRACE_CONT:
++	case PTRACE_SYSEMU:
++		e.run = true;
++		e.step = false;
++		return 0;
++	case PTRACE_SINGLESTEP:
++		e.run = true;
++		e.step = true;
++		return 0;
++	case PTRACE_SETOPTIONS:
++		return 0;
++	case PTRACE_GETREGS: {
++		auto &r = *static_cast<user_regs_struct *>(data);
++		r = {};
++		unsigned long long *fields[] = {&r.r15, &r.r14, &r.r13, &r.r12, &r.rbp, &r.rbx, &r.r11, &r.r10, &r.r9, &r.r8, &r.rax, &r.rcx, &r.rdx, &r.rsi, &r.rdi};
++		for (size_t index = 0; index < std::size(register_ids); ++index) {
++			uint64_t value = 0;
++			uc_reg_read(e.uc, register_ids[index], &value);
++			*fields[index] = value;
++		}
++		uint64_t value = 0;
++		uc_reg_read(e.uc, UC_X86_REG_RIP, &value); r.rip = value;
++		uc_reg_read(e.uc, UC_X86_REG_RSP, &value); r.rsp = value;
++		uc_reg_read(e.uc, UC_X86_REG_EFLAGS, &value); r.eflags = value;
++		uc_reg_read(e.uc, UC_X86_REG_CS, &value); r.cs = value;
++		uc_reg_read(e.uc, UC_X86_REG_SS, &value); r.ss = value;
++		uc_reg_read(e.uc, UC_X86_REG_DS, &value); r.ds = value;
++		uc_reg_read(e.uc, UC_X86_REG_ES, &value); r.es = value;
++		uc_reg_read(e.uc, UC_X86_REG_FS, &value); r.fs = value;
++		uc_reg_read(e.uc, UC_X86_REG_GS, &value); r.gs = value;
++		uc_reg_read(e.uc, UC_X86_REG_FS_BASE, &value); r.fs_base = value;
++		uc_reg_read(e.uc, UC_X86_REG_GS_BASE, &value); r.gs_base = value;
++		r.orig_rax = e.signal == (SIGTRAP | 0x80) ? e.syscall_number : uint64_t(-1);
++		return 0;
++	}
++	case PTRACE_SETREGS: {
++		const auto &r = *static_cast<const user_regs_struct *>(data);
++		const unsigned long long fields[] = {r.r15, r.r14, r.r13, r.r12, r.rbp, r.rbx, r.r11, r.r10, r.r9, r.r8, r.rax, r.rcx, r.rdx, r.rsi, r.rdi};
++		for (size_t index = 0; index < std::size(register_ids); ++index) {
++			uint64_t value = fields[index];
++			uc_reg_write(e.uc, register_ids[index], &value);
++		}
++		uint64_t value = r.rip; uc_reg_write(e.uc, UC_X86_REG_RIP, &value);
++		value = r.rsp; uc_reg_write(e.uc, UC_X86_REG_RSP, &value);
++		value = r.eflags; uc_reg_write(e.uc, UC_X86_REG_EFLAGS, &value);
++		value = r.fs_base; uc_reg_write(e.uc, UC_X86_REG_FS_BASE, &value);
++		value = r.gs_base; uc_reg_write(e.uc, UC_X86_REG_GS_BASE, &value);
++		e.signal = e.signal == (SIGTRAP | 0x80) ? SIGTRAP : e.signal;
++		return 0;
++	}
++	case PTRACE_GETSIGINFO: {
++		auto *info = static_cast<siginfo_t *>(data);
++		*info = {};
++		info->si_signo = e.signal & 0x7f;
++		info->si_code = e.code;
++		info->si_addr = reinterpret_cast<void *>(e.address);
++		return 0;
++	}
++	case PTRACE_GETFPREGS: {
++		// FXSAVE layout: control and status words, MXCSR, the x87 registers and XMM0 to XMM15
++		auto *area = static_cast<uint8_t *>(data);
++		std::memset(area, 0, 512);
++		uint64_t word = 0;
++		uc_reg_read(e.uc, UC_X86_REG_FPCW, &word); const uint16_t control = uint16_t(word);
++		uc_reg_read(e.uc, UC_X86_REG_FPSW, &word); const uint16_t status = uint16_t(word);
++		uint32_t mxcsr = 0;
++		uc_reg_read(e.uc, UC_X86_REG_MXCSR, &mxcsr);
++		std::memcpy(area, &control, 2);
++		std::memcpy(area + 2, &status, 2);
++		std::memcpy(area + 24, &mxcsr, 4);
++		const uint32_t mask = 0xffff;
++		std::memcpy(area + 28, &mask, 4);
++		for (int index = 0; index < 16; ++index) {
++			uint8_t xmm[16] = {};
++			uc_reg_read(e.uc, UC_X86_REG_XMM0 + index, xmm);
++			std::memcpy(area + 160 + index * 16, xmm, 16);
++		}
++		return 0;
++	}
++	case PTRACE_GETREGSET:
++	case PTRACE_SETREGSET: {
++		auto *vector = static_cast<iovec *>(data);
++		constexpr size_t size = 576;   // the legacy area and the header of the extended state; no AVX in Unicorn
++		if (operation == PTRACE_GETREGSET) {
++			if (vector->iov_len < size) { errno = EINVAL; return -1; }
++			auto *out = static_cast<uint8_t *>(vector->iov_base);
++			if (request(PTRACE_GETFPREGS, nullptr, out) != 0)
++				return -1;
++			std::memset(out + 512, 0, 64);
++			const uint64_t mask = 3;
++			std::memcpy(out + 512, &mask, 8);
++			vector->iov_len = size;
++			return 0;
++		}
++		if (vector->iov_len < 512) { errno = EINVAL; return -1; }
++		const auto *in = static_cast<const uint8_t *>(vector->iov_base);
++		uint16_t control = 0, status = 0;
++		uint32_t mxcsr = 0;
++		std::memcpy(&control, in, 2);
++		std::memcpy(&status, in + 2, 2);
++		std::memcpy(&mxcsr, in + 24, 4);
++		uint64_t word = control; uc_reg_write(e.uc, UC_X86_REG_FPCW, &word);
++		word = status; uc_reg_write(e.uc, UC_X86_REG_FPSW, &word);
++		uc_reg_write(e.uc, UC_X86_REG_MXCSR, &mxcsr);
++		for (int index = 0; index < 16; ++index) {
++			uint8_t xmm[16];
++			std::memcpy(xmm, in + 160 + index * 16, 16);
++			uc_reg_write(e.uc, UC_X86_REG_XMM0 + index, xmm);
++		}
++		return 0;
++	}
++	case PTRACE_PEEKTEXT:
++	case PTRACE_PEEKDATA: {
++		uint64_t word = 0;
++		errno = 0;
++		if (read_memory(reinterpret_cast<uint64_t>(address), &word, sizeof word) != ssize_t(sizeof word)) {
++			errno = EIO;
++			return -1;
++		}
++		return long(word);
++	}
++	case PTRACE_POKEUSER:
++		return 0;
++	default:
++		errno = ENOSYS;
++		return -1;
++	}
++}
++
++uint64_t NativeChild::syscall(uint64_t number, uint64_t a1, uint64_t a2, uint64_t a3, uint64_t a4, uint64_t a5, uint64_t a6)
++{
++	if (!emu || !emu->uc)
++		throw std::runtime_error("native guest is gone");
++	auto &e = *emu;
++	switch (number) {
++	case SYS_mmap: {
++		uint64_t address = a1;
++		const uint64_t size = round_up(a2, 0x1000);
++		const int protection = int(a3), flags = int(a4);
++		const int descriptor = int(a5);
++		const uint64_t offset = a6;
++		const bool fixed = (flags & (MAP_FIXED | MAP_FIXED_NOREPLACE)) && address;
++		if (!size)
++			throw std::runtime_error("native mmap: empty mapping");
++		if (fixed) {
++			if (flags & MAP_FIXED)
++				e.unmap(address, size);
++			else if (e.overlaps(address, size))
++				throw std::runtime_error("native mmap: the range is taken");
++		} else if (flags & MAP_32BIT) {
++			address = e.find_gap(size, 0x20000, 0x100000000ULL);
++			if (!address)
++				throw std::runtime_error("native mmap: no 32-bit address space left");
++		} else {
++			address = e.find_gap(size, anywhere_start, 0x800000000000ULL);
++			if (!address)
++				throw std::runtime_error("native mmap: no address space left");
++		}
++		auto block = std::make_shared<HostBlock>();
++		if (flags & MAP_ANON) {
++			block->size = round_up(size, host_page);
++			void *host = mmap(nullptr, block->size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
++			if (host == MAP_FAILED)
++				throw std::runtime_error("native mmap: out of host memory");
++			block->base = host;
++			block->mapped = true;
++			e.map(address, size, protection, static_cast<uint8_t *>(host), block);
++			return address;
++		}
++		std::pair<void *, size_t> image{nullptr, 0};
++		{
++			std::lock_guard lock(images_lock);
++			const auto found = images.find(descriptor);
++			if (found != images.end())
++				image = found->second;
++		}
++		if (image.first && offset == 0 && size <= round_up(image.second, 0x1000)) {
++			// a PE image: the guest works on the storage the host reads and patches, so both see the same bytes
++			block->base = image.first;
++			block->size = image.second;
++			e.map(address, size, protection, static_cast<uint8_t *>(image.first), block);
++			return address;
++		}
++		// a shared object: the host maps it, the guest uses the same pages
++		const size_t length = size_t(round_up(a2, host_page));
++		void *view = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, off_t(offset));
++		if (view == MAP_FAILED)
++			throw std::runtime_error("native mmap: cannot map the shared object in the host: " + std::string(std::strerror(errno)));
++		block->base = view;
++		block->size = length;
++		block->mapped = true;
++		e.map(address, size, protection, static_cast<uint8_t *>(view), block);
++		return address;
++	}
++	case SYS_mprotect: {
++		const auto result = uc_mem_protect(e.uc, a1, round_up(a2, 0x1000), unicorn_rights(int(a3)));
++		if (result != UC_ERR_OK)
++			fail("mprotect", result);
++		return 0;
++	}
++	case SYS_munmap:
++		e.unmap(a1, round_up(a2, 0x1000));
++		return 0;
++	case SYS_madvise: {
++		// MADV_DONTNEED: the pages read as zero again
++		const uint64_t size = round_up(a2, 0x1000);
++		for (uint64_t at = a1 & ~uint64_t(0xfff); at < a1 + size;) {
++			const Region *region = e.find(at);
++			if (!region) { at += 0x1000; continue; }
++			const uint64_t base = [&] { auto it = e.regions.upper_bound(at); --it; return it->first; }();
++			const uint64_t end = std::min(base + region->size, a1 + size);
++			std::memset(region->host + (at - base), 0, end - at);
++			at = end;
++		}
++		return 0;
++	}
++	case SYS_openat: {
++		// the descriptor named as /proc/<pid>/fd/<n> is the host's own: the guest and the host share one descriptor table here
++		char path[128] = {};
++		if (read_memory(a2, path, sizeof path - 1) < 0)
++			throw std::runtime_error("native openat: cannot read the path");
++		const char *marker = std::strstr(path, "/fd/");
++		if (!marker)
++			throw std::runtime_error("native openat: unsupported path");
++		return uint64_t(std::atoi(marker + 4));
++	}
++	case SYS_modify_ldt:
++		throw std::runtime_error("native modify_ldt: 32-bit guests are not available with Unicorn yet");
++	case SYS_prctl:
++	case SYS_seccomp:
++	case SYS_close:
++		return 0;
++	default:
++		throw std::runtime_error("native syscall " + std::to_string(number) + " is not available with Unicorn");
++	}
++}
++
++}
++#endif
+--- /dev/null
++++ b/native/platform/x86_compat.h
+@@ -0,0 +1,10 @@
++// ClokeOS arm64: the few x86 intrinsics the host side uses
++#pragma once
++#if defined(__x86_64__)
++#include <x86intrin.h>
++#else
++#include <cstdint>
++// Unicorn's emulated time stamp counter counts nanoseconds, so the host's does too
++#include <time.h>
++static inline uint64_t __rdtsc() { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
++#endif

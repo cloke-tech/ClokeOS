@@ -365,3 +365,15 @@ Notepad++ (portable, 64-bit) with the global menu: all top-level menus (File Edi
 show in the top bar, with accelerators, greyed entries, separators and submenus; File > New made a second tab. Its menu is about 600 lines, which
 was more than CloakServer's `GM_MAX` (512; the menus after Language were dropped), now 4096 (cloakserver.c). `RAVEN_TRACE_X11=1` prints the size of the
 menu text sent.
+
+## arm64 backend (Unicorn)
+
+On arm64 there is no x86 code to run natively, so the guest's x86-64 code is emulated with [Unicorn](https://www.unicorn-engine.org/) (QEMU TCG, GPL-2.0; Raven itself is GPL-3.0). The patch `raven/raven-arm64.patch` applies on top of `raven-darwin.patch`.
+
+- `native/platform/unicorn_guest.cpp` is a second implementation of `NativeChild` (same interface as `mach_guest`): registers via `uc_reg_*`, guest memory as host memory mapped with `uc_mem_map_ptr` (anonymous, shared objects and the storage of PE images, so host and guest see the same bytes), stops from Unicorn hooks (int3, `syscall` instruction, memory faults) mapped to the Linux wait-status/siginfo conventions Raven already uses. The gate page (`int3; syscall; int3; ud2`) lives at 0x700000000000 in emulated memory, so there is no bootstrap program.
+- CMake: `-DRAVEN_UNICORN=ON` enables the x86_64 block on arm64; `raven-bootstrap` is only a dummy target; Unicorn comes from `RAVEN_UNICORN_DIR` (`src/include` and `build-arm64/*.a`). Configure natively (not with a cross toolchain file: custom commands then do not find their generator tools) and with `-DCMAKE_DISABLE_FIND_PACKAGE_Vulkan=ON`.
+- The emulated CPU is a Nehalem (SSE up to 4.2, POPCNT, no AVX); CR0/CR4 are set up for SSE as an OS leaves them.
+- arm64 versions of the coroutine switch (`context_darwin`), `__rdtsc`/`pause` and the CPU feature report (`IsProcessorFeaturePresent`); the 4 KiB host page check is skipped (the guest has its own pages).
+- The runtime PE files (`raven-rtl.dll`, `ucrtbase.dll`, ...) are architecture independent and are built once with mingw; the arm64 `raven` binary sits next to them.
+
+Status: native macOS arm64 `raven` runs a 64-bit console program (`hallo64.exe`: output and exit code). Not yet: 32-bit guests (`modify_ldt` / compatibility mode), GDI windows, build for the PureDarwin arm64 target.
