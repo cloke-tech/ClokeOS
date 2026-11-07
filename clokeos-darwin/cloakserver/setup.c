@@ -500,6 +500,25 @@ static bool sp_create_account(Account *out) {
   }
   snprintf(p, sizeof p, "%s/.Trash", home);
   sp_mkdir_owned(p, uid, 0700);
+  if (!access("/NT/Users", W_OK)) {
+    /* Windows-Ordner des Kontos in /NT/Users (Raven): AppData, und Documents, Desktop ... sind die Ordner des Benutzers */
+    char nt[400], link[600];
+    snprintf(nt, sizeof nt, "/NT/Users/%s", name);
+    sp_mkdir_owned(nt, uid, 0755);
+    static const char *const sub[] = {"AppData", "AppData/Local", "AppData/Roaming"};
+    for (size_t i = 0; i < sizeof sub / sizeof sub[0]; i++) {
+      snprintf(link, sizeof link, "%s/%s", nt, sub[i]);
+      sp_mkdir_owned(link, uid, 0755);
+    }
+    static const char *const pair[][2] = {{"Documents", "Documents"}, {"Desktop", "Desktop"}, {"Downloads", "Downloads"},
+                                          {"Pictures", "Pictures"}, {"Music", "Music"}, {"Videos", "Movies"}};
+    for (size_t i = 0; i < sizeof pair / sizeof pair[0]; i++) {
+      char target[600];
+      snprintf(link, sizeof link, "%s/%s", nt, pair[i][0]);
+      snprintf(target, sizeof target, "%s/%s", home, pair[i][1]);
+      if (!symlink(target, link) && lchown(link, uid, 20)) warn("lchown %s: %s", link, strerror(errno));
+    }
+  }
   {
     /* Seitenleiste von Fundus (Thunar): Favoriten wie im Finder */
     static const char *const fav[] = {"Documents", "Downloads", "Pictures", "Music", "Movies"};

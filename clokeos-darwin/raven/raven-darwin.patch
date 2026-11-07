@@ -657,10 +657,10 @@ index 7fab6e2..5a105ba 100644
  			throw std::runtime_error("native execution requires an x86-64 Linux host");
 diff --git a/native/menu.h b/native/menu.h
 new file mode 100644
-index 0000000..3564449
+index 0000000..84ec0e6
 --- /dev/null
 +++ b/native/menu.h
-@@ -0,0 +1,387 @@
+@@ -0,0 +1,388 @@
 +// ClokeOS: installed Windows programs in the application menu.
 +// `raven --install-menu [Applications folder]` reads the shortcuts (.lnk) the installers left in the Start Menu folders of the prefix
 +// and writes one Name.app bundle per program: a start script, an Info.plist and the program's icon as PNG. CloakServer lists bundles
@@ -966,9 +966,10 @@ index 0000000..3564449
 +	const fs::path root = prefix.c_drive();
 +	collect(root / "ProgramData/Microsoft/Windows/Start Menu/Programs", links);
 +	std::error_code ec;
-+	if (fs::is_directory(root / "Users", ec))
-+		for (const auto &user : fs::directory_iterator(root / "Users", ec))
-+			collect(user.path() / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs", links);
++	// Of the users' own Start Menu folders only the user's: the tree is shared, the application menu is not.
++	const char *login = std::getenv("USER");
++	if (login && *login)
++		collect(root / "Users" / login / "AppData/Roaming/Microsoft/Windows/Start Menu/Programs", links);
 +	std::set<std::string> wanted;
 +	int written = 0;
 +	fs::create_directories(applications, ec);
@@ -1273,7 +1274,7 @@ index 068df1d..aaa3822 100644
  		void *mapped = ::mmap(nullptr, sizeof(MutexState), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
  		if (mapped == MAP_FAILED)
 diff --git a/native/nt/paths.cpp b/native/nt/paths.cpp
-index f6d85f9..50f4f28 100644
+index f6d85f9..1a8d774 100644
 --- a/native/nt/paths.cpp
 +++ b/native/nt/paths.cpp
 @@ -160,7 +160,7 @@ std::optional<std::filesystem::path> NativePaths::drive_root(char16_t letter) co
@@ -1285,11 +1286,36 @@ index f6d85f9..50f4f28 100644
  	std::error_code ignored;
  	if (letter != u'c' && !std::filesystem::is_directory(root, ignored))
  		return std::nullopt;
+@@ -409,9 +409,23 @@ std::u16string NativePaths::user_name() const
+ std::u16string NativePaths::user_profile() const
+ {
+ 	const auto profile = u"C:\\Users\\" + user_name();
+-	for (const auto *part : {u"", u"\\AppData\\Roaming", u"\\AppData\\Local\\Temp", u"\\Documents", u"\\Desktop"})
++	for (const auto *part : {u"", u"\\AppData\\Roaming", u"\\AppData\\Local\\Temp"})
+ 		if (const auto resolved = resolve(profile + part))
+ 			std::filesystem::create_directories(resolved->host);
++	// The user's folders of the same names are the user's own folders on the host: C:\Users\<name>\Documents is ~/Documents.
++	const char *home = std::getenv("HOME");
++	for (const auto &[windows_name, host_name] : {std::pair{u"\\Documents", "Documents"}, std::pair{u"\\Desktop", "Desktop"}, std::pair{u"\\Downloads", "Downloads"},
++			std::pair{u"\\Pictures", "Pictures"}, std::pair{u"\\Music", "Music"}, std::pair{u"\\Videos", "Movies"}})
++		if (const auto resolved = resolve(profile + windows_name)) {
++			std::error_code error;
++			if (std::filesystem::symlink_status(resolved->host, error).type() != std::filesystem::file_type::not_found)
++				continue;
++			const auto target = home && *home ? std::filesystem::path(home) / host_name : std::filesystem::path();
++			if (!target.empty() && std::filesystem::is_directory(target, error))
++				std::filesystem::create_directory_symlink(target, resolved->host, error);
++			else
++				std::filesystem::create_directories(resolved->host, error);
++		}
+ 	return profile;
+ }
+ 
 diff --git a/native/nt/prefix.cpp b/native/nt/prefix.cpp
-index 77e12b3..2b77d70 100644
+index 77e12b3..118feb3 100644
 --- a/native/nt/prefix.cpp
 +++ b/native/nt/prefix.cpp
-@@ -10,17 +10,47 @@
+@@ -10,17 +10,62 @@
  
  namespace raven {
  
@@ -1297,6 +1323,10 @@ index 77e12b3..2b77d70 100644
 +{
 +	if (const char *chosen = std::getenv("RAVEN_C_DRIVE"); chosen && *chosen)
 +		return chosen;
++	// ClokeOS ships /NT, the Windows tree of the system that every user shares (Users/<name> is each user's own folder).
++	std::error_code error;
++	if (std::filesystem::is_directory("/NT", error))
++		return "/NT";
 +	return directory / "NT";
 +}
 +
@@ -1333,14 +1363,25 @@ index 77e12b3..2b77d70 100644
  			"ProgramData/Microsoft/Windows/Start Menu/Programs",
  			"Users/Public/Desktop", "Users/Public/Documents"})
 -		std::filesystem::create_directories(directory / "drive_c" / folder);
-+		std::filesystem::create_directories(c_drive() / folder);
++	{
++		// Folders of a tree the users share are open to their group: whoever creates one makes it for everybody (Users/<name> stays the user's).
++		std::error_code error;
++		auto path = c_drive();
++		std::filesystem::create_directories(path, error);
++		const std::filesystem::path relative(folder);
++		for (const auto &part : relative) {
++			path /= part;
++			if (std::filesystem::create_directory(path, error))
++				std::filesystem::permissions(path, std::filesystem::perms::owner_all | std::filesystem::perms::group_all | std::filesystem::perms::others_read | std::filesystem::perms::others_exec, error);
++		}
++	}
  	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.
 -	const auto fonts = directory / "drive_c" / "windows" / "Fonts";
 +	const auto fonts = windows_directory() / "Fonts";
  	std::error_code error;
  	if (std::filesystem::create_directory(fonts, error)) {
  		std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts"};
-@@ -42,7 +72,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
+@@ -42,7 +87,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
  {
  	// The loader takes these libraries from beside the runtime whatever the prefix holds: the copies only answer programs that search for,
  	// read or hash them. A newer runtime refreshes them.
@@ -1349,7 +1390,7 @@ index 77e12b3..2b77d70 100644
  	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
  		for (const auto name : runtime_components) {
  			std::error_code error;
-@@ -92,12 +122,12 @@ std::optional<std::filesystem::path> NativePrefix::resolve(std::string_view wind
+@@ -92,12 +137,12 @@ std::optional<std::filesystem::path> NativePrefix::resolve(std::string_view wind
  	for (auto &character : text)
  		if (character == '\\')
  			character = '/';

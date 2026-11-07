@@ -5,6 +5,8 @@
 dir=/usr/libexec/raven
 [ -x "$dir/raven" ] || { echo "raven: auf dieser Architektur nicht installiert" >&2; exit 127; }
 : "${RAVEN_PREFIX:=$HOME/Library/Raven}"
+: "${USER:=$(id -un)}"   # Raven names the user folder in /NT/Users after it
+export USER
 export RAVEN_PREFIX
 mkdir -p "$RAVEN_PREFIX"
 case "$1" in

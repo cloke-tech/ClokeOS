@@ -298,9 +298,16 @@ Checked in the VM: the Inno Setup Compiler appears in the launchpad with its own
 is `raven.native` for every program, so the global menu bar names every Windows program "raven.native" (a per-program class is
 the next step, and needs the title-bar session's answer, see below); programs with more than one shortcut get the first.
 
-Layout of the prefix (renamed 2026-11-07): `$RAVEN_PREFIX` (ClokeOS: `~/Library/Raven`) holds `NT/` (the C: drive, as on Windows: `Windows`,
-`Program Files`, `Program Files (x86)`, `ProgramData`, `Users/<name>`), `Volumes/<letter>/` for other drives, `registry.dat` and the
-snapshots. So `C:\Windows\` is `~/Library/Raven/NT/Windows/`, `C:\Users\root\` is `.../NT/Users/root/`. `RAVEN_C_DRIVE=<folder>` puts
-the C: drive somewhere else (for example a shared `/NT`). A prefix from before the rename (`drive_c`, `windows`, `drive_<x>`) is
-renamed when it is opened (NativePrefix, nt/prefix.cpp); the shortcuts' start scripts are rewritten by the next `--install-menu`.
-Checked in the VM: the old prefix migrated, `dir C:\Windows` lists `NT/Windows`, the Inno Setup bundle was rewritten to the new path.
+Layout (2026-11-07): the C: drive is `/NT`, the Windows tree of the system that all users share (the image ships `/NT`, group staff
+may write, `/NT/Users` has the sticky bit like /tmp). `C:\Windows` is `/NT/Windows`, `C:\Program Files` is `/NT/Program Files`,
+`C:\Users\<name>` is `/NT/Users/<name>`. Raven picks `/NT` when it exists, `RAVEN_C_DRIVE=<folder>` overrides, and without `/NT` the
+drive is `NT/` inside the prefix (`$RAVEN_PREFIX`, ClokeOS: `~/Library/Raven`, which keeps `registry.dat`, snapshots and `Volumes/<letter>/`
+for other drives). Folders Raven creates in the shared tree are open to the group (0775). Each user's folder is created with the
+account: by CloakServer's account setup (`setup.c`) and by brand.sh for the image's user, with `AppData/{Local,Roaming}` and
+`Documents`, `Desktop`, `Downloads`, `Pictures`, `Music`, `Videos` as symbolic links to the user's own folders (Videos -> Movies); Raven also makes
+the folder on first use (nt/paths.cpp `user_profile`, from `$USER`, which the wrapper sets). `--install-menu` reads the all-users
+Start Menu of the tree and the current user's. A prefix from before (`drive_c`, `windows`) is renamed to `NT` when it is opened and no
+`/NT` exists. Limits: the registry (also HKLM) is still one per user prefix, so a program installed by one user is in the shared
+`Program Files` but registered only for that user; files Raven copies into `/NT/Windows` belong to the first user. Checked in the VM
+with a hand-made `/NT` (775, `Users` 1777): `dir C:\` lists the tree, `/NT/Users/root` got its folders and symbolic links. Not built
+or run yet: the `setup.c` and `brand.sh` additions (account creation / image build).

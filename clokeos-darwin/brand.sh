@@ -281,6 +281,19 @@ EOF
       echo "set_inode_field $f gid 20"
     done
     echo "set_inode_field $home/.Trash mode 040700"
+    # Windows-Ordner des Kontos in /NT/Users (Raven): AppData, und Documents, Desktop ... sind die Ordner des Benutzers
+    echo "mkdir /NT/Users/$CLOKE_USER"
+    for d in AppData AppData/Local AppData/Roaming; do
+      echo "mkdir /NT/Users/$CLOKE_USER/$d"
+    done
+    for d in "" /AppData /AppData/Local /AppData/Roaming; do
+      echo "set_inode_field /NT/Users/$CLOKE_USER$d mode 040755"
+      echo "set_inode_field /NT/Users/$CLOKE_USER$d uid $CLOKE_USER_UID"
+      echo "set_inode_field /NT/Users/$CLOKE_USER$d gid 20"
+    done
+    for pair in Documents:Documents Desktop:Desktop Downloads:Downloads Pictures:Pictures Music:Music Videos:Movies; do
+      echo "symlink /NT/Users/$CLOKE_USER/${pair%:*} $home/${pair#*:}"
+    done
   } >> "$tmp/extra.cmds"
 fi
 
