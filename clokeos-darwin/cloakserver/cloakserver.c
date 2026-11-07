@@ -1129,14 +1129,16 @@ static void launch(int i) {
 static void launch_app(long i) { launch((int)i); }
 static void launch_ident(const char *id) { launch(app_by_ident(id)); }
 
-/* Klassenliste aus CLWindowClasses: durch Leerzeichen getrennt, * = beliebiger Teil */
-static bool class_matches(const char *classes, const char *cls) {
+/* Klassenliste aus CLWindowClasses: durch Leerzeichen getrennt, * = beliebiger Teil. exact: nur Einträge ohne *
+ * (ein Bundle mit dem genauen Namen geht vor: "notepad*" von Wine.app darf "notepad++" aus Raven nicht wegnehmen) */
+static bool class_matches(const char *classes, const char *cls, bool exact) {
   char list[256];
   snprintf(list, sizeof list, "%s", classes);
   char *save = NULL;
   for (char *tok = strtok_r(list, " ", &save); tok; tok = strtok_r(NULL, " ", &save)) {
     size_t n = strlen(tok);
     char *star = strchr(tok, '*');
+    if (exact && star) continue;
     if (star && star == tok + n - 1) {
       if (!strncasecmp(cls, tok, n - 1)) return true;
     } else if (star) { /* Präfix*Suffix */
@@ -1158,8 +1160,9 @@ static int app_for_window(Window w, const char *cls) {
     app = app_by_ident((const char *)tp.value);
     XFree(tp.value);
   }
-  for (int i = 0; app < 0 && i < napps; i++)
-    if (!apps[i].gone && apps[i].b.classes[0] && class_matches(apps[i].b.classes, cls)) app = i;
+  for (int pass = 0; pass < 2 && app < 0; pass++)
+    for (int i = 0; app < 0 && i < napps; i++)
+      if (!apps[i].gone && apps[i].b.classes[0] && class_matches(apps[i].b.classes, cls, pass == 0)) app = i;
   Atom type;
   int fmt;
   unsigned long n, after;
