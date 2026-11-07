@@ -210,8 +210,9 @@ static void draw_run(ClkCTRun *r, CGContextRef ctx, CGPoint origin, CFIndex from
     if (trace < 0) trace = getenv("CLOKE_CT_TRACE") != NULL;
     if (trace) {
         CGAffineTransform m = CGContextGetCTM(ctx), t = CGContextGetTextMatrix(ctx);
-        fprintf(stderr, "[clokeos-ct] n=%ld font=%s cg=%p at %.1f,%.1f ctm=[%.2f %.2f %.2f %.2f %.1f %.1f] tm=[%.2f %.2f %.2f %.2f] keys=%s\n",
-                (long) count, font ? class_getName(object_getClass(font)) : "nil", cg,
+        fprintf(stderr, "[clokeos-ct] n=%ld font=%s/%s cg=%p at %.1f,%.1f ctm=[%.2f %.2f %.2f %.2f %.1f %.1f] tm=[%.2f %.2f %.2f %.2f] keys=%s\n",
+                (long) count, font ? class_getName(object_getClass(font)) : "nil",
+                [font respondsToSelector: sel_registerName("fontName")] ? [[msg(font, "fontName") description] UTF8String] : "?", cg,
                 origin.x, origin.y, m.a, m.b, m.c, m.d, m.tx, m.ty, t.a, t.b, t.c, t.d,
                 [[[r->attrs allKeys] componentsJoinedByString: @","] UTF8String] ?: "");
     }

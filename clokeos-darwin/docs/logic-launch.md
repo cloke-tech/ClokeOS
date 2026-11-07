@@ -923,3 +923,24 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
   them through AppKit/layers, not with its own `CGContextDrawImage`/`CGContextClipToMask` calls (`CLOKE_CGCALL_TRACE=1` logs the image,
   mask and blend-mode calls an app makes, with caller offsets).
 * Trap: two scripts typing into the same VM serial console at once garble each other (zsh stuck in a `dquote>` prompt).
+
+### Round 53: symbols and button images
+
+* **SF Symbols:** `+[NSImage imageWithSystemSymbolName:…]` now loads template images from `/Library/ClokeOS/Symbols/<name>.png`;
+  `macapps/sfsymbols.sh <list>` renders them on the Mac with Apple's AppKit (`macapps/sfsymbols.m`) and writes them into the image
+  (part of macOS, so never in the repository). Names come from `CLOKE_TRACE` ("Symbol fehlt: …"). Logic asks for only 12 at start;
+  the editor toolbar's grid and action-menu symbols now show. Bundle symbols (`imageWithSymbolName:bundle:…`) use the bundle's images.
+* **Button image position like Apple** (checked on the Mac): `setImage:` on a cell with `NSNoImage` makes it `NSImageOnly`, `setTitle:` on
+  an image-only cell without title makes it `NSImageOverlaps`. Logic's transport and view buttons are built in code and showed only
+  their titles ("Play", "Stop"); now they show no titles, like on the Mac, but also no images yet.
+* **Why the transport images are still missing:** the button images themselves are fine (37×30 + 74×60 bitmaps with the play symbol,
+  pulled out of the VM). Logic's `MAButtonCell` draws from buffered per-state images built from its asset sets (`offImages`, `onImages`,
+  `glyphImage`, `_updateBufferedStateImages`), not through NSButtonCell; that path yields nothing yet (open since round 42). The
+  instrument icons in the track headers are still missing too. Note: the 2× bitmap Logic renders contains the 1× drawing in one
+  quarter (2× drawing scale not applied when rendering into a 2× representation).
+* `-[NSCell _contents]` (private; the cell's value, a button's title, nil for image cells, as on the Mac).
+* Traces: `CLOKE_BUTTON_TRACE=1` (button cells drawing an image: image, rect, view), `CLOKE_CT_TRACE` now prints the font name;
+  F12 dump lists buttons with title, image size, image position and image representations.
+* Seen once: Logic at full CPU with no events reaching it for minutes (no `sendEvent` in the log) while the main thread was not
+  sampled; in the next run the main thread idled in the event loop. Not reproduced, cause unknown (may relate to item 6).
+

@@ -12,6 +12,7 @@
  *   NSColor: colorNamed:, colorNamed:bundle: aus Assets.colors.plist neben der Assets.car des Bundles (macapps/carcolors.py erzeugt sie auf
  *            dem Mac mit Apples assetutil); Namen wie bei Apple, dazu "Colors/A/B" für "A.B" (so fragt Logic Pros MAAssetManager)
  *   NSFont: copyName, boundingRect (KTFont-Methoden, die CoreTexts CTFont*-Funktionen aufrufen; CTFontCreateWithName liefert NSFonts)
+ *   NSCell: _contents (privat; Wert bzw. Knopftitel, bei Bildzellen nil)
  *   NSCell: _textAttributes (private Apple-Methode, gibt ein veränderbares Wörterbuch mit Schrift, Farbe und Absatzstil; Logic Pros MAToolKit-
  *            Zellen rufen sie über super auf und ändern das Ergebnis)
  *   NSFontDescriptor: fontDescriptorWithDesign: gibt den Deskriptor unverändert zurück (keine abgerundeten/Monospace-Varianten der Systemschrift)
@@ -34,12 +35,13 @@
  *   UTType: +_typeOfCurrentDevice (private; Logic Pro setzt dessen localizedDescription in Texte ein) liefert ein Objekt mit "Mac"/com.apple.mac
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
- *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
- *            legt das Ergebnis ungeprüft in ein Wörterbuch) ein leeres Bild 16 × 16 */
+ *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: Vorlagenbilder aus /Library/ClokeOS/Symbols
+ *            (auf dem Mac mit macapps/sfsymbols.m gerendert) bzw. aus dem Bundle; sonst ein leeres Bild 16 × 16 statt nil */
 #import <AppKit/NSImage.h>
 #import <AppKit/NSAttributedString.h>
 #import <AppKit/NSParagraphStyle.h>
 #import <AppKit/NSCell.h>
+#import <AppKit/NSButtonCell.h>
 #import <Foundation/NSNumberFormatter.h>
 #import <Foundation/NSDateFormatter.h>
 #import <AppKit/NSFont.h>
@@ -109,10 +111,35 @@ static id fmt_date(id self, SEL s, id v) {
     return [v isKindOfClass:[NSString class]] ? v : nil;
 }
 
-static id img_symbol(Class c, SEL s, id name, id other) {
+/* SF Symbols: Apples Symbole liegen (auf dem Mac gerendert, macapps/sfsymbols.m; nicht im Repository) als Vorlagenbilder in
+ * /Library/ClokeOS/Symbols/<Name>.png; eigene Symbole eines Bundles (imageWithSymbolName:bundle:…) über dessen Bilder. Fehlt eines:
+ * leeres Bild 16 × 16 (nie nil; Logic legt das Ergebnis ungeprüft in ein Wörterbuch), CLOKE_TRACE meldet den Namen je einmal. */
+static id symbol_file(NSString *name) {
+    if (![name isKindOfClass: [NSString class]] || [name length] == 0 || [name rangeOfString: @"/"].location != NSNotFound) return nil;
+    static NSMutableDictionary *cache;
+    if (!cache) cache = [NSMutableDictionary new];
+    id hit = cache[name];
+    if (hit) return hit == [NSNull null] ? nil : hit;
+    NSImage *img = [[[NSImage alloc] initWithContentsOfFile: [NSString stringWithFormat: @"/Library/ClokeOS/Symbols/%@.png", name]] autorelease];
+    if (img) [img setTemplate: YES];
+    cache[name] = img ?: (id)[NSNull null];
+    return img;
+}
+static id symbol_missing(NSString *name) {
+    if (getenv("CLOKE_TRACE")) {
+        static NSMutableSet *seen;
+        if (!seen) seen = [NSMutableSet new];
+        if (name && ![seen containsObject: name]) { [seen addObject: name]; fprintf(stderr, "[clokeos-trace] Symbol fehlt: %s\n", [[name description] UTF8String]); }
+    }
     return [[[NSImage alloc] initWithSize: NSMakeSize(16, 16)] autorelease];
 }
+static id img_symbol(Class c, SEL s, id name, id other) {
+    id img = symbol_file(name);
+    return img ? [[img copy] autorelease] : symbol_missing(name);
+}
 static id img_symbol3(Class c, SEL s, id name, id bundle, double value) {
+    NSImage *img = [bundle isKindOfClass: [NSBundle class]] ? [bundle imageForResource: name] : nil;
+    if (img) { [img setTemplate: YES]; return img; }
     return img_symbol(c, s, name, bundle);
 }
 
@@ -353,6 +380,14 @@ static CGImageRef img_cgimage(NSImage *self, SEL s, NSRect *proposed, id ctx, NS
 static id img_best_for_rect(NSImage *self, SEL s, NSRect r, id ctx, NSDictionary *hints) { return [self bestRepresentationForDevice: nil]; }
 static id rep_colorspace(id self, SEL s) { return [NSColorSpace deviceRGBColorSpace]; }
 
+/* -[NSCell _contents] (privat bei Apple, Logic Pros MAButtonCell & Co. rufen es auf): der rohe Inhalt der Zelle, wie auf dem Mac
+ * nachgeprüft: bei Textzellen der Wert (Knöpfe: der Titel), bei Bildzellen nil */
+static id cell_contents(NSCell *self, SEL s) {
+    if ([self type] == NSImageCellType) return nil;
+    if ([self isKindOfClass: [NSButtonCell class]]) return [(NSButtonCell *) self title];
+    return [self objectValue];
+}
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
@@ -380,6 +415,7 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(cm, sel_registerName("colorWithDisplayP3Red:green:blue:alpha:"), (IMP)c_with_p3, "@@:dddd");
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
+    class_addMethod([NSCell class], sel_registerName("_contents"), (IMP)cell_contents, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
     if (objc_getClass("UTType"))
         class_addMethod(object_getClass(objc_getClass("UTType")), sel_registerName("_typeOfCurrentDevice"), (IMP)device_type, "@@:");

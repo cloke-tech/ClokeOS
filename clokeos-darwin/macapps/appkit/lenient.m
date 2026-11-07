@@ -62,6 +62,10 @@ static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
 #import <AppKit/NSControl.h>
 #import <AppKit/NSCell.h>
 #import <AppKit/NSTableView.h>
+#import <AppKit/NSButton.h>
+#import <AppKit/NSButtonCell.h>
+#import <AppKit/NSImage.h>
+#import <AppKit/NSBitmapImageRep.h>
 #import <QuartzCore/CALayer.h>
 @interface CKTrace : NSObject
 @end
@@ -179,6 +183,17 @@ static void ck_dumpview(id v, int depth) {
                         class_getName(object_getClass(cell)), [[t description] UTF8String] ?: "",
                         [[[[cell objectValue] description] substringToIndex: MIN((NSUInteger)40, [[[cell objectValue] description] length])] UTF8String] ?: "nil");
             }
+    }
+    /* Knöpfe: Titel, Bild, Bildlage, Vorlage */
+    if ([v isKindOfClass: [NSButton class]]) {
+        NSButtonCell *bc = [v cell];
+        NSImage *im = [bc respondsToSelector: @selector(image)] ? [bc image] : nil;
+        fprintf(stderr, "[viewdump] %*s  button %s title=\"%s\" image=%.0fx%.0f tmpl=%d pos=%ld bordered=%d\n", depth * 2, "",
+                class_getName(object_getClass(bc)), [[bc title] UTF8String] ?: "", im ? [im size].width : -1, im ? [im size].height : -1,
+                im ? (int)[im isTemplate] : -1, (long)[bc imagePosition], (int)[bc isBordered]);
+        for (id rep in [im representations])
+            fprintf(stderr, "[viewdump] %*s    rep %s %s\n", depth * 2, "", class_getName(object_getClass(rep)),
+                    [[[rep description] substringToIndex: MIN((NSUInteger)120, [[rep description] length])] UTF8String] ?: "");
     }
     /* Ebene mit eigenen Unterebenen (nicht von Unteransichten) */
     CALayer *L = [v respondsToSelector: @selector(layer)] ? [v layer] : nil;
