@@ -3006,7 +3006,7 @@ static const char *current_app_name(void) {
 /* Eine Zeile: "<tiefe>\t<art>\t<nummer>\t<merkmale>\t<text>\t<kürzel>", art m Untermenü,       */
 /* i Eintrag, s Trennlinie, merkmale aus d (gesperrt), c (Haken), r (Auswahl).                  */
 
-#define GM_MAX 512
+#define GM_MAX 4096
 typedef struct {
   int depth;
   char kind;

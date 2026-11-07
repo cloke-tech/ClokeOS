@@ -565,7 +565,7 @@ index a03e360..719a66c 100644
  	void paint_nonclient(uint64_t window);
  	void paint_modern_frame(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active,int32_t width,
 diff --git a/native/desktop/xcb.cpp b/native/desktop/xcb.cpp
-index 684ba7e..00bb921 100644
+index 684ba7e..94e3052 100644
 --- a/native/desktop/xcb.cpp
 +++ b/native/desktop/xcb.cpp
 @@ -41,10 +41,10 @@ template <typename T> struct Reply {
@@ -593,7 +593,7 @@ index 684ba7e..00bb921 100644
  		std::string title;
  		// The frame the window shows, kept to repaint what the server exposes and to send only what changed.
  		std::vector<uint8_t> shown;
-@@ -73,6 +78,56 @@ struct XcbPresentation::State {
+@@ -73,6 +78,57 @@ struct XcbPresentation::State {
  	};
  	std::map<uint64_t,Hosted> hosted;
  	std::map<uint64_t,uint64_t> transient_owners;
@@ -640,6 +640,7 @@ index 684ba7e..00bb921 100644
 +		const auto text=menu_provider(handle);
 +		if (text==window.menu_sent) return;
 +		window.menu_sent=text;
++		if (tracing()) std::fprintf(stderr,"x11: menu of %llx: %zu bytes, %zu lines\n",(unsigned long long)handle,text.size(),size_t(std::count(text.begin(),text.end(),'\n')));
 +		if (text.empty()) xcb_delete_property(connection,window.id,atoms[cloke_menu]);
 +		else property(window.id,atoms[cloke_menu],XCB_ATOM_STRING,8,uint32_t(text.size()),text.data());
 +	}
@@ -650,7 +651,7 @@ index 684ba7e..00bb921 100644
  	xcb_connection_t *connection=nullptr;
  	xcb_screen_t *screen=nullptr;
  	xcb_gcontext_t gc=0;
-@@ -161,7 +216,8 @@ struct XcbPresentation::State {
+@@ -161,7 +217,8 @@ struct XcbPresentation::State {
  
  	void pointer_event(DesktopEventKind kind,uint32_t button=0,uint32_t pressed=0) {
  		if (!pointer_window && kind==DesktopEventKind::pointer_motion) return;
@@ -660,7 +661,7 @@ index 684ba7e..00bb921 100644
  	}
  
  	void property(xcb_window_t window,xcb_atom_t name,xcb_atom_t type,uint8_t format,uint32_t count,const void *data) {
-@@ -390,8 +446,11 @@ struct XcbPresentation::State {
+@@ -390,8 +447,11 @@ struct XcbPresentation::State {
  		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
  			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
  			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
@@ -674,7 +675,7 @@ index 684ba7e..00bb921 100644
  		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
  		return id;
  	}
-@@ -444,7 +503,7 @@ struct XcbPresentation::State {
+@@ -444,7 +504,7 @@ struct XcbPresentation::State {
  		const auto owner=windows.find(parent);
  		if (owner==windows.end() || !owner->second->id) throw std::runtime_error("X11 popup has no presented parent window");
  		Reply place(xcb_translate_coordinates_reply(connection,xcb_translate_coordinates(connection,owner->second->id,screen->root,
@@ -683,7 +684,7 @@ index 684ba7e..00bb921 100644
  		if (!place) throw std::runtime_error("cannot place X11 popup");
  		const std::array<int32_t,4> area{place->dst_x,place->dst_y,place->dst_x+int32_t(width),place->dst_y+int32_t(height)};
  		if (found==windows.end()) {
-@@ -534,12 +593,18 @@ struct XcbPresentation::State {
+@@ -534,12 +594,18 @@ struct XcbPresentation::State {
  		if (found==windows.end()) {
  			auto window=std::make_unique<Window>();
  			window->width=width; window->height=height;
@@ -706,7 +707,7 @@ index 684ba7e..00bb921 100644
  			set_title(*window,title);
  			set_maximized(*window,window->maximized,false);
  			apply_transient(handle,*window);
-@@ -562,13 +627,30 @@ struct XcbPresentation::State {
+@@ -562,13 +628,30 @@ struct XcbPresentation::State {
  		if (window.maximized && window.pending_width && window.pending_height &&
  			(window.pending_width!=width || window.pending_height!=height)) return;
  		if (window.pending_width==width && window.pending_height==height) window.resized=false;
@@ -740,7 +741,7 @@ index 684ba7e..00bb921 100644
  		xcb_flush(connection);
  		if (xcb_connection_has_error(connection)) throw std::runtime_error("X11 connection failed during presentation");
  	}
-@@ -691,8 +773,9 @@ struct XcbPresentation::State {
+@@ -691,8 +774,9 @@ struct XcbPresentation::State {
  			const auto &event=*reinterpret_cast<const xcb_configure_notify_event_t *>(generic);
  			auto *window=window_of(event.window);
  			if (!window || window->is_popup || event.window!=event.event) return;
@@ -752,7 +753,7 @@ index 684ba7e..00bb921 100644
  			return;
  		}
  		case XCB_MAP_NOTIFY: case XCB_UNMAP_NOTIFY: {
-@@ -724,6 +807,9 @@ struct XcbPresentation::State {
+@@ -724,6 +808,9 @@ struct XcbPresentation::State {
  			const auto &event=*reinterpret_cast<const xcb_client_message_event_t *>(generic);
  			if (event.type==atoms[wm_protocols] && event.data.data32[0]==atoms[wm_delete_window])
  				if (auto *window=window_of(event.window)) window->closed=true;
@@ -762,7 +763,7 @@ index 684ba7e..00bb921 100644
  			return;
  		}
  		case XCB_FOCUS_IN: case XCB_FOCUS_OUT: {
-@@ -754,7 +840,7 @@ struct XcbPresentation::State {
+@@ -754,7 +841,7 @@ struct XcbPresentation::State {
  			root_x=event.root_x; root_y=event.root_y;
  			const auto *window=window_of(event.event);
  			// Under a popup grab the pointer outside the program's windows is reported to the popup; it is over no window then.
@@ -771,7 +772,7 @@ index 684ba7e..00bb921 100644
  			pointer_window=handle_of(event.event);
  			pointer_x=event.event_x; pointer_y=event.event_y;
  			pointer_event(DesktopEventKind::pointer_motion);
-@@ -854,6 +940,7 @@ struct XcbPresentation::State {
+@@ -854,6 +941,7 @@ struct XcbPresentation::State {
  		const xcb_window_t parent=found!=windows.end() && found->second->id ? found->second->id : screen->root;
  		shown=shown && parent!=screen->root;
  		width=std::clamp(width,1U,8192U); height=std::clamp(height,1U,8192U);
@@ -779,7 +780,7 @@ index 684ba7e..00bb921 100644
  		auto &entry=hosted[window];
  		if (!entry.id) {
  			entry.id=xcb_generate_id(connection);
-@@ -893,7 +980,8 @@ struct XcbPresentation::State {
+@@ -893,7 +981,8 @@ struct XcbPresentation::State {
  		release_constraint();
  		const auto found=windows.find(handle);
  		if (rectangle && found!=windows.end() && !found->second->is_popup && found->second->id) {
@@ -789,7 +790,7 @@ index 684ba7e..00bb921 100644
  			// A rectangle of a point or two holds the pointer still: raw motion keeps being reported.
  			const bool locked=value[2]-value[0]<=2 && value[3]-value[1]<=2;
  			confinement=xcb_generate_id(connection);
-@@ -1021,6 +1109,8 @@ DesktopPresentation XcbPresentation::callbacks()
+@@ -1021,6 +1110,8 @@ DesktopPresentation XcbPresentation::callbacks()
  	result.platform=HostPlatform::xcb;
  	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
  	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };

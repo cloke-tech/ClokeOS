@@ -360,3 +360,8 @@ A program started without a shortcut (double click on the .exe) gets a bundle fi
 `~/Applications/<name>.app` (icon from the .exe, `CLWindowClasses`, key `RavenProgram`, not removed by `--install-menu`). Installers (names with
 setup, install, unins), the tools Raven ships and programs that already have a bundle are left out. Checked: the test programs show with their letter
 tile (no icon in the .exe) and the running dot. They also stay in the application menu (delete the .app to remove one).
+
+Notepad++ (portable, 64-bit) with the global menu: all top-level menus (File Edit Search View Encoding Language Settings Tools Macro Run Plugins Window ?)
+show in the top bar, with accelerators, greyed entries, separators and submenus; File > New made a second tab. Its menu is about 600 lines, which
+was more than CloakServer's `GM_MAX` (512; the menus after Language were dropped), now 4096 (cloakserver.c). `RAVEN_TRACE_X11=1` prints the size of the
+menu text sent.
