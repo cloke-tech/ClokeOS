@@ -14,7 +14,7 @@ need "$DEBUGFS" clang cmake ninja git python3 nm curl brew x86_64-w64-mingw32-gc
 case "$CLOKE_ARCH" in
   x86_64) R="$WORK/raven"; triple=x86_64; skia_cpu=x64; meson_family=x86_64 ;;
   arm64) R="$WORK/raven-arm64"; triple=arm64; skia_cpu=arm64; meson_family=aarch64
-    [ -f "$WORK/download/unicorn/build-arm64/libunicorn-static.a" ] || { echo "Unicorn fehlt: erst xlat/build.sh (baut es nach $WORK/download/unicorn)" >&2; exit 1; } ;;
+    [ -f "$WORK/download/unicorn/build-arm64/libunicorn-static.a" ] || { echo "Raven (arm64) ohne Unicorn übersprungen: Quelle nach $WORK/download/unicorn/src klonen (siehe xlat/build.sh)" >&2; exit 0; } ;;
   *) echo "Raven gibt es nur für x86_64 und arm64" >&2; exit 0 ;;
 esac
 
