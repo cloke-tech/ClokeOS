@@ -7,6 +7,9 @@
 #
 # Braucht CoreFoundation aus foundation.sh (für CFString-Eigenschaften). Übersetzt wird mit Apples
 # clang und SDK-Headern, gelinkt gegen PureDarwins libSystem wie bei foundation.sh.
+# Danach swift/deploy-overlay.sh: swiftov hängt die Symbole an, die Logic sonst noch aus CoreAudio importiert
+# (Re-Export von usr/lib/sov/…); ohne den Schritt bricht dyld bei _AudioConvertNanosToHostTime ab.
+# Test ohne Gerät: CLOKE_CA_DEVICE=<datei> schreibt WAV im Echtzeittakt, CLOKE_CA_TRACE=1 meldet Start/IOProcs/unbekannte Eigenschaften.
 set -euo pipefail
 source "$(dirname "$0")/../config.sh"
 CLOKEOS_FLAVOR=desktop

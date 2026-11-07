@@ -14,6 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+static AudioComponent at_FindNext(AudioComponent prev, const AudioComponentDescription *d);
+static OSStatus at_InstanceNew(AudioComponent c, AudioComponentInstance *out);
+static OSStatus at_Initialize(AudioUnit u);
+static OSStatus at_GetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, void *data, UInt32 *size);
+static OSStatus at_SetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, const void *data, UInt32 size);
+static OSStatus at_OutputStart(AudioUnit u);
 
 #ifndef kAudioUnitSubType_DefaultOutput
 #define kAudioUnitSubType_DefaultOutput 'def '
@@ -135,7 +141,7 @@ static void reg_init(void) {
   pthread_mutex_unlock(&reg_lk);
 }
 
-AudioComponent AudioComponentFindNext(AudioComponent prev, const AudioComponentDescription *d) {
+static AudioComponent at_FindNext(AudioComponent prev, const AudioComponentDescription *d) {
   reg_init();
   AudioComponent c = prev ? prev->next : reg_head;
   for (; c; c = c->next)
@@ -172,7 +178,7 @@ AudioComponent AudioComponentRegister(const AudioComponentDescription *d, CFStri
   return c;
 }
 
-OSStatus AudioComponentInstanceNew(AudioComponent c, AudioComponentInstance *out) {
+static OSStatus at_InstanceNew(AudioComponent c, AudioComponentInstance *out) {
   if (!c || !out) return kAudio_ParamError;
   AudioComponentFactoryFunction f = c->factory;
   if (!f) {
@@ -208,7 +214,7 @@ Boolean AudioComponentInstanceCanDo(AudioComponentInstance in, SInt16 sel) { ret
 // --- AudioUnit-C-API: Weiterleitung an die Plug-in-Methode ------------------------------------
 #define METHOD(u, sel, T) ((T)((u) ? (u)->iface->Lookup(sel) : NULL))
 
-OSStatus AudioUnitInitialize(AudioUnit u) {
+static OSStatus at_Initialize(AudioUnit u) {
   OSStatus (*m)(void *) = METHOD(u, kAudioUnitInitializeSelect, OSStatus (*)(void *));
   return m ? m(u->iface) : kAudio_UnimplementedError;
 }
@@ -221,12 +227,12 @@ OSStatus AudioUnitGetPropertyInfo(AudioUnit u, AudioUnitPropertyID p, AudioUnitS
     METHOD(u, kAudioUnitGetPropertyInfoSelect, OSStatus (*)(void *, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, UInt32 *, Boolean *));
   return m ? m(u->iface, p, s, e, size, w) : kAudio_UnimplementedError;
 }
-OSStatus AudioUnitGetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, void *data, UInt32 *size) {
+static OSStatus at_GetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, void *data, UInt32 *size) {
   OSStatus (*m)(void *, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, void *, UInt32 *) =
     METHOD(u, kAudioUnitGetPropertySelect, OSStatus (*)(void *, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, void *, UInt32 *));
   return m ? m(u->iface, p, s, e, data, size) : kAudio_UnimplementedError;
 }
-OSStatus AudioUnitSetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, const void *data, UInt32 size) {
+static OSStatus at_SetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, const void *data, UInt32 size) {
   OSStatus (*m)(void *, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, const void *, UInt32) =
     METHOD(u, kAudioUnitSetPropertySelect, OSStatus (*)(void *, AudioUnitPropertyID, AudioUnitScope, AudioUnitElement, const void *, UInt32));
   return m ? m(u->iface, p, s, e, data, size) : kAudio_UnimplementedError;
@@ -273,7 +279,7 @@ OSStatus AudioUnitReset(AudioUnit u, AudioUnitScope s, AudioUnitElement e) {
   OSStatus (*m)(void *, AudioUnitScope, AudioUnitElement) = METHOD(u, kAudioUnitResetSelect, OSStatus (*)(void *, AudioUnitScope, AudioUnitElement));
   return m ? m(u->iface, s, e) : kAudio_UnimplementedError;
 }
-OSStatus AudioOutputUnitStart(AudioUnit u) {
+static OSStatus at_OutputStart(AudioUnit u) {
   OSStatus (*m)(void *) = METHOD(u, kAudioOutputUnitStartSelect, OSStatus (*)(void *));
   return m ? m(u->iface) : kAudio_UnimplementedError;
 }
@@ -547,4 +553,39 @@ OSStatus OpenDefaultAudioOutput(AudioUnit *out) {
   AudioComponent c = AudioComponentFindNext(NULL, &d);
   if (!c) return kAudioUnitErr_InvalidProperty;
   return AudioComponentInstanceNew(c, out);
+}
+
+// --- CLOKE_AT_TRACE=1: Einstiege, die Logics Audio-Engine benutzt (Suche, Instanz, Initialize, Start, fehlgeschlagene Eigenschaften) ---
+static int at_trace(void) { static int t = -1; if (t < 0) t = getenv("CLOKE_AT_TRACE") ? atoi(getenv("CLOKE_AT_TRACE")) : 0; return t; }
+static const char *cc4(UInt32 v, char o[5]) { for (int i = 0; i < 4; i++) { char c = (char)(v >> (24 - 8 * i)); o[i] = c >= 32 && c < 127 ? c : '?'; } o[4] = 0; return o; }
+AudioComponent AudioComponentFindNext(AudioComponent prev, const AudioComponentDescription *d) {
+  AudioComponent c = at_FindNext(prev, d);
+  if (at_trace() && !prev) { char a[5], b[5], m[5];
+    fprintf(stderr, "[AudioToolbox] FindNext '%s' '%s' '%s' -> %p\n", cc4(d->componentType, a), cc4(d->componentSubType, b), cc4(d->componentManufacturer, m), (void *)c); }
+  return c;
+}
+OSStatus AudioComponentInstanceNew(AudioComponent c, AudioComponentInstance *out) {
+  OSStatus r = at_InstanceNew(c, out);
+  if (at_trace() && c) { char a[5], b[5]; fprintf(stderr, "[AudioToolbox] InstanceNew '%s' '%s' -> %d %p\n", cc4(c->d.componentType, a), cc4(c->d.componentSubType, b), (int)r, out ? (void *)*out : NULL); }
+  return r;
+}
+OSStatus AudioUnitInitialize(AudioUnit u) {
+  OSStatus r = at_Initialize(u);
+  if (at_trace()) fprintf(stderr, "[AudioToolbox] Initialize %p -> %d\n", (void *)u, (int)r);
+  return r;
+}
+OSStatus AudioUnitGetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, void *data, UInt32 *size) {
+  OSStatus r = at_GetProperty(u, p, s, e, data, size);
+  if (at_trace() >= (r ? 1 : 2)) fprintf(stderr, "[AudioToolbox] GetProperty %p %u scope %u el %u -> %d\n", (void *)u, (unsigned)p, (unsigned)s, (unsigned)e, (int)r);
+  return r;
+}
+OSStatus AudioUnitSetProperty(AudioUnit u, AudioUnitPropertyID p, AudioUnitScope s, AudioUnitElement e, const void *data, UInt32 size) {
+  OSStatus r = at_SetProperty(u, p, s, e, data, size);
+  if (at_trace() >= (r ? 1 : 2)) fprintf(stderr, "[AudioToolbox] SetProperty %p %u scope %u el %u size %u -> %d\n", (void *)u, (unsigned)p, (unsigned)s, (unsigned)e, (unsigned)size, (int)r);
+  return r;
+}
+OSStatus AudioOutputUnitStart(AudioUnit u) {
+  OSStatus r = at_OutputStart(u);
+  if (at_trace()) fprintf(stderr, "[AudioToolbox] OutputUnitStart %p -> %d\n", (void *)u, (int)r);
+  return r;
 }

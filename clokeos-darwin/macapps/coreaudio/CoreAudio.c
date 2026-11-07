@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 enum { kObjDevice = 2, kObjStream = 3 };
 #define RATE 48000.0
@@ -31,6 +32,21 @@ static UInt32 frames = 512;     // kAudioDevicePropertyBufferFrameSize = Länge 
 static int running, stop_req;
 static pthread_t th;
 static int fd = -1;
+static int to_file;             // Ausgabe in eine Datei (CLOKE_CA_DEVICE): WAV-Kopf, Takt per mach_wait_until
+static UInt64 file_bytes;
+// CLOKE_CA_TRACE=1: Gerätestart, IOProcs und unbekannte Eigenschaften auf stderr
+static int ca_trace(void) { static int t = -1; if (t < 0) t = getenv("CLOKE_CA_TRACE") ? atoi(getenv("CLOKE_CA_TRACE")) : 0; return t; }
+static void fourcc(char o[5], UInt32 v) { for (int i = 0; i < 4; i++) { char c = (char)(v >> (24 - 8 * i)); o[i] = c >= 32 && c < 127 ? c : '?'; } o[4] = 0; }
+static void wav_header(int f, UInt64 data) {
+  unsigned char h[44] = "RIFF....WAVEfmt ";
+  UInt32 v; UInt16 w;
+  #define PUT32(o, x) (v = (UInt32)(x), memcpy(h + (o), &v, 4))
+  #define PUT16(o, x) (w = (UInt16)(x), memcpy(h + (o), &w, 2))
+  PUT32(4, 36 + data); PUT32(16, 16); PUT16(20, 1); PUT16(22, CHANNELS); PUT32(24, (UInt32)RATE);
+  PUT32(28, (UInt32)RATE * CHANNELS * 2); PUT16(32, CHANNELS * 2); PUT16(34, 16);
+  memcpy(h + 36, "data", 4); PUT32(40, data);
+  pwrite(f, h, 44, 0);
+}
 static mach_timebase_info_data_t tb;
 // Messung (CLOKE_CA_STATS=1): Abstand zwischen zwei IOProc-Aufrufen in ms
 static double p_min = 1e18, p_max, p_sum; static unsigned long p_n;
@@ -63,7 +79,7 @@ static void *io_thread(void *arg) {
   float *buf = malloc(MAXFRAMES * CHANNELS * sizeof(float));
   float *mix = malloc(MAXFRAMES * CHANNELS * sizeof(float));
   short *pcm = malloc(MAXFRAMES * CHANNELS * sizeof(short));
-  Float64 sample = 0; UInt64 last = 0;
+  Float64 sample = 0; UInt64 last = 0, t0 = mach_absolute_time();
   while (!stop_req) {
     pthread_mutex_lock(&lk);
     f = frames;
@@ -98,8 +114,10 @@ static void *io_thread(void *arg) {
     }
     // write() blockiert, wenn der Ringpuffer des Treibers voll ist: das ist der Takt des Geräts
     size_t left = f * CHANNELS * sizeof(short); const char *p = (const char *)pcm;
-    while (left && !stop_req) { ssize_t n = write(fd, p, left); if (n <= 0) break; p += n; left -= n; }
+    while (left && !stop_req) { ssize_t n = write(fd, p, left); if (n <= 0) break; p += n; left -= n; file_bytes += n; }
     sample += f;
+    // Eine Datei blockiert nie: dann gibt die Uhr den Gerätetakt vor (Echtzeit, damit Logic wie mit Hardware spielt)
+    if (to_file) mach_wait_until(t0 + ns_to_host((UInt64)(sample * 1e9 / RATE)));
   }
   free(buf); free(mix); free(pcm);
   return NULL;
@@ -109,7 +127,16 @@ static void *io_thread(void *arg) {
 typedef struct { UInt32 size; int ok; } Q;
 
 // Schreibt den Wert nach out (falls nicht NULL und groß genug) und liefert Größe/Vorhandensein.
+static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out, UInt32 cap);
+static void fourcc(char o[5], UInt32 v);
+// CLOKE_CA_TRACE=2: jede Abfrage (Objekt, Eigenschaft, Bereich, Ergebnis)
 static Q prop(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out, UInt32 cap) {
+  Q q = prop1(obj, a, out, cap);
+  if (ca_trace() >= 2 && out) { char c[5], sc[5]; fourcc(c, a->mSelector); fourcc(sc, a->mScope);
+    fprintf(stderr, "[CoreAudio] %u '%s' '%s' -> %s\n", (unsigned)obj, c, sc, q.ok ? "ja" : "nein"); }
+  return q;
+}
+static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out, UInt32 cap) {
   Q q = { 0, 0 };
   #define PUT(T, ...) do { T v_ = __VA_ARGS__; q.size = sizeof v_; q.ok = 1; if (out && cap >= sizeof v_) memcpy(out, &v_, sizeof v_); } while (0)
   UInt32 sel = a->mSelector;
@@ -119,15 +146,17 @@ static Q prop(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out,
       case kAudioHardwarePropertyDevices: PUT(AudioObjectID, kObjDevice); break;
       case kAudioHardwarePropertyDefaultOutputDevice:
       case kAudioHardwarePropertyDefaultSystemOutputDevice: PUT(AudioObjectID, kObjDevice); break;
-      default: break;   // auch kAudioHardwarePropertyDefaultInputDevice: es gibt keinen Eingang
+      case kAudioHardwarePropertyDefaultInputDevice: PUT(AudioObjectID, kAudioObjectUnknown); break;   // es gibt keinen Eingang
+      default: break;
     }
   } else if (obj == kObjDevice) {
     int outscope = a->mScope == kAudioObjectPropertyScopeOutput || a->mScope == kAudioObjectPropertyScopeGlobal;
     switch (sel) {
       case kAudioObjectPropertyClass: PUT(UInt32, kAudioDeviceClassID); break;
       case kAudioObjectPropertyOwner: PUT(AudioObjectID, kAudioObjectSystemObject); break;
-      case kAudioObjectPropertyName: case kAudioObjectPropertyManufacturer: case kAudioDevicePropertyDeviceUID: {
-        const char *s = sel == kAudioObjectPropertyName ? "ClokeOS HDA Output" : sel == kAudioObjectPropertyManufacturer ? "ClokeOS" : "ClokeOS:dsp0";
+      case kAudioObjectPropertyName: case kAudioObjectPropertyManufacturer: case kAudioDevicePropertyDeviceUID: case kAudioDevicePropertyModelUID: {
+        const char *s = sel == kAudioObjectPropertyName ? "ClokeOS HDA Output" : sel == kAudioObjectPropertyManufacturer ? "ClokeOS"
+                      : sel == kAudioDevicePropertyModelUID ? "ClokeOS:HDA" : "ClokeOS:dsp0";
         q.size = sizeof(CFStringRef); q.ok = 1;
         if (out && cap >= q.size) { CFStringRef str = CFStringCreateWithCString(NULL, s, kCFStringEncodingUTF8); memcpy(out, &str, sizeof str); }
         break; }
@@ -185,7 +214,10 @@ OSStatus AudioObjectGetPropertyDataSize(AudioObjectID o, const AudioObjectProper
 OSStatus AudioObjectGetPropertyData(AudioObjectID o, const AudioObjectPropertyAddress *a, UInt32 qs, const void *qd, UInt32 *size, void *data) {
   (void)qs; (void)qd;
   Q q = a ? prop(o, a, NULL, 0) : (Q){ 0, 0 };
-  if (!q.ok) return kAudioHardwareUnknownPropertyError;
+  if (!q.ok) {
+    if (ca_trace() && a) { char c[5]; fourcc(c, a->mSelector); fprintf(stderr, "[CoreAudio] unbekannt: Objekt %u Eigenschaft '%s'\n", (unsigned)o, c); }
+    return kAudioHardwareUnknownPropertyError;
+  }
   if (*size < q.size) return kAudioHardwareBadPropertySizeError;
   prop(o, a, data, *size);
   *size = q.size;
@@ -208,6 +240,7 @@ OSStatus AudioDeviceCreateIOProcID(AudioObjectID dev, AudioDeviceIOProc proc, vo
   pthread_mutex_lock(&lk);
   for (int i = 0; i < MAXPROCS; i++) if (!slots[i].proc) { slots[i] = (Slot){ proc, client }; *id = proc; r = 0; break; }
   pthread_mutex_unlock(&lk);
+  if (ca_trace()) fprintf(stderr, "[CoreAudio] CreateIOProcID %p -> %d\n", (void *)proc, (int)r);
   return r;
 }
 OSStatus AudioDeviceDestroyIOProcID(AudioObjectID dev, AudioDeviceIOProcID id) {
@@ -224,7 +257,10 @@ OSStatus AudioDeviceStart(AudioObjectID dev, AudioDeviceIOProcID id) {
   if (running) return 0;
   const char *path = getenv("CLOKE_CA_DEVICE");   // Test: Datei statt /dev/dsp0
   fd = open(path ? path : "/dev/dsp0", O_WRONLY | (path ? O_CREAT | O_TRUNC : 0), 0644);
+  if (ca_trace()) fprintf(stderr, "[CoreAudio] AudioDeviceStart %s -> fd %d\n", path ? path : "/dev/dsp0", fd);
   if (fd < 0) return kAudioHardwareNotRunningError;
+  struct stat st; to_file = fstat(fd, &st) == 0 && S_ISREG(st.st_mode); file_bytes = 0;
+  if (to_file) { wav_header(fd, 0); lseek(fd, 44, SEEK_SET); }
   stop_req = 0; p_min = 1e18; p_max = p_sum = 0; p_n = 0;
   if (pthread_create(&th, NULL, io_thread, NULL)) { close(fd); return kAudioHardwareIllegalOperationError; }
   running = 1;
@@ -235,6 +271,8 @@ OSStatus AudioDeviceStop(AudioObjectID dev, AudioDeviceIOProcID id) {
   if (dev != kObjDevice) return kAudioHardwareBadDeviceError;
   if (!running) return 0;
   stop_req = 1; pthread_join(th, NULL); running = 0;
+  if (to_file) wav_header(fd, file_bytes);
+  if (ca_trace()) fprintf(stderr, "[CoreAudio] AudioDeviceStop, %llu Bytes\n", (unsigned long long)file_bytes);
   close(fd); fd = -1;
   if (getenv("CLOKE_CA_STATS") && p_n) {
     fprintf(stderr, "CoreAudio: %lu IOProc-Aufrufe, Block %u Frames (%.3f ms), Abstand min/mittel/max %.3f/%.3f/%.3f ms\n",
@@ -245,4 +283,43 @@ OSStatus AudioDeviceStop(AudioObjectID dev, AudioDeviceIOProcID id) {
     fprintf(stderr, "CoreAudio: zweite Hälfte (%lu Aufrufe): mittlerer Abstand %.3f ms\n", n - h, s / (n - h));
   }
   return 0;
+}
+
+// --- Was Logic sonst noch importiert: Hostzeit, Listener (feuern nie: das Gerät ändert sich nicht), alte Eigenschafts-API ---
+UInt64 AudioGetCurrentHostTime(void) { return mach_absolute_time(); }
+UInt64 AudioConvertHostTimeToNanos(UInt64 h) { if (!tb.denom) mach_timebase_info(&tb); return host_to_ns(h); }
+UInt64 AudioConvertNanosToHostTime(UInt64 ns) { if (!tb.denom) mach_timebase_info(&tb); return ns_to_host(ns); }
+OSStatus AudioObjectAddPropertyListener(AudioObjectID o, const AudioObjectPropertyAddress *a, AudioObjectPropertyListenerProc p, void *c) {
+  (void)o; (void)a; (void)p; (void)c; return 0; }
+OSStatus AudioObjectRemovePropertyListener(AudioObjectID o, const AudioObjectPropertyAddress *a, AudioObjectPropertyListenerProc p, void *c) {
+  (void)o; (void)a; (void)p; (void)c; return 0; }
+OSStatus AudioDeviceAddPropertyListener(AudioDeviceID d, UInt32 ch, Boolean in, AudioDevicePropertyID id, AudioDevicePropertyListenerProc p, void *c) {
+  (void)d; (void)ch; (void)in; (void)id; (void)p; (void)c; return 0; }
+OSStatus AudioDeviceRemovePropertyListener(AudioDeviceID d, UInt32 ch, Boolean in, AudioDevicePropertyID id, AudioDevicePropertyListenerProc p) {
+  (void)d; (void)ch; (void)in; (void)id; (void)p; return 0; }
+static AudioObjectPropertyAddress old_addr(UInt32 id, UInt32 ch, int in) {
+  AudioObjectPropertyAddress a = { id, in ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeOutput, ch };
+  return a;
+}
+OSStatus AudioDeviceGetPropertyInfo(AudioDeviceID d, UInt32 ch, Boolean in, AudioDevicePropertyID id, UInt32 *size, Boolean *writable) {
+  AudioObjectPropertyAddress a = old_addr(id, ch, in);
+  if (writable) *writable = id == kAudioDevicePropertyBufferFrameSize;
+  return size ? AudioObjectGetPropertyDataSize(d, &a, 0, NULL, size) : (AudioObjectHasProperty(d, &a) ? 0 : kAudioHardwareUnknownPropertyError);
+}
+OSStatus AudioDeviceGetProperty(AudioDeviceID d, UInt32 ch, Boolean in, AudioDevicePropertyID id, UInt32 *size, void *data) {
+  AudioObjectPropertyAddress a = old_addr(id, ch, in);
+  return AudioObjectGetPropertyData(d, &a, 0, NULL, size, data);
+}
+OSStatus AudioDeviceSetProperty(AudioDeviceID d, const AudioTimeStamp *when, UInt32 ch, Boolean in, AudioDevicePropertyID id, UInt32 size, const void *data) {
+  (void)when; AudioObjectPropertyAddress a = old_addr(id, ch, in);
+  return AudioObjectSetPropertyData(d, &a, 0, NULL, size, data);
+}
+OSStatus AudioHardwareGetPropertyInfo(AudioHardwarePropertyID id, UInt32 *size, Boolean *writable) {
+  AudioObjectPropertyAddress a = { id, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+  if (writable) *writable = 0;
+  return size ? AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &a, 0, NULL, size) : 0;
+}
+OSStatus AudioHardwareGetProperty(AudioHardwarePropertyID id, UInt32 *size, void *data) {
+  AudioObjectPropertyAddress a = { id, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+  return AudioObjectGetPropertyData(kAudioObjectSystemObject, &a, 0, NULL, size, data);
 }
