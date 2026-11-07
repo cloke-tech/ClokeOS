@@ -207,15 +207,14 @@ radio buttons of the license page sit on a black strip with black text (TNewChec
 clipped. Clicking OK on the language dialog works. Rule for tests: copy `overlay-desktop/usr/bin/raven` into a VM that was
 not rebuilt, or the GUI parts do not show.
 
-### Black strip behind the license radio buttons (not fixed)
+### Clipped header fixed, black radio strip still open (2026-11-07)
 
-What the trace shows (32-bit, `RAVEN_TRACE_X86=1`): Inno paints a themed radio by sending WM_CTLCOLORSTATIC to the page, then its own
-message, then `DrawThemeParentBackground(radio, dc, NULL)` (host: WM_ERASEBKGND and WM_PRINTCLIENT to the parent with the
-origin shifted), after which the page's Delphi handler runs `FillRect(dc, parent client, page brush)`. The black comes from that
-fill: two of the `CreateBrushIndirect` brushes of the process have colour 0, and the page brush in the first run was one of
-them (brush handle 1013b). Two guesses that did not help: the hollow brush of the control's own `FillRect` (button.c in
-raven-user32, a parent-background fill through WM_ERASEBKGND for the hollow brush) changed nothing and was reverted.
-Next step: find out which Delphi brush colour the page really has (compare with Windows: the brush colour 0 may be what
-Windows also gets, and the page's WM_ERASEBKGND then goes through a path Raven does not take, e.g. a themed parent background).
-Test notes: the dialog opens at a different place each run (click the OK button from a screenshot), and the desktop session
-logs out to the greeter after about 40 minutes without input.
+`DrawThemeParentBackground` shifted the control's context by `window->x - parent->x`, but a child's position is already in its
+parent's client area, so the shift was wrong whenever the parent itself was not at 0,0: the parent's background landed beside the
+control. Now the shift is the child's own position (theme.cpp). That fixed the clipped wizard header ("License Agreement" is
+whole now). The radio buttons of the license page are still on a black strip, though their parent fill reaches the DC with the
+right shift and a white brush (trace: WM_ERASEBKGND to the page, `FillRect(dc, page client, white)`, then the themed radio and
+its text). What is still unknown is why those pixels end up black; `FillRect` writes alpha 0, so the compositor's use of alpha
+for child windows is the next suspect. Tried and reverted: a parent-background fill inside raven-user32's button.c.
+Test notes: the dialog opens at a different place each run, so press Return (`vmctl.py xkey Return`) instead of clicking OK, and
+the desktop session logs out to the greeter after about 40 minutes without input.

@@ -241,6 +241,20 @@ index 7713b09..ea6369d 100644
  		text_engine=std::make_unique<TextRenderer>(std::filesystem::is_directory(bundled) ? bundled.string() : RAVEN_FONT_DIRECTORY);
  	}
  	return *text_engine;
+diff --git a/native/desktop/theme.cpp b/native/desktop/theme.cpp
+index 089a377..a98c6d1 100644
+--- a/native/desktop/theme.cpp
++++ b/native/desktop/theme.cpp
+@@ -521,7 +521,8 @@ void NativeWindows::register_theme_api(ApiRegistry &registry)
+ 			call.ret(e_fail);
+ 			return;
+ 		}
+-		const int32_t dx = window->x - parent->x, dy = window->y - parent->y;
++		// A child's position is in its parent's client area, which is the surface the parent draws on.
++		const int32_t dx = window->x, dy = window->y;
+ 		const uint64_t parent_handle = window->parent;
+ 		const auto saved_x = dc->origin_x, saved_y = dc->origin_y;
+ 		const auto saved_clip = dc->application_clip;
 diff --git a/native/desktop/windows.cpp b/native/desktop/windows.cpp
 index 0616ece..7be193b 100644
 --- a/native/desktop/windows.cpp
