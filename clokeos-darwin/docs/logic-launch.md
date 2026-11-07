@@ -857,3 +857,8 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   0.4 dB). Tracks 4, 5, 7, 8 (guitars: Session Player guitar `CbGuitarStrummer`, Sampler "Vintage Strat", Pedalboard) are **silent** on ClokeOS although
   the instrument and its sample load (`Vintage Strat.exs` opened, `Vintage Strat_consolidated.caf` opened 32 times). Open: whether the strummer produces no
   notes or Pedalboard silences the signal. Track 6 "Bright Synth Strings" not exported yet.
+* `CLOKE_LOGIC_FXPROBE=1` (libclogictrace): level before/after every Logic effect (`CBasicFX::Process` MADSP +0x7a9a10 and `CPlugInShell::Execute`
+  +0x202b8, patched with trampolines). Real-time playback showed the bass chain (Pedalboard with Face Fuzz, Bass Amp, compressor, tape delay) with
+  plausible levels; no guitar chain (second Pedalboard, `CGuitarAmpShell`) appeared, but the playback window may not have reached the guitar entries
+  (first guitar note at 15 s on the Mac). Next: run the probe through an offline bounce of the whole song. Blocker for remote tests: the VM display
+  freezes after a few minutes and Logic then ignores keys.

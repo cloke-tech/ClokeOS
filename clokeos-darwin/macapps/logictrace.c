@@ -138,11 +138,9 @@ static const char *mae_base(void) {   /* Bildanfang von MAAudioEngine aus der dy
     }
     return NULL;
 }
-/* Export-Absturz (File > Export > All Tracks): MD::NewFile ruft MDFile::CheckDisposeFiles, das alle Dateien freigibt, auf die gerade kein
- * Stream zeigt – auch die der eben fertigen Spur, deren MDFile Logic danach noch an FileRecordDisable gibt (use-after-free). Auf dem Mac
- * verhindert das meist, dass noch asynchrone Schreibaufträge offen sind (dann kehrt CheckDisposeFiles sofort zurück); hier ist der
- * Datei-Faden schneller. Der Aufruf in NewFile wird durch nop ersetzt; Prime und Exit räumen weiter auf. Logic 12.3 arm64,
- * MAAudioEngine +0x6ee2f4 = bl 0x711058. Aus mit CLOKE_LOGIC_KEEPFILES=0. */
+/* Export-Absturz: MDFile::CheckDisposeFiles gibt alle Dateien frei, auf die gerade kein Stream zeigt – auch die der eben fertigen Spur,
+ * die Logic danach noch benutzt (use-after-free / doppeltes free). Auf dem Mac sind dann meist noch asynchrone Schreibaufträge offen
+ * (Funktion kehrt sofort zurück); hier ist der Datei-Faden schneller. Aus mit CLOKE_LOGIC_KEEPFILES=0. */
 static void patch_newfile_dispose(void) {
     const char *v = getenv("CLOKE_LOGIC_KEEPFILES");
     if (v && *v == '0') return;
@@ -177,7 +175,74 @@ static void hook_mdca_vtable(void) {
     fprintf(stderr, "[clogic] MDCA-Vtable gehakt (%p)\n", (void *)vt);
 }
 
+
+/* CLOKE_LOGIC_FXPROBE=1: Pegel vor/nach jedem Effekt. CBasicFX::Process (MADSP +0x7a9a10) ist der gemeinsame Einstieg aller Logic-Effekte;
+ * die ersten vier Befehle (stp …) werden in ein Sprungbrett kopiert und durch einen Sprung auf fx_hook ersetzt. TProcessInfo: +0x8 Frames,
+ * +0x10 Eingangs-, +0x18 Ausgangspuffer (float **). Gemeldet wird je Effekt-Objekt alle ~4 s Audio: Klasse, RMS Kanal 0 vor/nach. */
+#include <math.h>
+typedef void (*fx_fn)(void *, void *);
+static fx_fn fx_orig;
+#define FXN 160
+static struct { void *fx; double in, out; long n, calls; } fxs[FXN];
+static double fx_rms(const float *b, long n) { double s = 0; for (long i = 0; i < n; i++) s += (double)b[i] * b[i]; return s; }
+static void fx_measure(fx_fn orig, void *fx, void *pi);
+static fx_fn shell_orig;
+static void fx_hook(void *fx, void *pi) { fx_measure(fx_orig, fx, pi); }
+static void shell_hook(void *fx, void *pi) { fx_measure(shell_orig, fx, pi); }
+static void fx_measure(fx_fn orig, void *fx, void *pi) {
+    long n = 0; float **ib = NULL, **ob = NULL;
+    if (pi) { n = *(long *)((char *)pi + 8); ib = *(float ***)((char *)pi + 0x10); ob = *(float ***)((char *)pi + 0x18); }
+    double in = (n > 0 && n < 65536 && ib && ib[0]) ? fx_rms(ib[0], n) : 0;
+    orig(fx, pi);
+    double out = (n > 0 && n < 65536 && ob && ob[0]) ? fx_rms(ob[0], n) : 0;
+    int k; for (k = 0; k < FXN && fxs[k].fx && fxs[k].fx != fx; k++);
+    if (k == FXN) return;
+    fxs[k].fx = fx; fxs[k].in += in; fxs[k].out += out; fxs[k].n += n > 0 && n < 65536 ? n : 0; fxs[k].calls++;
+    if (fxs[k].n >= 48000 * 4) {
+        Dl_info di; const char *cls = "?"; void *vt = *(void **)fx;
+        if (dladdr(vt, &di) && di.dli_sname) cls = di.dli_sname;
+        fprintf(stderr, "[clogic] fx %p %-28s in %.5f out %.5f (%ld Aufrufe)\n", fx, cls, sqrt(fxs[k].in / fxs[k].n), sqrt(fxs[k].out / fxs[k].n), fxs[k].calls);
+        fxs[k].in = fxs[k].out = 0; fxs[k].n = 0; fxs[k].calls = 0;
+    }
+}
+static void hook_fx_probe(void) {
+    if (!getenv("CLOKE_LOGIC_FXPROBE")) return;
+    const char *base = NULL;
+    for (uint32_t i = 0; i < _dyld_image_count(); i++) { const char *n = _dyld_get_image_name(i); if (n && strstr(n, "/MADSP.framework/")) base = (const char *)_dyld_get_image_header(i); }
+    if (!base) { fprintf(stderr, "[clogic] MADSP nicht geladen\n"); return; }
+    uint32_t *f = (uint32_t *)(base + 0x7a9a10);
+    if (f[0] != 0x6db923e9u) { fprintf(stderr, "[clogic] CBasicFX::Process: unerwarteter Befehl %#x\n", f[0]); return; }
+    uint32_t *t = mmap(NULL, 0x4000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (t == MAP_FAILED) return;
+    for (int i = 0; i < 4; i++) t[i] = f[i];                    /* stp-Befehle: lageunabhängig */
+    t[4] = 0x58000050; t[5] = 0xd61f0200;                        /* ldr x16, #8 ; br x16 */
+    *(uint64_t *)&t[6] = (uint64_t)(f + 4);
+    mprotect(t, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(t, 32);
+    fx_orig = (fx_fn)t;
+    long pg = (long)f & ~0x3fffL;
+    if (mprotect((void *)pg, 0x8000, PROT_READ | PROT_WRITE)) { perror("[clogic] mprotect fx"); return; }
+    f[0] = 0x58000050; f[1] = 0xd61f0200; *(uint64_t *)&f[2] = (uint64_t)fx_hook;
+    mprotect((void *)pg, 0x8000, PROT_READ | PROT_EXEC); sys_icache_invalidate(f, 16);
+    /* CPlugInShell::Execute (+0x202b8, Einstieg aller Plug-in-Hüllen wie Pedalboard, Amp): ldrb; cmp; b.ne +0x2e8; sub sp. Der bedingte
+     * Sprung wird im Sprungbrett aufgelöst (b.ne auf einen zweiten absoluten Sprung nach +0x205a0). */
+    uint32_t *g = (uint32_t *)(base + 0x202b8), *u = t + 16;
+    if (g[0] == 0x39460008u && g[1] == 0x7100051fu && g[2] == 0x54001701u && g[3] == 0xd10143ffu) {
+        mprotect(t, 0x4000, PROT_READ | PROT_WRITE);
+        u[0] = g[0]; u[1] = g[1]; u[2] = 0x540000c1; u[3] = g[3];          /* b.ne u+8 */
+        u[4] = 0x58000050; u[5] = 0xd61f0200; *(uint64_t *)&u[6] = (uint64_t)(g + 4);
+        u[8] = 0x58000050; u[9] = 0xd61f0200; *(uint64_t *)&u[10] = (uint64_t)(base + 0x205a0);
+        mprotect(t, 0x4000, PROT_READ | PROT_EXEC); sys_icache_invalidate(u, 48);
+        shell_orig = (fx_fn)u;
+        pg = (long)g & ~0x3fffL;
+        if (!mprotect((void *)pg, 0x8000, PROT_READ | PROT_WRITE)) {
+            g[0] = 0x58000050; g[1] = 0xd61f0200; *(uint64_t *)&g[2] = (uint64_t)shell_hook;
+            mprotect((void *)pg, 0x8000, PROT_READ | PROT_EXEC); sys_icache_invalidate(g, 16);
+        }
+    } else fprintf(stderr, "[clogic] CPlugInShell::Execute: unerwartete Befehle\n");
+    fprintf(stderr, "[clogic] Effekt-Pegelsonde aktiv\n");
+}
 __attribute__((constructor)) static void init(void) {
+    hook_fx_probe();
     hook_mdca_vtable();
     patch_newfile_dispose();
     fprintf(stderr, "[clogic] trace loaded\n");
