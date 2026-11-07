@@ -171,7 +171,7 @@ if [ "$CLOKE_ARCH" = arm64 ]; then
   # arm64 läuft auf dem Mac selbst: ohne Toolchain-Datei (als Cross-Build fänden die Werkzeuge der Regeln ihren Pfad nicht)
   toolchain_args="-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0"
   # das Image liefert libxcb statisch: die Authentifizierungsbibliotheken kommen dazu
-  unicorn_args="-DRAVEN_UNICORN=ON -DRAVEN_UNICORN_DIR=$R/unicorn"
+  unicorn_args="-DRAVEN_UNICORN=ON -DRAVEN_UNICORN_DIR=$R/unicorn -DRAVEN_JIT_DIR=$HERE/xlat/jit"   # RAVEN_JIT=1 at runtime selects the block JIT (xlat/jit) for 64-bit guests
   link_args=("-DCMAKE_EXE_LINKER_FLAGS=$sys/lib/libXau.a $sys/lib/libXdmcp.a")
 fi
 cmake -G Ninja -S "$src" -B "$build" $toolchain_args -DCMAKE_BUILD_TYPE=Release \

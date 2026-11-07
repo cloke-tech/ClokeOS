@@ -57,7 +57,8 @@ int jit_guest_map_fd(uint64_t g, uint64_t n, int prot, int fd, uint64_t off);  /
 void jit_guest_unmap(uint64_t g, uint64_t n);
 int jit_guest_protect(uint64_t g, uint64_t n, int prot);
 int jit_guest_prot(uint64_t g);                   // Schutz der Gastseite (255 = nicht abgebildet)
-int jit_guest_access(uint64_t g, uint64_t n);     // 0: Raven darf den Bereich lesen/schreiben
+int jit_guest_access(uint64_t g, uint64_t n);     // 0: alle Seiten abgebildet und nicht PROT_NONE
+int jit_guest_copy(uint64_t g, void *buf, uint64_t n, int write);  // Host liest/schreibt Gastspeicher (ohne Rücksicht auf den Gastschutz); -1 wenn nicht abgebildet
 void jit_guest_free(uint64_t g, uint64_t n);
 void jit_invalidate(uint64_t g, uint64_t n);      // übersetzte Blöcke verwerfen, falls [g, g+n) Code enthielt
 int jit_run(JitCtx *c);                           // läuft ab c->rip bis zu einem Ereignis (JIT_SYSCALL/FALLBACK/PENDING/FAULT)

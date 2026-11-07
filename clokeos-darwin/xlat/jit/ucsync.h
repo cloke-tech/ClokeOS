@@ -30,8 +30,14 @@ static void jit_from_uc(uc_engine *u, JitCtx *c) {
 // würde darüber hinauslaufen -> beim ersten Mal je Bereich die Unicorn-Blöcke dort verwerfen.
 static struct { uint64_t a, b; } jit_seen[4096]; static uint64_t jit_seen_epoch = ~0ULL;
 static unsigned long jit_nfb, jit_nrm;
+static int jit_dbg(void) { static int v = -1; if (v < 0) v = getenv("UCRUN_JIT_DBG") != 0; return v; }
+#ifdef JIT_FB_STOP_PTR
+#define JIT_FB_STOPPED() (JIT_FB_STOP_PTR && *JIT_FB_STOP_PTR)   // Raven: ein Haken (int3/Ausnahme) hat den Lauf beendet
+#else
+#define JIT_FB_STOPPED() 0
+#endif
 static uc_err jit_uc_fallback(uc_engine *u, JitCtx *c) {
-	jit_nfb++; if (getenv("UCRUN_JIT_DBG")) fprintf(stderr, "jit-fb #%lu rip=%llx end=%llx cnt=%llu\n", jit_nfb, (unsigned long long)c->rip, (unsigned long long)c->fb_end, (unsigned long long)c->count);
+	jit_nfb++; if (jit_dbg()) fprintf(stderr, "jit-fb #%lu rip=%llx end=%llx cnt=%llu\n", jit_nfb, (unsigned long long)c->rip, (unsigned long long)c->fb_end, (unsigned long long)c->count);
 	if (jit_seen_epoch != jit_flush_epoch) { memset(jit_seen, 0, sizeof jit_seen); jit_seen_epoch = jit_flush_epoch; }
 	uint64_t a = c->rip, b = c->fb_end; uc_err e;
 	jit_to_uc(u, c);
@@ -43,11 +49,12 @@ static uc_err jit_uc_fallback(uc_engine *u, JitCtx *c) {
 			if (jit_seen[h].a != a || jit_seen[h].b != b || attempt) { jit_nrm++; uc_ctl_remove_cache(u, a, b + 1); jit_seen[h].a = a; jit_seen[h].b = b; }
 			e = uc_emu_start(u, a, b, 0, 0);
 		} else e = uc_emu_start(u, a, 0, 0, c->count ? c->count : 1);
-		if (e) break;
+		if (e || JIT_FB_STOPPED()) break;
 		uint64_t rp; uc_reg_read(u, UC_X86_REG_RIP, &rp); if (rp != a || (b && a == b)) break;
 	}
-	if (e) { if (getenv("UCRUN_JIT_DBG")) fprintf(stderr, "jit-fb: uc_emu_start -> %d\n", (int)e); return e; }
+	if (e) { if (jit_dbg()) fprintf(stderr, "jit-fb: uc_emu_start -> %d\n", (int)e); return e; }
 	jit_from_uc(u, c);
+	if (JIT_FB_STOPPED()) return UC_ERR_OK;
 	if (c->rip == a && !(b && a == b)) return UC_ERR_EXCEPTION;  // kein Fortschritt: Unicorn hat eine Ausnahme (z. B. #DE) nur gemeldet
 	return UC_ERR_OK;
 }

@@ -265,6 +265,20 @@ int jit_guest_access(uint64_t g, uint64_t n) {
 	for (uint64_t q = g >> 12; q < (g + n + 4095) >> 12; q++) if (gprot[q] == GP_NONE || gprot[q] == 0) return -1;
 	return 0;
 }
+static int smc_fault(uint64_t addr);
+// Host-Zugriff (Raven liest/schreibt Gastspeicher), unabhängig vom Gastschutz; schreibt der Host in eine Codeseite, wird übersetzter Code entwertet.
+int jit_guest_copy(uint64_t g, void *buf, uint64_t n, int write) {
+	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	for (uint64_t q = g >> 12; q < (g + n + 4095) >> 12; q++) if (gprot[q] == GP_NONE) return -1;
+	uint64_t h0 = g >> 14, h1 = (g + n - 1) >> 14;
+	for (uint64_t h = h0; h <= h1; h++) {
+		if (write && cset_has(h)) smc_fault(DELTA + h * HPAGE);
+		mprotect((void *)(DELTA + h * HPAGE), HPAGE, PROT_READ | PROT_WRITE);
+	}
+	if (write) memcpy((void *)(DELTA + g), buf, n); else memcpy(buf, (void *)(DELTA + g), n);
+	for (uint64_t h = h0; h <= h1; h++) host_apply(h);
+	return 0;
+}
 // Altschnittstelle (ucrun): lesbar+schreibbar, genullt
 uint8_t *jit_guest_alloc(uint64_t g, uint64_t n) {
 	if (jit_guest_map(g & ~4095ULL, ((g + n + 4095) & ~4095ULL) - (g & ~4095ULL), PROT_READ | PROT_WRITE)) return 0;
