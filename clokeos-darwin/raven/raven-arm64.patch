@@ -1,5 +1,5 @@
 diff --git a/native/CMakeLists.txt b/native/CMakeLists.txt
-index 641d370..b5ace03 100644
+index 641d370..9399414 100644
 --- a/native/CMakeLists.txt
 +++ b/native/CMakeLists.txt
 @@ -71,18 +71,48 @@ target_link_libraries(module_set_test PRIVATE raven_pe)
@@ -35,7 +35,7 @@ index 641d370..b5ace03 100644
 +        # block JIT x86-64 -> arm64 (xlat/jit of ClokeOS) as the engine for 64-bit guests, selected with RAVEN_JIT=1
 +        # (compiled by a custom command: the directory's -include of darwin_compat.h is C++ only)
 +        add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/raven_jit.o
-+            COMMAND ${CMAKE_C_COMPILER} -O2 -arch arm64 -Wno-deprecated-declarations -c ${RAVEN_JIT_DIR}/jit.c -o ${CMAKE_CURRENT_BINARY_DIR}/raven_jit.o
++            COMMAND ${CMAKE_C_COMPILER} -O2 -arch arm64 -mmacosx-version-min=11.0 -Wno-deprecated-declarations -c ${RAVEN_JIT_DIR}/jit.c -o ${CMAKE_CURRENT_BINARY_DIR}/raven_jit.o
 +            DEPENDS ${RAVEN_JIT_DIR}/jit.c ${RAVEN_JIT_DIR}/jit.h ${RAVEN_JIT_DIR}/jit_sse_gen.inc ${RAVEN_JIT_DIR}/jit_sse_dec.inc)
 +        add_library(raven_jit STATIC ${CMAKE_CURRENT_BINARY_DIR}/raven_jit.o)
 +        set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/raven_jit.o PROPERTIES EXTERNAL_OBJECT TRUE GENERATED TRUE)
@@ -313,10 +313,10 @@ index 54d58db..cfa9893 100644
  print('patched uncaught_exceptions at', hex(offset))
 diff --git a/native/platform/unicorn_guest.cpp b/native/platform/unicorn_guest.cpp
 new file mode 100644
-index 0000000..2b23ffe
+index 0000000..1da33f1
 --- /dev/null
 +++ b/native/platform/unicorn_guest.cpp
-@@ -0,0 +1,1181 @@
+@@ -0,0 +1,1201 @@
 +// ClokeOS arm64: guest-process control with Unicorn, see mach_guest.h
 +// Raven drives its x86-64 guest with ptrace-like calls (cpu/native_cpu.cpp). On x86_64 hosts the guest is a real process; on arm64
 +// there is no x86 code to run natively, so the guest lives in a Unicorn engine inside this process and the same calls are answered
@@ -353,7 +353,9 @@ index 0000000..2b23ffe
 +extern "C" {
 +#include "jit.h"
 +}
-+static volatile bool *jit_fb_stop_flag = nullptr;   // set by the hooks: the fallback run ended because of a stop event
++static volatile bool *jit_fb_stop_flag = nullptr;
++#include <unordered_map>
++static std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> *jit_fb_histogram = nullptr;   // RAVEN_TRACE_STATS: where the fallbacks happen   // set by the hooks: the fallback run ended because of a stop event
 +#define JIT_FB_STOP_PTR jit_fb_stop_flag
 +#include "ucsync.h"
 +#endif
@@ -371,6 +373,17 @@ index 0000000..2b23ffe
 +		{
 +			uint64_t blocks = 0, insns = 0, fallbacks = 0;
 +			jit_stats(&blocks, &insns, &fallbacks);
++			if (jit_fb_histogram) {
++				std::vector<std::pair<uint64_t, uint64_t>> top;
++				for (const auto &[at, entry] : *jit_fb_histogram) top.emplace_back(entry.first, at);
++				std::sort(top.rbegin(), top.rend());
++				for (size_t index = 0; index < top.size() && index < 12; ++index) {
++					const auto &entry = (*jit_fb_histogram)[top[index].second];
++					std::fprintf(stderr, "raven:   fallback at %llx x %llu bytes", (unsigned long long)top[index].second, (unsigned long long)top[index].first);
++					for (int byte = 0; byte < 8; ++byte) std::fprintf(stderr, " %02x", unsigned((entry.second >> (8 * byte)) & 0xff));
++					std::fprintf(stderr, "\n");
++				}
++			}
 +			if (blocks)
 +				std::fprintf(stderr, "raven: JIT %llu blocks, %llu instructions translated, %llu fallbacks to Unicorn (%lu runs)\n", (unsigned long long)blocks,
 +					(unsigned long long)insns, (unsigned long long)fallbacks, jit_nfb);
@@ -841,6 +854,11 @@ index 0000000..2b23ffe
 +			e.jpend = 0;
 +			continue;
 +		case JIT_FALLBACK: {
++			if (jit_fb_histogram) {
++				auto &entry = (*jit_fb_histogram)[c->rip];
++				if (!entry.first) std::memcpy(&entry.second, reinterpret_cast<const void *>(e.jdelta + c->rip), 8);
++				++entry.first;
++			}
 +			jit_fb_stop_flag = &e.happened;
 +			const uc_err result = jit_uc_fallback(e.uc, c);
 +			jit_fb_stop_flag = nullptr;
@@ -901,6 +919,8 @@ index 0000000..2b23ffe
 +			e.jc = static_cast<JitCtx *>(std::aligned_alloc(16, (sizeof(JitCtx) + 15) & ~size_t(15)));
 +			if (e.jc && jit_init(e.jc) == 0) {
 +				e.jit_mem = e.jit_cpu = true;
++				if (std::getenv("RAVEN_TRACE_STATS") && !jit_fb_histogram)
++					jit_fb_histogram = new std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>>();
 +				e.jdelta = jit_guest_delta();
 +				e.jc->pend = &e.jpend;
 +				e.jc->eflags = 2;
