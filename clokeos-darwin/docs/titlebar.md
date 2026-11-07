@@ -84,3 +84,12 @@ Not tested: toolbars
 (Cocotron NSToolbar items are not inset for the lights), window moving by dragging the top area of a Mac app, hover/click on overlay
 lights, without compositor, x86_64, Raven windows, the NT look. A GTK header-bar window still shows a thin inner border from GTK.
 Hand-starting GTK apps in the VM needs SIGSYS ignored (`trap '' SYS`) and `DYLD_INSERT_LIBRARIES=/lib/libXcursor.1.dylib`, as the session does.
+
+## Crash log
+
+CloakServer writes signal, load address and call chain to `/var/log/cloakserver-crash.log` (fallback `/tmp/…`) on SIGSEGV, SIGBUS,
+SIGILL, SIGFPE and SIGABRT, then dies as before. Symbolize on the Mac with the same build:
+`atos -arch arm64 -o ~/…/out/CloakServer-arm64/CloakServer -l <load address> <addresses…>`.
+Open (reported by the Raven session, 2026-11-07): with `RAVEN_FRAME=wm` the OK click in Inno Setup's language dialog ended the
+session twice on x86_64. Not reproduced on arm64 with a test client doing the same window sequence (dialog transient for a never-mapped
+owner, destroy, map a bigger window, 4 rounds): CloakServer survived. Cause unknown; the crash log should show it next time.

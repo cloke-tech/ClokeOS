@@ -38,6 +38,8 @@
 #include <limits.h>
 #include <math.h>
 #include <signal.h>
+#include <execinfo.h>
+extern const void *_dyld_get_image_header(unsigned int); /* mach-o/dyld.h fehlt im Sysroot */
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -302,6 +304,26 @@ static void warn(const char *fmt, ...) {
   vfprintf(stderr, fmt, ap);
   fputc('\n', stderr);
   va_end(ap);
+}
+
+/* Absturz: Signal und Aufrufkette nach /var/log/cloakserver-crash.log (sonst endet die Sitzung spurlos, stderr geht ins Leere),
+ * dann wie vorher mit demselben Signal beenden. Mit Symbolen der eigenen Funktionen, sofern nicht weggeworfen. */
+static void crash_log(int sig) {
+  int fd = open("/var/log/cloakserver-crash.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd < 0) fd = open("/tmp/cloakserver-crash.log", O_WRONLY | O_CREAT | O_APPEND, 0644);
+  if (fd >= 0) {
+    char head[160];
+    /* Ladeadresse: mit atos -o CloakServer -l <Adresse> lassen sich auch statische Funktionen benennen */
+    int n = snprintf(head, sizeof head, "CloakServer: Signal %d (pid %d, Zeit %ld, geladen bei %p)\n", sig, (int)getpid(),
+                     (long)time(NULL), (void *)_dyld_get_image_header(0));
+    if (n > 0) write(fd, head, (size_t)n);
+    void *bt[64];
+    int k = backtrace(bt, 64);
+    backtrace_symbols_fd(bt, k, fd);
+    close(fd);
+  }
+  signal(sig, SIG_DFL);
+  raise(sig);
 }
 
 static double now_s(void) {
@@ -5883,6 +5905,11 @@ int main(int argc, char **argv) {
    * MIT-SHM ausprobieren, beendet das Programm sonst mit SIGSYS statt mit ENOSYS. Ignoriert, gibt
    * es nur einen Fehler, und alle zeichnen ohne Shared Memory. Gestartete Programme erben das. */
   signal(SIGSYS, SIG_IGN);
+  signal(SIGSEGV, crash_log);
+  signal(SIGBUS, crash_log);
+  signal(SIGILL, crash_log);
+  signal(SIGFPE, crash_log);
+  signal(SIGABRT, crash_log);
   rec_init();
   l10n_init();
   setenv("LANG", l10n_locale(), 1); /* für die Programme der Sitzung */
