@@ -744,3 +744,14 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   and prints the caller chain. On Space: Logic +0x39b9f4 → +0x2c0020 calls `Prime` (+0x2bfccc) and `PrepareForStart` (+0x2c032c) on the main thread (via
   `performSelectorOnMainThread`, chain +0x858684 … +0x10fae08) and returns; **`Start` is never called** in the run. Start is expected later from another place (sequencer/sync
   thread or a callback) – that is the open point.
+
+### Round 43: Logic plays Jump.logicx on ClokeOS – first audio
+
+* **Cause of the missing start:** after `PrepareForStart` Logic waits for its sequencer timer ("SeqTimer", "SeqTimer 2"), a Carbon **Time Manager** task (`InsXTime`/`InsTime`
+  + `PrimeTime`, TMTask packed to 2 bytes). CoreServices had only stubs for them, so the timer never fired and `MDCA::Start` was never called. `macapps/carbon.c` now
+  implements `InsTime`, `InsXTime`, `PrimeTime` (ms for positive counts, µs for negative ones, drift-free for extended tasks) and `RmvTime` (remaining time in `tmCount`),
+  one thread per task. Deploy: `macapps/carbon.sh <stage>` → `deploy-files.sh <stage>/usr/lib/libclokeos_carbon.dylib=/usr/lib/libclokeos_carbon.dylib`.
+* **Result:** Return + Space in the project window → `MDCA::Start` → `AudioDeviceStart`; the shim's WAV (`CLOKE_CA_DEVICE=/tmp/out.wav`) contains **51 s of music** in a test run
+  (RMS 3000–7000, no clipping, stereo, zero-crossing rates of tonal material). The file is not in the repo (it is derived from Logic content).
+* Not yet: the whole song (the run ends when the VM is stopped), comparing the audio with a bounce on the Mac, which tracks actually sound (Sampler patches need the sound
+  library), offline bounce (File > Bounce), x86_64.

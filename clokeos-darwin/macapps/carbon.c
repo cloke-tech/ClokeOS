@@ -7,7 +7,8 @@
  *   TickCount                     60-Hz-Ticks seit dem Start
  *   UCConvertCFAbsoluteTimeToSeconds
  *                                 CFAbsoluteTime (Sekunden seit 2001) -> Sekunden seit 1904
- *   PBGetVolumeInfoSync           meldet nsvErr (-35): es gibt keine Volume-Verwaltung des Classic-Mac-OS */
+ *   PBGetVolumeInfoSync           meldet nsvErr (-35): es gibt keine Volume-Verwaltung des Classic-Mac-OS
+ *   InsTime/InsXTime/PrimeTime/RmvTime  Time Manager mit einem Faden je Aufgabe (Logics Sequenzer-Takt) */
 #include <mach/mach_time.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -89,5 +90,93 @@ int32_t UCKeyTranslate(const void *layout, uint16_t code, uint16_t action, uint3
   if ((mods & 0x04) && c >= 'a' && c <= 'z') c -= 32;
   if ((mods & 0x10) && ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))) c &= 0x1f;
   if (c && maxLen > 0 && out) { out[0] = c; if (actualLen) *actualLen = 1; }
+  return 0;
+}
+
+/* Time Manager (CoreServices, Carbon): InsTime/InsXTime/PrimeTime/RmvTime. Logic Pro treibt damit seinen Sequenzer
+ * ("SeqTimer", "SeqTimer 2"): ohne laufende Aufgaben ruft es nach PrepareForStart nie MDCA::Start, die Wiedergabe beginnt nicht.
+ * TMTask ist wie bei Apple auf 2 Bytes gepackt (tmAddr bei 0xa, tmCount 0x12, tmWakeUp 0x1a, tmReserved 0x22).
+ * Jede installierte Aufgabe bekommt einen eigenen Faden; PrimeTime(t, n) feuert einmal nach n ms (n > 0) bzw. -n µs (n < 0),
+ * bei InsXTime-Aufgaben ohne Drift relativ zur vorigen Frist. Der Rückruf läuft auf dem Faden der Aufgabe und darf PrimeTime/RmvTime rufen. */
+#include <pthread.h>
+#include <string.h>
+#include <time.h>
+#pragma pack(push, 2)
+typedef struct TMTask { void *qLink; short qType; void (*tmAddr)(struct TMTask *); long tmCount, tmWakeUp, tmReserved; } TMTask;
+#pragma pack(pop)
+enum { kTMTaskActive = 0x8000, kTMTaskExtended = 0x4000, TM_MAX = 32 };
+typedef struct { TMTask *t; pthread_t th; pthread_cond_t c; uint64_t deadline, last; int armed, quit, extended, alive; } tm_entry;
+static pthread_mutex_t tm_lk = PTHREAD_MUTEX_INITIALIZER;
+static tm_entry tm_tab[TM_MAX];
+static mach_timebase_info_data_t tm_tb;
+static uint64_t tm_ns2abs(uint64_t ns) { return ns * tm_tb.denom / tm_tb.numer; }
+static uint64_t tm_abs2ns(uint64_t a) { return a * tm_tb.numer / tm_tb.denom; }
+static tm_entry *tm_find(TMTask *t) { for (int i = 0; i < TM_MAX; i++) if (tm_tab[i].t == t && !tm_tab[i].quit) return &tm_tab[i]; return NULL; }
+static void *tm_thread(void *arg) {
+  tm_entry *e = arg;
+  pthread_mutex_lock(&tm_lk);
+  while (!e->quit) {
+    if (!e->armed) { pthread_cond_wait(&e->c, &tm_lk); continue; }
+    uint64_t now = mach_absolute_time();
+    if (now < e->deadline) {
+      uint64_t ns = tm_abs2ns(e->deadline - now);
+      struct timespec ts = { (time_t)(ns / 1000000000ull), (long)(ns % 1000000000ull) };
+      pthread_cond_timedwait_relative_np(&e->c, &tm_lk, &ts);
+      continue;
+    }
+    e->armed = 0; e->last = e->deadline;
+    TMTask *t = e->t; t->qType &= ~kTMTaskActive;
+    pthread_mutex_unlock(&tm_lk);
+    if (t->tmAddr) t->tmAddr(t);
+    pthread_mutex_lock(&tm_lk);
+  }
+  e->alive = 0;   /* erst jetzt darf der Eintrag neu vergeben werden */
+  pthread_mutex_unlock(&tm_lk);
+  return NULL;
+}
+static short tm_install(TMTask *t, int extended) {
+  if (!t) return -50;   /* paramErr */
+  if (!tm_tb.denom) mach_timebase_info(&tm_tb);
+  pthread_mutex_lock(&tm_lk);
+  tm_entry *e = tm_find(t);
+  if (!e) for (int i = 0; i < TM_MAX && !e; i++) if (!tm_tab[i].t && !tm_tab[i].alive) e = &tm_tab[i];
+  if (!e) { pthread_mutex_unlock(&tm_lk); return -108; }   /* memFullErr */
+  if (!e->t) {
+    memset(e, 0, sizeof *e); e->t = t; e->alive = 1; pthread_cond_init(&e->c, NULL);
+    pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+    pthread_create(&e->th, &a, tm_thread, e); pthread_attr_destroy(&a);
+  }
+  e->extended = extended; e->armed = 0; e->last = 0;
+  t->qType = (short)(extended ? kTMTaskExtended : 0); t->tmWakeUp = 0;
+  pthread_mutex_unlock(&tm_lk);
+  return 0;
+}
+short InsTime(TMTask *t) { return tm_install(t, 0); }
+short InsXTime(TMTask *t) { return tm_install(t, 1); }
+short PrimeTime(TMTask *t, long count) {
+  pthread_mutex_lock(&tm_lk);
+  tm_entry *e = tm_find(t);
+  if (!e) { pthread_mutex_unlock(&tm_lk); return -50; }
+  uint64_t delay = tm_ns2abs(count >= 0 ? (uint64_t)count * 1000000ull : (uint64_t)(-count) * 1000ull);
+  uint64_t now = mach_absolute_time();
+  /* erweiterte Aufgabe, schon einmal gelaufen: Frist ab der vorigen Frist (kein Aufsummieren der Verspätung) */
+  uint64_t base = (e->extended && e->last && t->tmWakeUp) ? e->last : now;
+  e->deadline = base + delay; e->armed = 1;
+  t->tmWakeUp = (long)(e->deadline ? e->deadline : 1); t->qType |= kTMTaskActive;
+  pthread_cond_signal(&e->c);
+  pthread_mutex_unlock(&tm_lk);
+  return 0;
+}
+short RmvTime(TMTask *t) {
+  pthread_mutex_lock(&tm_lk);
+  tm_entry *e = tm_find(t);
+  if (e) {
+    long left = 0;   /* Restzeit in tmCount: negativ in µs */
+    if (e->armed) { uint64_t now = mach_absolute_time(); if (e->deadline > now) left = -(long)(tm_abs2ns(e->deadline - now) / 1000); }
+    t->tmCount = left; t->qType &= ~kTMTaskActive;
+    e->armed = 0; e->quit = 1; e->t = NULL;   /* der Faden endet; der Eintrag ist danach wieder frei */
+    pthread_cond_signal(&e->c);
+  }
+  pthread_mutex_unlock(&tm_lk);
   return 0;
 }
