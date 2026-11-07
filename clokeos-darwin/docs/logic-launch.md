@@ -720,3 +720,5 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * `-[NSKeyedUnarchiver versionForClassName:]` returns the class's version (Darling had a `DEBUG_BREAK()` trap there; MACore asks while decoding project data).
 * **`Jump.logicx` is read successfully on ClokeOS:** `-[CLgSongDocument _readLogicXProjectFromURL:error:]` → YES and `readFromURL:ofType:error:` → YES. Logic then builds the project window and crashes in
   `-[NSBitmapImageRep initWithCGImage:]` (image without colour space) while MAToolKit prepares images. Not rendered, no audio yet.
+* `initWithCGImage:` with a NULL image returns nil; a missing colour space counts as 1 sample. `+[UTType _typeOfCurrentDevice]` returns a "Mac" device type
+  (Logic fills `%DEVICE%`-style placeholders with its `localizedDescription`; nil crashed in `CFStringFindAndReplace`). Next stop: `objc_msgSend` in MACore `UISyncManager::GetInternalName` (dispatch_sync).

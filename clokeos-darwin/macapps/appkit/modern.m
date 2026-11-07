@@ -27,6 +27,7 @@
  *   CAShapeLayer: path, fillColor, strokeColor, fillRule, lineCap, lineJoin, lineDashPattern (Objekte) und lineWidth, miterLimit, strokeStart,
  *            strokeEnd, lineDashPhase (CGFloat) als gespeicherte Werte mit KVC-tauglichen Zugriffsmethoden (Cocotrons Klasse ist leer; Logic Pro
  *            setzt sie per setValue:forKey:, die Ausnahme brach das Öffnen eines Projekts ab: "error 256"). Gezeichnet wird damit nichts.
+ *   UTType: +_typeOfCurrentDevice (private; Logic Pro setzt dessen localizedDescription in Texte ein) liefert ein Objekt mit "Mac"/com.apple.mac
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
@@ -279,6 +280,20 @@ static void shape_set_float(id self, SEL s, CGFloat v) {
     objc_setAssociatedObject(self, (const void *) getter_for_setter(s), [NSNumber numberWithDouble: v], OBJC_ASSOCIATION_RETAIN);
 }
 
+@interface ClkDeviceType : NSObject
+@end
+@implementation ClkDeviceType
+- (NSString *) localizedDescription { return @"Mac"; }
+- (NSString *) identifier { return @"com.apple.mac"; }
+- (NSString *) preferredFilenameExtension { return nil; }
+- (BOOL) conformsToType: (id) other { return NO; }
+@end
+static id device_type(Class c, SEL s) {
+    static id t;
+    if (!t) t = [ClkDeviceType new];
+    return t;
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -306,6 +321,8 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
+    if (objc_getClass("UTType"))
+        class_addMethod(object_getClass(objc_getClass("UTType")), sel_registerName("_typeOfCurrentDevice"), (IMP)device_type, "@@:");
     {   /* Cocotrons MacWorkspace (die einzige NSWorkspace-Unterklasse) hat diese als "nicht umgesetzt": dort ersetzen */
         Class mw = objc_getClass("MacWorkspace"), nw = objc_getClass("NSWorkspace");
         struct { const char *sel; IMP imp; const char *types; } ws[] = {
