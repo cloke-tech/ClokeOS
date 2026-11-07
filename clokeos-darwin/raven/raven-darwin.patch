@@ -229,10 +229,30 @@ index 26451b4..2829ba1 100644
  			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
  				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {
 diff --git a/native/desktop/gdi_api.cpp b/native/desktop/gdi_api.cpp
-index cdf405b..3896534 100644
+index cdf405b..e00b616 100644
 --- a/native/desktop/gdi_api.cpp
 +++ b/native/desktop/gdi_api.cpp
-@@ -1355,6 +1355,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+@@ -497,6 +497,19 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+ 			call.ret(take);
+ 		});
+ 	});
++	// ResizePalette(palette, entries): new entries are black; SetPaletteEntries(palette, first, count, entries): the entries that fit.
++	registry.add("ResizePalette", 2, [=, this](ApiCall &call) {
++		guarded(call, 0, [&] {
++			auto *palette = objects.palette(call[0]);
++			const uint32_t count = call.u32(1);
++			if (!palette)
++				throw uint32_t(6);
++			if (!count || count > 1024)
++				throw uint32_t(87);
++			palette->entries.resize(count, 0);
++			call.ret(1);
++		});
++	});
+ 	registry.add("GetNearestPaletteIndex", 2, [=, this](ApiCall &call) {
+ 		guarded(call, clr_invalid, [&] {
+ 			const auto *palette = objects.palette(call[0]);
+@@ -1355,6 +1368,12 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
  				throw uint32_t(handle > 0 && handle <= 32 ? 120 : 6);
  			Painter painter(objects, dc);
  			painter.fill(rect.left, rect.top, rect.right, rect.bottom, *brush);
@@ -662,7 +682,7 @@ index 068df1d..aaa3822 100644
  		void *mapped = ::mmap(nullptr, sizeof(MutexState), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
  		if (mapped == MAP_FAILED)
 diff --git a/native/nt/process_info_api.cpp b/native/nt/process_info_api.cpp
-index e19f568..967eea2 100644
+index e19f568..7da8c53 100644
 --- a/native/nt/process_info_api.cpp
 +++ b/native/nt/process_info_api.cpp
 @@ -72,6 +72,9 @@ uint64_t filetime_now()
@@ -675,7 +695,7 @@ index e19f568..967eea2 100644
  	std::ifstream stat("/proc/" + std::to_string(pid) + "/stat");
  	std::string text;
  	std::getline(stat, text);
-@@ -587,6 +590,15 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
+@@ -587,6 +590,19 @@ void register_process_info_api(ApiRegistry &registry, KernelContext &context)
  			call.store<uint16_t>(call[2], 0x8664);
  		call.ret(1);
  	});
@@ -687,6 +707,10 @@ index e19f568..967eea2 100644
 +		}
 +		call.store<uint32_t>(call[1], uint16_t(call.u32(0)) == 0x14c ? 1 : 0);
 +		call.ret(0);
++	});
++	// IsEqualGUID(a, b): whether two 16-byte identifiers match (a null pointer matches nothing).
++	registry.add("IsEqualGUID", 2, [](ApiCall &call) {
++		call.ret(call[0] && call[1] && call.read(call[0], 16) == call.read(call[1], 16) ? 1 : 0);
 +	});
  	// The machine runs x64 programs in user and kernel mode and 32-bit x86 ones in the WOW64 container; nothing else.
  	registry.add("GetMachineTypeAttributes", 2, [](ApiCall &call) {

@@ -230,3 +230,14 @@ Fixed in `ec_magic` (bcrypt_api.cpp); a 32-bit test (open ECDSA_P256, import and
 imported blob unchanged. Still open: installs for all users (elevation); the greeter came up after Finish (launching the
 installed Compil32.exe) — not checked whether that was the idle logout or a session crash; the folder page's icon was blank
 (`SHGetImageList` hands out empty image lists).
+
+## Status (2026-11-07): the installed Inno Setup Compiler runs
+
+Finish of the wizard did not crash the session (the greeter seen earlier was the idle logout; the desktop stayed up in every
+later run). `Compil32.exe` (32-bit Delphi IDE with Scintilla) needed two more calls: `IsEqualGUID` (guest-readable 16-byte
+compare) and `ResizePalette`; then its main window and Welcome dialog show with menus, toolbar and tabs (about 8 minutes under
+TCG). Seen and open: the title shows `?` for the em dashes, the two image buttons at the bottom of the Welcome dialog are black
+(their bitmaps do not draw), and the first start takes minutes. Note for running it: `raven` takes a host path for the program
+(`/var/root/Library/Raven/drive_c/Users/root/AppData/Local/Programs/Inno Setup 6/Compil32.exe`), not a C:\ path.
+Test tip: other sessions kill every x86 QEMU on the Mac now and then; run the VM with its own `CLOKEOS_WORK` (for example
+`~/ClokeOS-work-raven-vm`) and the image from the shared `out/` directory with `--snapshot`.
