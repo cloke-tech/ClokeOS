@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#dfe6f7"/><stop offset="1" stop-color="#8e9bc4"/></linearGradient>
+<linearGradient id="bird" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2d3550"/><stop offset="1" stop-color="#0b0f1c"/></linearGradient>
+</defs>
+<rect x="4" y="4" width="56" height="56" rx="13" fill="url(#bg)"/>
+<rect x="4.5" y="4.5" width="55" height="55" rx="12.5" fill="none" stroke="#fff" stroke-opacity=".5"/>
+<path d="M13 44 C13 33 21 25 32 25 C35 25 37 26 39 27 L40 22 C40 17 44 14 48 15 L51 19 L58 21 L51 24 C51 30 47 36 42 40 L47 49 L37 45 C33 47 28 48 24 47 L16 52 Z" fill="url(#bird)"/>
+<path d="M51 19 L58 21 L51 24 Z" fill="#f59e0b"/>
+<circle cx="46.5" cy="19.5" r="1.4" fill="#fff"/>
+<path d="M19 42 C24 36 31 34 38 36" fill="none" stroke="#5a6690" stroke-width="1.6" stroke-linecap="round" opacity=".8"/>
+</svg>

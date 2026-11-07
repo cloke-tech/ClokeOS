@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9b2a4a"/><stop offset="1" stop-color="#4e1030"/></linearGradient>
+<linearGradient id="wn" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e0405f"/><stop offset="1" stop-color="#8e1238"/></linearGradient>
+<clipPath id="bowl"><path d="M22 12 H42 C43 26 40 35 32 37 C24 35 21 26 22 12 Z"/></clipPath>
+</defs>
+<rect x="4" y="4" width="56" height="56" rx="13" fill="url(#bg)"/>
+<rect x="4.5" y="4.5" width="55" height="55" rx="12.5" fill="none" stroke="#fff" stroke-opacity=".25"/>
+<g clip-path="url(#bowl)"><rect x="18" y="22" width="28" height="18" fill="url(#wn)"/>
+<path d="M18 22 Q25 19 32 22 T46 22 V24 H18 Z" fill="#f2748d" opacity=".6"/></g>
+<path d="M22 12 H42 C43 26 40 35 32 37 C24 35 21 26 22 12 Z" fill="#fff" fill-opacity=".14" stroke="#fff" stroke-width="2" stroke-linejoin="round"/>
+<path d="M25.5 15 C25.5 22 26.5 28 29 32" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="1.6" stroke-linecap="round"/>
+<path d="M32 37 V50" stroke="#fff" stroke-width="2.2" stroke-linecap="round"/>
+<path d="M23.5 51 Q32 46.5 40.5 51" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

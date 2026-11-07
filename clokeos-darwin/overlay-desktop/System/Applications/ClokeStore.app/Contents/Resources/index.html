@@ -6,7 +6,7 @@
 <meta name="color-scheme" content="light dark">
 <meta name="clokestore-token" content="">
 <title>Cloke Store</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%236d28d9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Cpath d='M32 14c-6 0-10 4-10 10 0 5-3 8-5 14h30c-2-6-5-9-5-14 0-6-4-10-10-10z' fill='none' stroke='white' stroke-width='3.5' stroke-linejoin='round'/%3E%3Cpath d='M20 46h24' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%236d28d9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Cpath d='M17 24h30l3 26c0 1-1 3-3 3H17c-2 0-3-2-3-3z' fill='none' stroke='white' stroke-width='3.5' stroke-linejoin='round'/%3E%3Cpath d='M24 24v-3c0-5 3.5-8 8-8s8 3 8 8v3' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
 <style>
 :root{
   color-scheme: light dark;
@@ -506,6 +506,9 @@ const okHttp = u => { try { const x = new URL(u); return x.protocol === 'https:'
 const okPkg = p => p && typeof p === 'object' && okHttp(p.url) && /^[0-9a-f]{64}$/i.test(p.sha256 || '');
 const str = (v, max = 400) => (typeof v === 'string' ? v.slice(0, max) : '');
 
+/* Die Standardquelle hat noch keine Symbole: der Dienst liefert die echten Programmsymbole mit (Resources/icons) */
+const ownIcon = (src, id) => (src.id === 'default' ? '/icons/' + id + '.svg' : '');
+
 function normalize(raw, src) {
   const out = []; let skipped = 0;
   for (const a of raw.apps || []) {
@@ -517,7 +520,7 @@ function normalize(raw, src) {
       recommends: Array.isArray(a.recommends) ? a.recommends.filter(okId) : [],
       summary: { de: str(a.summary_de || a.summary, 160), en: str(a.summary, 160) || str(a.summary_de, 160) },
       desc: { de: str(a.description_de || a.description, 2000), en: str(a.description, 2000) || str(a.description_de, 2000) },
-      developer: str(a.developer, 80), icon: okHttp(a.icon) ? a.icon : '', shots: (Array.isArray(a.screenshots) ? a.screenshots : []).filter(okHttp).slice(0, 8),
+      developer: str(a.developer, 80), icon: okHttp(a.icon) ? a.icon : ownIcon(src, a.id), shots: (Array.isArray(a.screenshots) ? a.screenshots : []).filter(okHttp).slice(0, 8),
       homepage: okHttp(a.homepage) ? a.homepage : '', license: str(a.license, 120), featured: a.featured ? 5 : 0
     });
   }
@@ -531,7 +534,7 @@ function normalize(raw, src) {
       pkg: flat, arch, install: str(p.install, 30), recommends: [],
       summary: { de: str(p.summary_de || p.summary, 160), en: str(p.summary, 160) || str(p.summary_de, 160) },
       desc: { de: str(p.description_de || p.description, 2000), en: str(p.description, 2000) || str(p.description_de, 2000) },
-      developer: str(p.developer, 80), icon: okHttp(p.icon) ? p.icon : '', shots: [], homepage: okHttp(p.source) ? p.source : '',
+      developer: str(p.developer, 80), icon: okHttp(p.icon) ? p.icon : ownIcon(src, p.id), shots: [], homepage: okHttp(p.source) ? p.source : '',
       license: str(p.license, 160), featured: p.featured ? 5 : 0
     });
   }

@@ -12,6 +12,8 @@
 	<string>ClokeStore</string>
 	<key>CFBundleIconFile</key>
 	<string>AppIcon</string>
+	<key>CLWindowClasses</key>
+	<string>ClokeStore</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>

@@ -7,7 +7,9 @@
   <rect width="512" height="512" rx="115" fill="url(#bg)"/>
   <path d="M0 330 Q120 270 256 320 T512 300 V512 H0Z" fill="#8f6bff" filter="url(#sh)"/>
   <path d="M0 400 Q140 350 270 392 T512 380 V512 H0Z" fill="#6b3be6" filter="url(#sh)"/>
-  <path d="M256 104c-52 0-86 36-86 88 0 44-26 74-44 124h260c-18-50-44-80-44-124 0-52-34-88-86-88z" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round"/>
-  <path d="M170 352h172" stroke="#fff" stroke-width="30" stroke-linecap="round"/>
+  <!-- Einkaufstasche mit Download-Pfeil -->
+  <path d="M138 188h236l22 206c1 11-8 20-19 20H135c-11 0-20-9-19-20z" fill="none" stroke="#fff" stroke-width="30" stroke-linejoin="round"/>
+  <path d="M190 188v-18c0-37 29-66 66-66s66 29 66 66v18" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round"/>
+  <path d="M256 250v96m-40-40 40 40 40-40" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
   <rect width="512" height="512" rx="115" fill="url(#sheen)"/>
 </svg>

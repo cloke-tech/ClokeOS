@@ -403,6 +403,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             body, csp = self.server.page
             self._send(200, body, 'text/html; charset=utf-8', {'Content-Security-Policy': csp})
+        elif path.startswith('/icons/') and path.endswith('.svg'):
+            if not self._guard():
+                return
+            name = path[len('/icons/'):-4]
+            f = os.path.join(HERE, 'icons', name + '.svg')
+            if not ID_RE.match(name) or not os.path.isfile(f):
+                return self._send(404, {'error': 'nicht gefunden'})
+            with open(f, 'rb') as fh:
+                self._send(200, fh.read(), 'image/svg+xml', {'Cache-Control': 'max-age=3600'})
         elif path.startswith('/api/jobs/'):
             if not self._guard(True):
                 return
@@ -463,16 +472,44 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     allow_reuse_address = True
 
 
-def open_browser(url):
-    """Browser öffnen. CLOKESTORE_BROWSER (Befehl, die Adresse wird angehängt) hat Vorrang; auf ClokeOS
-    das WebKit-Search, sonst der Standardbrowser des Systems. Die Oberfläche braucht ein modernes
-    JavaScript (fetch, Module); NetSurf reicht dafür nicht."""
+WEBKIT_LIB = '/opt/webkit/lib/libwebkit2gtk-4.1.dylib'
+
+
+def open_window(url, server):
+    """Eigenes WebKit-Fenster ohne Adressleiste (Contents/MacOS/clokeapp). Schließt man es, beendet sich der Dienst.
+    Die Umgebung ist die von /opt/webkit/runmb.sh (PureDarwin-Eigenheiten, siehe webkit/README.md)."""
+    exe = os.path.join(HERE, '..', 'MacOS', 'clokeapp')
+    if not (os.path.exists(exe) and os.path.exists(WEBKIT_LIB)):
+        return False
+    env = dict(os.environ, LANG='C', LC_ALL='C', GIO_USE_PROXY_RESOLVER='dummy', GIO_USE_NETWORK_MONITOR='base', NO_AT_BRIDGE='1',
+               GTK_USE_PORTAL='0', GIO_MODULE_DIR='/opt/webkit/gio-modules', SSL_CERT_FILE='/etc/ssl/cert.pem',
+               WEBKIT_DISABLE_COMPOSITING_MODE='1', WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS='1', GSETTINGS_BACKEND='memory')
+    env.setdefault('DISPLAY', ':0')
+    env['HOME'] = '/tmp'
+    try:
+        proc = subprocess.Popen([exe, '--title', 'Cloke Store', '--class', 'ClokeStore', '--size', '1040x700', url],
+                                env=env, cwd='/opt/webkit/bin' if os.path.isdir('/opt/webkit/bin') else None)
+    except OSError:
+        return False
+
+    def wait():
+        proc.wait()
+        server.shutdown()
+    threading.Thread(target=wait, daemon=True).start()
+    return True
+
+
+def open_browser(url, server=None):
+    """Oberfläche zeigen: CLOKESTORE_BROWSER (Befehl, die Adresse wird angehängt) hat Vorrang, dann das eigene
+    WebKit-Fenster, dann das WebKit-Search, sonst der Standardbrowser. Die Seite braucht modernes JavaScript;
+    NetSurf reicht dafür nicht."""
     cmd = os.environ.get('CLOKESTORE_BROWSER')
     if cmd:
         subprocess.Popen(cmd.split() + [url])
+    elif server is not None and open_window(url, server):
+        pass
     elif os.path.exists('/opt/webkit/runmb.sh'):
-        env = dict(os.environ, BROWSER_BIN='clokesearch')
-        subprocess.Popen(['/opt/webkit/runmb.sh', url], env=env)
+        subprocess.Popen(['/opt/webkit/runmb.sh', url], env=dict(os.environ, BROWSER_BIN='clokesearch'))
     else:
         webbrowser.open(url)
 
@@ -533,7 +570,7 @@ def main(argv=None):
     if not args.keep_alive:
         threading.Thread(target=watchdog, daemon=True).start()
     if not args.no_open:
-        threading.Timer(0.4, lambda: open_browser(url)).start()
+        threading.Timer(0.4, lambda: open_browser(url, server)).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

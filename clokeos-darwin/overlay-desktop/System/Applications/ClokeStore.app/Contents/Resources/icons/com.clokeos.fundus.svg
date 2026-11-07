@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"><defs>
+    <linearGradient id="g-da" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8fc2ff"/><stop offset="1" stop-color="#5145e3"/></linearGradient>
+    <linearGradient id="g-pr" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4c4566"/><stop offset="1" stop-color="#1c1928"/></linearGradient>
+    <linearGradient id="g-te" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3a3641"/><stop offset="1" stop-color="#141217"/></linearGradient>
+    <linearGradient id="g-no" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fffdf7"/><stop offset="1" stop-color="#f1e9d2"/></linearGradient>
+    <linearGradient id="g-re" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#46424d"/><stop offset="1" stop-color="#1f1d23"/></linearGradient>
+    <linearGradient id="g-ka" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#ece9f1"/></linearGradient>
+    <linearGradient id="g-ak" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2a2731"/><stop offset="1" stop-color="#101014"/></linearGradient>
+    <linearGradient id="g-ei" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#e2dfe8"/><stop offset="1" stop-color="#8e8a99"/></linearGradient>
+    <linearGradient id="g-hd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f1eff5"/><stop offset="1" stop-color="#b9b5c4"/></linearGradient>
+    <linearGradient id="g-fo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#a5ccff"/><stop offset="1" stop-color="#6a84f2"/></linearGradient>
+    <linearGradient id="g-fo2" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#7d9ff0"/><stop offset="1" stop-color="#4f5fd6"/></linearGradient>
+    <linearGradient id="g-logo" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#b8a3ff"/><stop offset=".55" stop-color="#7650f5"/><stop offset="1" stop-color="#3b1d9c"/></linearGradient>
+    <linearGradient id="g-bin" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff" stop-opacity=".85"/><stop offset="1" stop-color="#d9d5e2" stop-opacity=".7"/></linearGradient>
+    <linearGradient id="g-fu" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#55545b"/><stop offset="1" stop-color="#303035"/></linearGradient>
+    <linearGradient id="g-se" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#9be6ff"/><stop offset=".55" stop-color="#3f8cf5"/><stop offset="1" stop-color="#2546c9"/></linearGradient>
+    <linearGradient id="g-gloss" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".42"/><stop offset=".45" stop-color="#fff" stop-opacity=".06"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="g-rim" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".85"/><stop offset=".4" stop-color="#fff" stop-opacity=".1"/><stop offset=".7" stop-color="#fff" stop-opacity=".05"/><stop offset="1" stop-color="#fff" stop-opacity=".45"/></linearGradient>
+    <clipPath id="c-lens"><circle cx="28" cy="28" r="10.5"/></clipPath>
+  </defs><rect x="3" y="3" width="58" height="58" rx="14" fill="url(#g-fu)"/><rect x="13" y="17" width="38" height="3" rx="1.5" fill="#fff"/><rect x="17" y="23" width="13" height="25" rx="3" fill="#fff"/><rect x="34" y="23" width="13" height="18" rx="3" fill="#b4b2a9"/><rect x="3" y="3" width="58" height="58" rx="14" fill="url(#g-gloss)"/><rect x="3.5" y="3.5" width="57" height="57" rx="13.5" fill="none" stroke="url(#g-rim)" stroke-width="1"/></svg>
