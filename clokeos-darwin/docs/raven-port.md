@@ -329,14 +329,17 @@ Raven: the X window would be exactly the client area, Raven would stop painting 
 their hits, and give CloakServer the title, style (dialog, tool window, no maximize box) and fixed-size hints; the menu bar stays inside
 the client area. Not started: it touches frame.cpp, hit testing, window sizing (outer vs client rectangles) and every caption-related path.
 
-### The window manager's title bar for Raven windows (2026-11-07; built, off by default)
+### The window manager's title bar for Raven windows (2026-11-07)
 
-`RAVEN_FRAME=wm` (xcb.cpp, `presentation.frame_insets` provided by `NativeWindows::set_presentation`) lets CloakServer frame a window that has
-a caption: the host X window is the outer frame minus caption and border (the Windows menu bar stays in it); only that part of the pixels is
-sent; pointer coordinates get the cut-off offset added back, a host resize adds it to the size, popups, driver surfaces and the pointer
-confinement subtract it; `_MOTIF_WM_HINTS` decorations=0 is not set for such windows, so CloakServer's own bar appears (traffic lights, bold
-title). Checked in the VM with a test program: the bar, the title with dashes, zoom (the window repaints at the new size, and back), close.
-Not good yet: with the Inno Setup wizard in this mode, clicking OK on the language dialog ended the whole desktop session (greeter came back,
-X restarted), twice in two tries, while the same click with Raven's own frame (`RAVEN_FRAME` unset) worked. Cause not found (CloakServer
-crash on a Raven window being destroyed, or something Raven sends); the title-bar session was asked to look. Also not done: dialogs and
-fixed-size windows should hide the zoom light (`_CLOKE_TITLEBAR` bit 5 of [4], and min=max size hints), tool windows, minimize reporting.
+On by default now; `RAVEN_FRAME=raven` keeps Raven's own frame (xcb.cpp, `presentation.frame_insets` provided by `NativeWindows::set_presentation`).
+CloakServer frames a window that has a caption: the host X window is the outer frame minus caption and border (the Windows menu bar stays in
+it); only that part of the pixels is sent; pointer coordinates get the cut-off offset added back, a host resize adds it to the size, popups,
+driver surfaces and the pointer confinement subtract it; `_MOTIF_WM_HINTS` decorations=0 is not set for such windows, so CloakServer's own bar
+appears (traffic lights, bold title). Windows without a caption keep Raven's drawing and decorations=0. `RAVEN_TRACE_X11=1` prints the frame,
+host size and cut-off of every frame sent. Checked in the VM: a test program (bar, title with dashes, zoom and back, close) and the Inno Setup
+wizard (language dialog OK, license radio button, Next, with the bar and correct pointer positions) twice in a row.
+An earlier image crashed the whole desktop session on the click on OK of the Inno language dialog in this mode (twice); an image built after the
+title-bar session's CloakServer commits (b2c0498, with a crash log in /var/log/cloakserver-crash.log) did not, in two tries, and the log stayed
+empty. Cause of the earlier crash not found; if it comes back, `RAVEN_FRAME=raven` avoids it and the crash log shows where CloakServer died.
+Not done: dialogs and fixed-size windows should hide the zoom light (`_CLOKE_TITLEBAR` bit 5 of [4], and min=max size hints), tool windows,
+minimize reporting; the zoom/unzoom test program vanished in two of five tries before (no error), not seen since.
