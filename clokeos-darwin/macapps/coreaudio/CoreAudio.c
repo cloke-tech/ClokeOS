@@ -16,6 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <dlfcn.h>
 
 enum { kObjDevice = 2, kObjStream = 3 };
 #define RATE 48000.0
@@ -55,6 +56,25 @@ static float p_all[MAXSTATS];
 static UInt64 ns_to_host(UInt64 ns) { return ns * tb.denom / tb.numer; }
 static UInt64 host_to_ns(UInt64 h) { return h * tb.numer / tb.denom; }
 
+// Workgroup des I/O-Threads (kAudioDevicePropertyIOThreadOSWorkgroup): Logic hängt seine Render-Threads daran.
+// os_workgroup_* kommt aus libcompat (per dlsym, damit der Shim auch ohne sie lädt); je Zyklus ein Intervall
+// [Start, Frist = Ende des Blocks]. Siehe docs/logic-libsystem.md (Workgroups sind dort nur Buchführung).
+typedef void *wg_t;
+static wg_t wg;
+static wg_t (*wg_create)(const char *, uint32_t, void *);
+static int (*wg_join)(wg_t, void *), (*wg_leave)(wg_t, void *);
+static int (*wg_start)(wg_t, uint64_t, uint64_t, void *), (*wg_finish)(wg_t, void *);
+static pthread_once_t wg_once = PTHREAD_ONCE_INIT;
+static void wg_init(void) {
+  wg_create = (wg_t (*)(const char *, uint32_t, void *))dlsym(RTLD_DEFAULT, "os_workgroup_interval_create");
+  wg_join = (int (*)(wg_t, void *))dlsym(RTLD_DEFAULT, "os_workgroup_join");
+  wg_leave = (int (*)(wg_t, void *))dlsym(RTLD_DEFAULT, "os_workgroup_leave");
+  wg_start = (int (*)(wg_t, uint64_t, uint64_t, void *))dlsym(RTLD_DEFAULT, "os_workgroup_interval_start");
+  wg_finish = (int (*)(wg_t, void *))dlsym(RTLD_DEFAULT, "os_workgroup_interval_finish");
+  if (wg_create) wg = wg_create("ClokeOS HDA Output IO", 32 /* OS_CLOCK_MACH_ABSOLUTE_TIME */, NULL);
+}
+static wg_t io_workgroup(void) { pthread_once(&wg_once, wg_init); return wg; }
+
 static AudioStreamBasicDescription fmt_f32(void) {
   AudioStreamBasicDescription d = { RATE, kAudioFormatLinearPCM,
     kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked, 4 * CHANNELS, 1, 4 * CHANNELS, CHANNELS, 32, 0 };
@@ -80,6 +100,8 @@ static void *io_thread(void *arg) {
   float *mix = malloc(MAXFRAMES * CHANNELS * sizeof(float));
   short *pcm = malloc(MAXFRAMES * CHANNELS * sizeof(short));
   Float64 sample = 0; UInt64 last = 0, t0 = mach_absolute_time();
+  wg_t w = io_workgroup(); uint64_t tok[8] = { 0 };   // os_workgroup_join_token_s: 36 Bytes, hier großzügig
+  int joined = w && wg_join && wg_join(w, tok) == 0;
   while (!stop_req) {
     pthread_mutex_lock(&lk);
     f = frames;
@@ -98,6 +120,7 @@ static void *io_thread(void *arg) {
     AudioTimeStamp ts = { .mSampleTime = sample, .mHostTime = now, .mFlags = kAudioTimeStampSampleTimeValid | kAudioTimeStampHostTimeValid };
     // Der Block wird erst nach dem Schreiben hörbar: Ausgabezeit einen Block später
     AudioTimeStamp out = ts; out.mSampleTime = sample + f; out.mHostTime = now + ns_to_host((UInt64)(f * 1e9 / RATE));
+    if (joined && wg_start) wg_start(w, now, now + ns_to_host((UInt64)(f * 1e9 / RATE)), NULL);
     AudioBufferList abl;
     abl.mNumberBuffers = 1;
     for (int i = 0; i < MAXPROCS; i++) {
@@ -108,6 +131,7 @@ static void *io_thread(void *arg) {
       local[i].proc(kObjDevice, &ts, NULL, &ts, &abl, &out, local[i].client);
       for (UInt32 k = 0; k < f * CHANNELS; k++) buf[k] += mix[k];
     }
+    if (joined && wg_finish) wg_finish(w, NULL);
     for (UInt32 k = 0; k < f * CHANNELS; k++) {
       float v = buf[k]; v = v > 1 ? 1 : v < -1 ? -1 : v;
       pcm[k] = (short)(v * 32767.0f + (v < 0 ? -0.5f : 0.5f));
@@ -119,6 +143,7 @@ static void *io_thread(void *arg) {
     // Eine Datei blockiert nie: dann gibt die Uhr den Gerätetakt vor (Echtzeit, damit Logic wie mit Hardware spielt)
     if (to_file) mach_wait_until(t0 + ns_to_host((UInt64)(sample * 1e9 / RATE)));
   }
+  if (joined && wg_leave) wg_leave(w, tok);
   free(buf); free(mix); free(pcm);
   return NULL;
 }
@@ -169,10 +194,23 @@ static Q prop1(AudioObjectID obj, const AudioObjectPropertyAddress *a, void *out
       case kAudioDevicePropertyAvailableNominalSampleRates: PUT(AudioValueRange, ((AudioValueRange){ RATE, RATE })); break;
       case kAudioDevicePropertyBufferFrameSize: PUT(UInt32, frames); break;
       case kAudioDevicePropertyBufferFrameSizeRange: PUT(AudioValueRange, ((AudioValueRange){ 32, MAXFRAMES })); break;
+      case 'bsiz': PUT(UInt32, frames * 4 * CHANNELS); break;   // kAudioDevicePropertyBufferSize (Bytes, alte API)
+      case 'bsz#': PUT(AudioValueRange, ((AudioValueRange){ 32 * 4 * CHANNELS, MAXFRAMES * 4 * CHANNELS })); break;
       case kAudioDevicePropertyLatency: case kAudioDevicePropertySafetyOffset: PUT(UInt32, 0); break;
       case kAudioDevicePropertyStreams:
         if (outscope) PUT(AudioObjectID, kObjStream); else q.ok = 1;   // Eingang: leere Liste
         break;
+      case 'oswg': {   // kAudioDevicePropertyIOThreadOSWorkgroup: +1 für den Aufrufer (wie bei Apple)
+        wg_t g = io_workgroup();
+        if (!g) break;
+        q.size = sizeof g; q.ok = 1;
+        if (out && cap >= sizeof g) {
+          static void *(*retain)(void *); if (!retain) retain = (void *(*)(void *))dlsym(RTLD_DEFAULT, "os_retain");
+          if (retain) retain(g);
+          memcpy(out, &g, sizeof g);
+        }
+        break; }
+      case 'clkd': PUT(UInt32, 0); break;   // kAudioDevicePropertyClockDomain: keine gemeinsame Uhr
       case 'sfm#': case 'sfmt':   // kAudioDevicePropertyStreamFormats/-Format (alte API, Logics Scan verlangt ≥ ein ASBD)
         if (outscope) PUT(AudioStreamBasicDescription, fmt_f32()); else q.ok = 0;
         break;
@@ -247,22 +285,46 @@ OSStatus AudioObjectGetPropertyData(AudioObjectID o, const AudioObjectPropertyAd
 }
 OSStatus AudioObjectSetPropertyData(AudioObjectID o, const AudioObjectPropertyAddress *a, UInt32 qs, const void *qd, UInt32 size, const void *data) {
   (void)qs; (void)qd;
-  if (o != kObjDevice || !a || a->mSelector != kAudioDevicePropertyBufferFrameSize) return kAudioHardwareUnknownPropertyError;
+  if (ca_trace() && a) { char c[5]; fourcc(c, a->mSelector);
+    fprintf(stderr, "[CoreAudio] Set %u '%s' %u Bytes [%08x]\n", (unsigned)o, c, (unsigned)size, size >= 4 && data ? *(const UInt32 *)data : 0); }
+  if (o != kObjDevice || !a || (a->mSelector != kAudioDevicePropertyBufferFrameSize && a->mSelector != 'bsiz')) return kAudioHardwareUnknownPropertyError;
   if (size != sizeof(UInt32)) return kAudioHardwareBadPropertySizeError;
   UInt32 f = *(const UInt32 *)data;
+  if (a->mSelector == 'bsiz') f /= 4 * CHANNELS;
   if (f < 32 || f > MAXFRAMES) return kAudioHardwareIllegalOperationError;
   pthread_mutex_lock(&lk); frames = f; pthread_mutex_unlock(&lk);
   return 0;
 }
 
 // --- IO ---------------------------------------------------------------------------------------
+// CLOKE_CA_WATCH=off1,off2,…: alle 2 s die 32-Bit-Werte an diesen Versätzen im Client des ersten IOProcs melden
+// (bei Logic ist der Client das MD-Objekt von MAAudioEngine; z. B. 0xfa84 = Primed). Nur zur Fehlersuche.
+static void *watch_client;
+static void *watch_thread(void *arg) {
+  (void)arg;
+  const char *w = getenv("CLOKE_CA_WATCH");
+  for (;;) {
+    sleep(2);
+    char line[512]; int n = snprintf(line, sizeof line, "[CoreAudio] Wache");
+    for (const char *q = w; q && *q && n < (int)sizeof line - 32; ) {
+      char *e; unsigned long off = strtoul(q, &e, 16);
+      n += snprintf(line + n, sizeof line - n, " %#lx=%d", off, *(volatile int *)((char *)watch_client + off));
+      q = *e ? e + 1 : e;
+    }
+    fprintf(stderr, "%s running=%d\n", line, running);
+  }
+  return NULL;
+}
 OSStatus AudioDeviceCreateIOProcID(AudioObjectID dev, AudioDeviceIOProc proc, void *client, AudioDeviceIOProcID *id) {
+  if (client && !watch_client && getenv("CLOKE_CA_WATCH")) { pthread_t t; watch_client = client; pthread_create(&t, NULL, watch_thread, NULL); }
   if (dev != kObjDevice || !proc || !id) return kAudioHardwareBadDeviceError;
   OSStatus r = kAudioHardwareIllegalOperationError;
   pthread_mutex_lock(&lk);
   for (int i = 0; i < MAXPROCS; i++) if (!slots[i].proc) { slots[i] = (Slot){ proc, client }; *id = proc; r = 0; break; }
   pthread_mutex_unlock(&lk);
-  if (ca_trace()) fprintf(stderr, "[CoreAudio] CreateIOProcID %p -> %d\n", (void *)proc, (int)r);
+  if (ca_trace()) { Dl_info di = { 0 }; dladdr((void *)proc, &di);
+    fprintf(stderr, "[CoreAudio] CreateIOProcID %p (%s +%#lx %s) -> %d\n", (void *)proc, di.dli_fname ? di.dli_fname : "?",
+            (unsigned long)((char *)proc - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : "", (int)r); }
   return r;
 }
 OSStatus AudioDeviceDestroyIOProcID(AudioObjectID dev, AudioDeviceIOProcID id) {
@@ -278,11 +340,16 @@ OSStatus AudioDeviceStart(AudioObjectID dev, AudioDeviceIOProcID id) {
   if (dev != kObjDevice) return kAudioHardwareBadDeviceError;
   if (running) return 0;
   const char *path = getenv("CLOKE_CA_DEVICE");   // Test: Datei statt /dev/dsp0
-  fd = open(path ? path : "/dev/dsp0", O_WRONLY | (path ? O_CREAT | O_TRUNC : 0), 0644);
+  static int truncated;   // eine Datei nur beim ersten Start leeren: Logic stoppt und startet das Gerät mehrmals
+  fd = open(path ? path : "/dev/dsp0", O_WRONLY | (path ? O_CREAT | (truncated ? 0 : O_TRUNC) : 0), 0644);
+  if (path && fd >= 0) truncated = 1;
   if (ca_trace()) fprintf(stderr, "[CoreAudio] AudioDeviceStart %s -> fd %d\n", path ? path : "/dev/dsp0", fd);
   if (fd < 0) return kAudioHardwareNotRunningError;
-  struct stat st; to_file = fstat(fd, &st) == 0 && S_ISREG(st.st_mode); file_bytes = 0;
-  if (to_file) { wav_header(fd, 0); lseek(fd, 44, SEEK_SET); }
+  struct stat st; to_file = fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
+  if (to_file) {
+    file_bytes = st.st_size > 44 ? (UInt64)st.st_size - 44 : 0;
+    wav_header(fd, file_bytes); lseek(fd, 44 + (off_t)file_bytes, SEEK_SET);
+  }
   stop_req = 0; p_min = 1e18; p_max = p_sum = 0; p_n = 0;
   if (pthread_create(&th, NULL, io_thread, NULL)) { close(fd); return kAudioHardwareIllegalOperationError; }
   running = 1;
@@ -290,8 +357,11 @@ OSStatus AudioDeviceStart(AudioObjectID dev, AudioDeviceIOProcID id) {
 }
 OSStatus AudioDeviceStop(AudioObjectID dev, AudioDeviceIOProcID id) {
   (void)id;
+  if (ca_trace()) { Dl_info di = { 0 }; void *ra = __builtin_return_address(0); dladdr(ra, &di);
+    fprintf(stderr, "[CoreAudio] AudioDeviceStop von %s +%#lx %s\n", di.dli_fname ? di.dli_fname : "?", (unsigned long)((char *)ra - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : ""); }
   if (dev != kObjDevice) return kAudioHardwareBadDeviceError;
   if (!running) return 0;
+  if (getenv("CLOKE_CA_KEEPRUNNING")) return 0;   // Versuch: das Gerät läuft weiter, auch wenn der Client es stoppt
   stop_req = 1; pthread_join(th, NULL); running = 0;
   if (to_file) wav_header(fd, file_bytes);
   if (ca_trace()) fprintf(stderr, "[CoreAudio] AudioDeviceStop, %llu Bytes\n", (unsigned long long)file_bytes);

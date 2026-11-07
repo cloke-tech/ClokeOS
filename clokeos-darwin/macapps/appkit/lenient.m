@@ -128,9 +128,17 @@ static void h_show(id s, SEL c, id a) {
     fprintf(stderr, "[clokeos-trace] %s -showWindow:\n", class_getName(object_getClass(s)));
     ((void (*)(id, SEL, id))o_show)(s, c, a);
 }
-/* Maustasten (NSEventType 1…4, 25/26): wer bekommt das Ereignis */
+/* Maustasten (NSEventType 1…4, 25/26) und Tasten (10/11): wer bekommt das Ereignis */
 static void ck_ev(const char *who, id s, NSEvent *e) {
     NSUInteger t = [e type];
+    if (t == 10 || t == 11) {   /* Tasten: Tastencode, Zeichen, Schlüsselfenster */
+        id kw = [NSApp keyWindow];
+        fprintf(stderr, "[clokeos-trace] %s key%s code=%u chars=\"%s\" flags=%#lx keyWindow=%s \"%s\" firstResponder=%s\n", who, t == 10 ? "Down" : "Up",
+                (unsigned)[e keyCode], [[e characters] UTF8String] ?: "", (unsigned long)[e modifierFlags],
+                kw ? class_getName(object_getClass(kw)) : "nil", kw ? ck_title(kw) : "",
+                kw && [kw firstResponder] ? class_getName(object_getClass([kw firstResponder])) : "nil");
+        return;
+    }
     if (t != 1 && t != 2 && t != 3 && t != 4 && t != 25 && t != 26) return;
     NSPoint p = [e locationInWindow];
     id w = [e window];

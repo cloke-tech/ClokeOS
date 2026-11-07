@@ -733,3 +733,10 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   the shim writes a WAV in real time (125 s in a test run, valid header) – still **silent** (all samples 0); whether the transport plays is the next question.
 * Traces: `CLOKE_CA_TRACE=1|2` (CoreAudio: unknown properties | every query with value), `CLOKE_AT_TRACE=1|2` (AudioToolbox), `libclogictrace` reports Logic's driver
   calls and dumps MAAudioEngine's device table after the scan (offsets for Logic 12.3 arm64).
+* **Playback does not start yet.** Space reaches Logic (key code 49, key window "Jump.logicx - Tracks"). Logic turns input monitoring off (`MDCA::SetInputMonitoring` →
+  `AudioDeviceStop`) and runs `MDCA::PrepareForStart` (MD's "primed" field at +0xfa84 goes 1 → 2), but `MDCA::Start` (vtable +0xa8 → `CAStart` → `AudioDeviceStart`) is never
+  called, so the device stays stopped and the WAV silent. Also with `CLOKE_CA_KEEPRUNNING=1` (the shim ignores stops) nothing renders. Next: find who should call Start
+  after PrepareForStart (caller chain in Logic.framework). Metronome on (K) changes nothing; Jump uses Sampler patches (need the sound library) and Retro/Vintage Synth.
+* CoreAudio shim additions: `kAudioDevicePropertyIOThreadOSWorkgroup` ('oswg', from libcompat's `os_workgroup_interval_create`, the IO thread joins it and runs one interval
+  per cycle), clock domain, byte-based buffer sizes, stream ranged formats; file output appends after the first start; `CLOKE_CA_WATCH=<hex offsets>` logs fields of the IOProc
+  client (Logic's MD object) every 2 s; `AudioDeviceStop` traces its caller.
