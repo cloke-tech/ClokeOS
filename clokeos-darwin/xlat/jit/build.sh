@@ -14,4 +14,5 @@ x="-target x86_64-apple-macos11.0 -ffreestanding -fno-builtin -fno-stack-protect
 clang $x -O2 -fno-vectorize -fno-slp-vectorize -o "$out/bench" jit/bench.c
 clang $x -O2 -o "$out/t-sys" t-sys.c
 clang $x -O1 -o "$out/t-jit" jit/t-jit.c
+clang $x -O1 -mavx2 -o "$out/t-avx" jit/t-avx.c   # (UCRUN_JIT=1 RAVEN_JIT_AVX=1 ucrun t-avx)
 echo "fertig: $out  (jtest [Anzahl] [Seed]; UCRUN_JIT=1 ucrun bench)"

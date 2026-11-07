@@ -12,6 +12,7 @@
 #define JIT_FAULT 5     // Host-Zugriffsfehler im Gast-Befehl rip; aux = Adresse
 #define JIT_INT3 6      // int3: rip = Adresse hinter dem Befehl
 #define JIT_UD 7        // ud2: rip = Adresse des Befehls
+#define JIT_CPUID 10    // intern: cpuid mit eigener Tabelle (AVX eingeschaltet)
 #define JIT_RETRY 8     // intern: Schreibzugriff auf übersetzten Code
 #define JIT_RETRY_OPEN 9  // intern: Schreibzugriff auf eine Codeseite, aber nicht auf übersetzte Bytes
 
@@ -40,6 +41,7 @@ typedef struct JitCtx {
 	double st[8];              // 576  x87-Register (physisch, nicht relativ zur Spitze)
 	uint16_t fcw, fsw, ftw;    // 640  x87: Steuer-, Statuswort (ohne TOP), Tag-Wort (0 = leer .. 1 = belegt, je Register ein Bit)
 	uint16_t pad2;
+	uint8_t ymmh[16][16] __attribute__((aligned(16)));      // 656  obere 128 Bit von YMM0..15 (nur mit AVX)
 } __attribute__((aligned(16))) JitCtx;
 #define C_XMM 256
 #define C_MXCSR 512
@@ -47,10 +49,13 @@ typedef struct JitCtx {
 #define C_KI 544
 #define C_X87TOP 560
 #define C_ST 576
+#define C_YMMH 656
 
 uint64_t jit_guest_limit(void);                   // Gastadressen müssen darunter liegen (Größe des Fensters, 16 GiB bis 256 GiB; 0 = nicht verfügbar)
 
 int jit_init(JitCtx *c);                          // 0 = ok
+void jit_set_trace(int t);
+void jit_set_avx(int on);                         // AVX/AVX2 (VEX-Befehle, cpuid/xgetbv melden AVX) ein-/ausschalten; Voreinstellung aus (Umgebung RAVEN_JIT_AVX=1)
 uint8_t *jit_guest_alloc(uint64_t g, uint64_t n); // Host-Speicher für Gastbereich [g, g+n), genullt; 0 bei Fehler
 uint64_t jit_guest_delta(void);                   // Host-Adresse = Gastadresse + delta (0 vor der Reservierung)
 int jit_guest_map(uint64_t g, uint64_t n, int prot);   // anonym, Gastschutz prot (PROT_*), genullt

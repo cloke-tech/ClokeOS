@@ -97,6 +97,7 @@ static void str_ctx(int rt, int off) { E(0xF9000000 | (off / 8) << 10 | 19 << 5 
 #define C_DELTA 232
 #define C_JC 240
 #define C_FBEND 248
+_Static_assert(__builtin_offsetof(JitCtx, ymmh) == C_YMMH && __builtin_offsetof(JitCtx, xmm) == C_XMM && __builtin_offsetof(JitCtx, st) == C_ST, "JitCtx-Layout");
 #define C_PF_BIT 8
 #define STP_SAVE (0xA9000000u | (C_NZCV / 8) << 15 | 31 << 10 | 19 << 5 | 16)
 
@@ -147,7 +148,7 @@ static uint8_t *guest_reserved;
 static uint8_t *gprot;
 static uint32_t *cflushes;   // Zähler je Hostseite: wie oft sie wegen Schreibzugriff entwertet wurde
 static uint16_t *bcnt;       // harmlose Schreibfehler je Codeseite; ab SMC_BENIGN_MAX wird die Seite nicht mehr überwacht (gemischte Code-/Datenseite)
-#define SMC_BENIGN_MAX 24
+#define SMC_BENIGN_MAX 60000   // (praktisch nie: nach einem harmlosen Schreibzugriff ist die Seite offen, bis der Verteiler das nächste Mal läuft; Rate begrenzt durch dessen Aufrufe)
 static uint8_t *nosmc;
 static uint64_t *blist; static uint32_t nbl, cbl;   // Seiten, für die es eine Bitkarte gibt
 static uint8_t **cbits;      // je Codeseite eine Bitkarte (ein Bit je Byte der Hostseite) der übersetzten Quellbytes
@@ -339,12 +340,13 @@ static int smc_fault(uint64_t addr) {
 // ------------------------------------------------------------------------------------------------ Decoder
 enum { OP_FB, OP_NOP, OP_MOV, OP_LEA, OP_ALU, OP_INC, OP_DEC, OP_NEG, OP_NOT, OP_MUL1, OP_IMUL1, OP_DIV, OP_IDIV, OP_IMUL2,
        OP_SHIFT, OP_PUSH, OP_POP, OP_CALL, OP_CALLI, OP_RET, OP_JMP, OP_JMPI, OP_JCC, OP_SETCC, OP_CMOV, OP_MOVZX, OP_MOVSX,
-       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE, OP_INT3, OP_UD2, OP_CMPXCHG, OP_XADD, OP_ROT, OP_BS, OP_POPCNT, OP_BT };
+       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE, OP_INT3, OP_UD2, OP_CMPXCHG, OP_XADD, OP_ROT, OP_BS, OP_POPCNT, OP_BT, OP_CPUID, OP_XGETBV };
 typedef struct { uint8_t k, n, hi; } Opd;  // k: 0 -, 1 Register, 2 Speicher, 3 Immediate
 typedef struct {
 	int op, sz, ssz, cc, alu, len, rep, count, live, cl, imm3, strop, branchy, followed;
 	uint64_t pc, target; int64_t imm; Opd d, s;
 	int base, index, scale, seg, ripr; int64_t disp;
+	int vex, vv;                 // AVX: 0 = kein VEX, 1 = 128 Bit, 2 = 256 Bit; Register aus vvvv
 	int sop, arg, fl, fmt, xd;   // SSE: Art, Unterart, Flags (SF_*), Format, Zielregister (xmm bzw. Allzweck)
 } Insn;
 
@@ -397,6 +399,7 @@ static int flen(const uint8_t *p, int *branchy) {
 }
 
 #include "jit_sse_dec.inc"
+#include "jit_avx_dec.inc"
 
 // Befehl unter p (Host-Zeiger) mit Gast-Adresse pc; unbekannte Befehle -> OP_FB
 static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
@@ -422,10 +425,45 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 			if (mod == 1) { I->disp = (int8_t)p[i++]; } else if (mod == 2) { I->disp = rd32(p + i); i += 4; } } } while (0)
 	#define IMM8 ((int64_t)(int8_t)p[i++])
 	#define IMMZ(sz_) ((sz_) == 2 ? ({ int16_t v_; memcpy(&v_, p + i, 2); i += 2; (int64_t)v_; }) : ({ int64_t v_ = rd32(p + i); i += 4; v_; }))
+	if ((op == 0xc4 || op == 0xc5) && jit_avx) {   // VEX
+		if (opsz16 || rep || lock || rex) FAIL;
+		int vR, vX = 0, vB = 0, vW = 0, vmap = 1, vv, vL, vpp; uint8_t b1 = p[i++];
+		if (op == 0xc5) { vR = (~b1 >> 7) & 1; vv = (~b1 >> 3) & 15; vL = (b1 >> 2) & 1; vpp = b1 & 3; }
+		else { uint8_t b2 = p[i++]; vR = (~b1 >> 7) & 1; vX = (~b1 >> 6) & 1; vB = (~b1 >> 5) & 1; vmap = b1 & 31; vW = b2 >> 7; vv = (~b2 >> 3) & 15; vL = (b2 >> 2) & 1; vpp = b2 & 3; }
+		R = vR << 3; X = vX << 3; B = vB << 3; W = vW; rex = 0x40;
+		uint8_t o2 = p[i++];
+		int pfx = vpp == 0 ? 0 : vpp == 1 ? 0x66 : vpp == 2 ? 0xf3 : 0xf2, sop, arg, fl2, msz, fmt = 0, ok = 0;
+		if (vmap == 1 && o2 == 0x77 && pfx == 0) { I->op = OP_SSE; I->sop = S_VZERO; I->vex = 1 + vL; I->len = i; return; }
+		ok = avx_class(vmap, o2, pfx, vW, vL, &sop, &arg, &fl2, &msz);
+		if (ok == 2) { static const int m256[6] = {16, 8, 4, 16, 8, 16}; msz = m256[arg & 7]; }
+		if (!ok) {
+			if (vmap == 1) ok = sse_class(o2, pfx, &sop, &arg, &fl2, &msz, &fmt);
+			else if (vmap == 2 || vmap == 3) ok = sse_class2(vmap - 1, o2, pfx, &sop, &arg, &fl2, &msz, &fmt);
+			if (ok && vmap == 3 && o2 == 0x02) { sop = S_BLEND; arg = 0; fl2 = SF_IMM; msz = 16; if (vW) ok = 0; }   // vpblendd
+			if (ok && vmap == 3 && (o2 == 0x14 || o2 == 0x15 || o2 == 0x16 || o2 == 0x20 || o2 == 0x22)) { if (sop == S_PEXTR && arg == 2 && vW) arg = 3; if (sop == S_PINSR && arg == 2 && vW) arg = 3; }
+			if (ok && vmap == 1 && sop == S_CVT && arg == CV_I2F) msz = vW ? 8 : 4;
+			if (ok && (sop == S_PMOVMSKB)) { if (vL) ok = 0; }
+		}
+		if (!ok) FAIL;
+		MODRM(16);
+		if (rmo.k == 1 && pfx == 0 && vmap == 1 && o2 == 0x12) sop = S_MOVHLPS; else if (rmo.k == 1 && pfx == 0 && vmap == 1 && o2 == 0x16) sop = S_MOVLHPS;
+		else if (rmo.k == 1 && vmap == 1 && (o2 == 0x13 || o2 == 0x17 || ((o2 == 0x12 || o2 == 0x16) && pfx == 0x66))) FAIL;
+		if ((fl2 & SF_REGONLY) && rmo.k != 1) FAIL;
+		I->op = OP_SSE; I->sop = sop; I->arg = arg; I->fl = fl2; I->fmt = fmt; I->ssz = msz; I->xd = regf; I->s = rmo; I->sz = W ? 8 : 4; I->vv = vv; I->vex = 1 + vL;
+		// Skalare Befehle und Befehle auf einer Hälfte kennen kein L
+		if ((sop == S_FARITH && fmt >= 2) || sop == S_MOVSS || sop == S_MOVSD || sop == S_COMIS || sop == S_MOVD || sop == S_MOVQX || sop == S_PINSR || sop == S_PEXTR || sop == S_PEXTRW ||
+			(sop == S_CVT && (arg == CV_I2F || arg == CV_F2I || arg == CV_F2I_T || arg == CV_S2D || arg == CV_D2S)) || sop == S_ROUND && fmt >= 2 || sop == S_CMPF && fmt >= 2 ||
+			sop == S_MOVLP || sop == S_MOVHP || sop == S_MOVHLPS || sop == S_MOVLHPS) I->vex = 1;
+		if (sop == S_SHIFTI) { I->cc = regf & 7; int ok2 = o2 == 0x73 ? (I->cc == 2 || I->cc == 3 || I->cc == 6 || I->cc == 7) : (I->cc == 2 || I->cc == 4 || I->cc == 6); if (!ok2) FAIL; }   // vvvv = Ziel, r/m = Quelle
+		if (fl2 & SF_IMM) I->imm = p[i++];
+		I->len = i; return;
+	}
 	int sz = osz;
 	if (op == 0x0f) {
 		uint8_t o2 = p[i++];
 		if (o2 == 0x05) { I->op = OP_SYSCALL; I->len = i; return; }
+		if (o2 == 0xa2 && jit_avx) { I->op = OP_CPUID; I->len = i; return; }
+		if (o2 == 0x01 && p[i] == 0xd0 && jit_avx) { I->op = OP_XGETBV; I->len = i + 1; return; }
 		if (o2 == 0x0b) { I->op = OP_UD2; I->len = i; return; }
 		if (o2 == 0x1f) { MODRM(osz); I->op = OP_NOP; I->len = i; return; }
 		if (o2 == 0x1e && rep == 1 && p[i] == 0xfa) { I->op = OP_NOP; I->len = i + 1; return; }  // endbr64
@@ -664,6 +702,7 @@ static void set_fs_alu(int alu) { fs = (alu == 0 || alu == 2) ? FS_ADD : (alu ==
 
 #include "jit_sse_gen.inc"
 #include "jit_int_gen.inc"
+#include "jit_avx.inc"
 
 static int gen_alu(Insn *I) {
 	int alu = I->alu, sz = I->sz, live = I->live, cmp = alu == 7 || alu == 8, is64 = sz == 8;
@@ -827,7 +866,8 @@ static int gen_insn(Insn *I) {
 	int sz = I->sz;
 	switch (I->op) {
 	case OP_NOP: return 1;
-	case OP_SSE: return gen_sse(I);
+	case OP_SSE: return I->vex ? gen_vex(I) : gen_sse(I);
+	case OP_XGETBV: movimm(0, 7); movimm(2, 0); return 1;
 	case OP_CMPXCHG: return gen_cmpxchg(I);
 	case OP_XADD: return gen_xadd(I);
 	case OP_ROT: return gen_rot(I);
@@ -1005,7 +1045,7 @@ static Blk *translate(uint64_t pc) {
 		}
 		n++; cur += I->len;
 		if (I->op == OP_JMP && follows < 4 && n < MAXI / 2) { cur = I->target; I->followed = 1; follows++; continue; }
-		if (I->op == OP_JMP || I->op == OP_JCC || I->op == OP_CALL || I->op == OP_CALLI || I->op == OP_RET || I->op == OP_JMPI || I->op == OP_SYSCALL || I->op == OP_INT3 || I->op == OP_UD2) term = 1;
+		if (I->op == OP_JMP || I->op == OP_JCC || I->op == OP_CALL || I->op == OP_CALLI || I->op == OP_RET || I->op == OP_JMPI || I->op == OP_SYSCALL || I->op == OP_CPUID || I->op == OP_INT3 || I->op == OP_UD2) term = 1;
 	}
 	// Flag-Lebendigkeit rückwärts
 	int L = 1;
@@ -1079,6 +1119,7 @@ static Blk *translate(uint64_t pc) {
 			Addr a = {4, 20, 0}; ldst(1, 8, 0, 17, a); addsub_i(0, 0, 4, 4, 8 + (uint32_t)I->imm, 1); exit_indirect(fs); ended = 1; break; }
 		case OP_SYSCALL: save_flags(fs, 0); movimm(16, I->pc + I->len); str_ctx(16, C_RIP); exit_status(JIT_SYSCALL); ended = 1; break;
 		case OP_INT3: save_flags(fs, 0); movimm(16, I->pc + I->len); str_ctx(16, C_RIP); exit_status(JIT_INT3); ended = 1; break;
+		case OP_CPUID: save_flags(fs, 0); movimm(16, I->pc + I->len); str_ctx(16, C_RIP); exit_status(JIT_CPUID); ended = 1; break;
 		case OP_UD2: save_flags(fs, 0); movimm(16, I->pc); str_ctx(16, C_RIP); exit_status(JIT_UD); ended = 1; break;
 		case OP_STRING: gen_string(I); break;
 		default:
@@ -1186,6 +1227,7 @@ static void fault_handler(int sig, siginfo_t *si, void *uc_) {
 int jit_init(JitCtx *c) {
 	if (!code_base) {
 		trace_jit = getenv("UCRUN_JIT_TRACE") ? atoi(getenv("UCRUN_JIT_TRACE")) : 0;
+		if (getenv("RAVEN_JIT_AVX") && *getenv("RAVEN_JIT_AVX") == '1') jit_avx = 1;
 		if (trace_jit) fprintf(stderr, "jit: init: Codepuffer\n");
 		void *p = mmap(0, CODE_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE | MAP_ANON | MAP_JIT, -1, 0);
 		if (p == MAP_FAILED) return -1;
@@ -1217,6 +1259,7 @@ int jit_run(JitCtx *c) {
 	pthread_jit_write_protect_np(1);
 	for (;;) {
 		((enter_fn)(void *)g_enter)(c, b->code);
+		if (c->status == JIT_CPUID) { jit_cpuid(c->r); b = blk_lookup(c->rip); if (!b) b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }
 		if (c->status == JIT_RETRY_OPEN) { st_open++; keep_open = 1; b = translate(c->rip); keep_open = 0; pthread_jit_write_protect_np(1); continue; }   // harmloser Schreibzugriff auf eine Codeseite: Befehl wiederholen
 		if (c->status == JIT_RETRY) { st_retry++; jit_flush(); b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }   // Schreibzugriff auf Codeseite: alles entwerten, neu übersetzen
 		if (c->status != JIT_MISS) return (int)c->status;
@@ -1238,6 +1281,7 @@ void jit_invalidate(uint64_t g, uint64_t n) {
 	}
 }
 void jit_stats(uint64_t *blocks, uint64_t *insns, uint64_t *fbs) { *blocks = st_blocks; *insns = st_insns; *fbs = st_fb; }
+void jit_set_trace(int t) { trace_jit = t; }
 void jit_stats2(uint64_t out[4]) { out[0] = st_retry; out[1] = st_open; out[2] = st_flush; out[3] = st_miss; }
 
 uint64_t jit_eflags_of(const JitCtx *c) {

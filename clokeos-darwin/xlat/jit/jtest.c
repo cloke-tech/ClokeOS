@@ -281,7 +281,9 @@ static int xmm_same(const uint8_t *a, const uint8_t *b) {
 	return ok4 || ok8;
 }
 
+#include "jtest-avx.inc"
 int main(int argc, char **argv) {
+	if (argc > 3 && !strcmp(argv[3], "-a")) { long n0 = argc > 1 ? atol(argv[1]) : 20000; if (argc > 2) rs ^= (uint64_t)atoll(argv[2]) * 0x9E3779B97F4A7C15ULL; return avx_main(n0) | avx_special(n0); }
 	long N = argc > 1 ? atol(argv[1]) : 20000; if (argc > 2) rs ^= (uint64_t)atoll(argv[2]) * 0x9E3779B97F4A7C15ULL; int verbose = argc > 3 && strcmp(argv[3], "-s"); sse_mode = argc > 3 && !strcmp(argv[3], "-s");
 	JitCtx c; if (jit_init(&c)) { fprintf(stderr, "jit_init fehlgeschlagen\n"); return 2; }
 	code_h = jit_guest_alloc(CODE, CODE_N); data_h = jit_guest_alloc(DATA, DATA_N);
