@@ -94,4 +94,9 @@ python3 -I "$HERE/macapps/carcolors.py" "$app" "$tmp/colors" > "$tmp/colors.log"
   printf 'write "%s" "/Applications/%s"\n' "$tmp/colors/${f#./}" "${f#./}"; done) >> "$tmp/logic.cmds"
 read -r s c < <(gpt_part "$I" "$GUID_LINUX_FS")
 "$DEBUGFS" -w -f "$tmp/logic.cmds" "$I?offset=$((s * 512))" > "$tmp/logic.log" 2>&1
+# Bilder der Assets.car-Dateien als PNG (macapps/carimages.m, mit Apples AppKit auf dem Mac) nach Assets.images neben jeder Assets.car
+if clang -fobjc-arc -framework AppKit "$HERE/macapps/carimages.m" -o "$tmp/carimages" 2> "$tmp/carimages.log"; then
+  "$tmp/carimages" "$app" "$tmp/images" >> "$tmp/carimages.log" 2>&1 || true
+  [ -d "$tmp/images/$(basename "$app")" ] && "$HERE/macapps/deploy-tree.sh" "$tmp/images/$(basename "$app")" "/Applications/$(basename "$app")" > /dev/null
+fi
 echo "Image: $I"

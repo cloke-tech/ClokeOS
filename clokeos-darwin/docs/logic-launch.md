@@ -694,3 +694,9 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   **The lenient sink is now an assembly stub that also zeroes `d0`–`d3`** (CGFloat and small float-struct results such as NSSize/NSRect).
 * Oversized bitmap contexts now become 1 × 1 contexts instead of NULL (Logic draws into the result unchecked).
 * Next stop: `-[MAButtonCell _updateBufferedStateImages]` puts nil images into a dictionary during drawing (uncaught there). `CLOKE_TRACE` now lists images not found (`imageNamed:`, `-[NSBundle imageForResource:]`, `initWithContentsOfFile:`).
+* Catalog images: `macapps/carimages.m` (a Mac tool) loads every named image of each `Assets.car` with Apple's AppKit (`-[NSBundle imageForResource:]`) and writes PNGs to `Resources/Assets.images/<name>.png`
+  (1236 images, 42 MB for Logic; `CARIMAGES_2X=1` adds `@2x`). `macapps/logicimage.sh` builds and runs it and copies the tree in with the new `macapps/deploy-tree.sh` (mirror a Mac folder into the image).
+  In ClokeOS' AppKit, `-[NSBundle URLForImageResource:]` (and with it `imageForResource:`/`pathForImageResource:`, `appkit/nsbundle_images.m`) and `+[NSImage imageNamed:]` fall back to these files.
+  Like the colour files, nothing derived from Logic goes into the repository.
+* `+[NSTabViewItem tabViewItemWithViewController:]`, `-viewController`/`-setViewController:` (Logic's inspector tabs had no items; nil identifier into a dictionary).
+* Still open: ~250 non-fatal nils from `-[MAButtonCell _bufferedImageForMAButtonState:…cellSize:]` (likely zero cell sizes: no Auto Layout).

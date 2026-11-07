@@ -18,6 +18,9 @@
  *   NSGraphicsContext: CGContext (neuer Name von graphicsPort; ohne ihn zeichnete Logic Pro in einen NULL-Kontext)
  *   NSWindow/NSScreen: backingScaleFactor 1.0 (kein HiDPI); CALayer contentsScale (1.0, Setzen wird ignoriert); NSDate now;
  *   NSImage imageWithSize:flipped:drawingHandler: (zeichnet sofort in ein Bild der Größe), imageWithSymbolConfiguration: (das Bild selbst)
+ *   NSImage imageNamed: findet Bilder aus der Assets.car des Hauptbundles über PNG-Dateien in Resources/Assets.images/ (macapps/carimages.m
+ *            schreibt sie auf dem Mac mit Apples AppKit; für andere Bundles macht das -imageForResource:, appkit/nsbundle_images.m)
+ *   NSTabViewItem: tabViewItemWithViewController:, viewController/setViewController: (Kennung = der Controller, Ansicht und Titel von ihm)
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
@@ -171,6 +174,39 @@ static id img_with_handler(Class c, SEL s, NSSize size, BOOL flipped, BOOL (^han
     return img;
 }
 
+static IMP o_image_named;
+static NSImage *asset_png(NSBundle *b, NSString *name) {
+    if (b == nil || ![name isKindOfClass: [NSString class]] || [name length] == 0) return nil;
+    NSString *res = [b resourcePath];
+    if (res == nil) return nil;
+    NSString *p = [[[res stringByAppendingPathComponent: @"Assets.images"] stringByAppendingPathComponent: name] stringByAppendingPathExtension: @"png"];
+    if (![[NSFileManager defaultManager] fileExistsAtPath: p]) return nil;
+    return [[[NSImage alloc] initWithContentsOfFile: p] autorelease];
+}
+static id image_named(Class c, SEL s, NSString *name) {
+    id r = o_image_named ? ((id (*)(id, SEL, id)) o_image_named)(c, s, name) : nil;
+    if (r == nil && (r = asset_png([NSBundle mainBundle], name)) != nil)
+        [r setName: name];   /* wie bei Apple im Namensverzeichnis, das nächste imageNamed: findet es direkt */
+    return r;
+}
+
+static char tab_vc_key;
+static id tab_vc(id self, SEL s) { return objc_getAssociatedObject(self, &tab_vc_key); }
+static void tab_set_vc(id self, SEL s, id vc) {
+    objc_setAssociatedObject(self, &tab_vc_key, vc, OBJC_ASSOCIATION_RETAIN);
+    if (vc) {
+        ((void (*)(id, SEL, id)) objc_msgSend)(self, sel_registerName("setView:"), ((id (*)(id, SEL)) objc_msgSend)(vc, sel_registerName("view")));
+        id title = ((id (*)(id, SEL)) objc_msgSend)(vc, sel_registerName("title"));
+        ((void (*)(id, SEL, id)) objc_msgSend)(self, sel_registerName("setLabel:"), title ? title : @"");
+    }
+}
+static id tab_with_vc(Class c, SEL s, id vc) {
+    id item = ((id (*)(id, SEL, id)) objc_msgSend)([c alloc], sel_registerName("initWithIdentifier:"), vc);
+    [item autorelease];
+    tab_set_vc(item, s, vc);
+    return item;
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -198,6 +234,17 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
+    {
+        Class tv = objc_getClass("NSTabViewItem");
+        class_addMethod(object_getClass(tv), sel_registerName("tabViewItemWithViewController:"), (IMP)tab_with_vc, "@@:@");
+        class_addMethod(tv, sel_registerName("viewController"), (IMP)tab_vc, "@@:");
+        class_addMethod(tv, sel_registerName("setViewController:"), (IMP)tab_set_vc, "v@:@");
+    }
+    {
+        /* -[NSBundle imageForResource:] sucht selbst in Assets.images (appkit/nsbundle_images.m im X11-Backend) */
+        Method m = class_getClassMethod([NSImage class], @selector(imageNamed:));
+        if (m) o_image_named = method_setImplementation(m, (IMP) image_named);
+    }
     class_addMethod(objc_getClass("NSWindow"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
     class_addMethod(objc_getClass("NSScreen"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
     class_addMethod(objc_getClass("CALayer"), sel_registerName("contentsScale"), (IMP)one_scale, "d@:");
