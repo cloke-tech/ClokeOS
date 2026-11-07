@@ -398,7 +398,7 @@ index b2a095e..f587226 100644
  	std::optional<DesktopRect> bounds{};
  	// Application clipping is independent of BeginPaint's update region.
 diff --git a/native/desktop/presentation.h b/native/desktop/presentation.h
-index afe291e..a7c3369 100644
+index afe291e..2bdb674 100644
 --- a/native/desktop/presentation.h
 +++ b/native/desktop/presentation.h
 @@ -89,6 +89,10 @@ struct DesktopPresentation {
@@ -407,8 +407,8 @@ index afe291e..a7c3369 100644
  	std::function<void(uint64_t handle,uint64_t owner)> transient_for;
 +	// ClokeOS: the window manager draws the title bar and the frame. The backend asks (left, top, right, bottom) for the part of a window's
 +	// frame the host window leaves out: the frame of a window with a caption is cut off from its pixels and its coordinates, so the host window
-+	// shows the client area and the menu bar. The window system calls this once; no provider, or zeros, keep the whole frame.
-+	std::function<void(std::function<std::array<int32_t,4>(uint64_t)>)> frame_insets;
++	// shows the client area and the menu bar. The fifth value is the window's style, for the buttons of the title bar. The window system calls this once; no provider, or zeros, keep the whole frame.
++	std::function<void(std::function<std::array<int32_t,5>(uint64_t)>)> frame_insets;
  };
  
  }
@@ -469,7 +469,7 @@ index 089a377..6ccab2b 100644
  		}
  		call.ret(s_ok);
 diff --git a/native/desktop/windows.cpp b/native/desktop/windows.cpp
-index 0616ece..73807ce 100644
+index 0616ece..fee7223 100644
 --- a/native/desktop/windows.cpp
 +++ b/native/desktop/windows.cpp
 @@ -76,6 +76,14 @@ void NativeWindows::set_call(std::function<NativeResult(uint64_t,std::span<const
@@ -478,11 +478,11 @@ index 0616ece..73807ce 100644
  	presentation=std::move(backend);
 +	// The window manager frames windows that have a caption: the backend cuts the frame off (caption and border) and keeps the menu bar.
 +	if (presentation.frame_insets)
-+		presentation.frame_insets([this](uint64_t handle) -> std::array<int32_t,4> {
++		presentation.frame_insets([this](uint64_t handle) -> std::array<int32_t,5> {
 +			const auto *window=std::as_const(objects).window(handle);
-+			if (!window || (window->style & 0xc00000U)!=0xc00000U || window->glass || window->own_frame) return {0,0,0,0};
++			if (!window || (window->style & 0xc00000U)!=0xc00000U || window->glass || window->own_frame) return {0,0,0,0,0};
 +			const auto layout=frame_layout(*window);
-+			return {layout.border,layout.border+layout.caption_height,layout.border,layout.border};
++			return {layout.border,layout.border+layout.caption_height,layout.border,layout.border,int32_t(window->style)};
 +		});
  	refresh_screen();
  	if (presentation.poll) {
@@ -501,32 +501,72 @@ index 0616ece..73807ce 100644
  	if (!presentation.present) return;
  	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
 diff --git a/native/desktop/xcb.cpp b/native/desktop/xcb.cpp
-index 684ba7e..77f1aa6 100644
+index 684ba7e..4bcdbd5 100644
 --- a/native/desktop/xcb.cpp
 +++ b/native/desktop/xcb.cpp
-@@ -58,6 +58,8 @@ struct XcbPresentation::State {
+@@ -41,10 +41,10 @@ template <typename T> struct Reply {
+ 
+ constexpr const char *atom_names[]={"WM_PROTOCOLS","WM_DELETE_WINDOW","WM_NAME","WM_CLASS","_NET_WM_NAME","UTF8_STRING","STRING","TEXT",
+ 	"CLIPBOARD","TARGETS","text/plain;charset=utf-8","text/plain","RAVEN_SELECTION","INCR","_NET_WM_STATE","_NET_WM_STATE_MAXIMIZED_VERT",
+-	"_NET_WM_STATE_MAXIMIZED_HORZ","_NET_WM_MOVERESIZE","_MOTIF_WM_HINTS","_NET_WM_WINDOW_TYPE","_NET_WM_WINDOW_TYPE_POPUP_MENU","ATOM","WM_CHANGE_STATE","WM_STATE"};
++	"_NET_WM_STATE_MAXIMIZED_HORZ","_NET_WM_MOVERESIZE","_MOTIF_WM_HINTS","_NET_WM_WINDOW_TYPE","_NET_WM_WINDOW_TYPE_POPUP_MENU","ATOM","WM_CHANGE_STATE","WM_STATE","_CLOKE_TITLEBAR"};
+ enum Atom { wm_protocols, wm_delete_window, wm_name, wm_class, net_wm_name, utf8_string, string_type, text_type, clipboard, targets,
+ 	text_utf8, text_plain, raven_selection, incr, net_wm_state, maximized_vert, maximized_horz, net_wm_moveresize, motif_hints,
+-	window_type, window_type_popup, atom_type, wm_change_state, wm_state, atom_count };
++	window_type, window_type_popup, atom_type, wm_change_state, wm_state, cloke_titlebar, atom_count };
+ 
+ }
+ 
+@@ -58,6 +58,10 @@ struct XcbPresentation::State {
  		uint64_t parent=0;
  		bool closed=false, close_posted=false, resized=false, maximized=false, mapped=false, iconic=false;
  		uint32_t width=0,height=0,pending_width=0,pending_height=0;
 +		// What the window manager frames: the host window is the frame minus these (left, top, right, bottom); width and height stay the frame's.
 +		std::array<int32_t,4> inset{0,0,0,0};
++		// The style bits and size the title bar properties were last set for.
++		uint32_t hint_style=0,hint_width=0,hint_height=0;
  		std::string title;
  		// The frame the window shows, kept to repaint what the server exposes and to send only what changed.
  		std::vector<uint8_t> shown;
-@@ -73,6 +75,21 @@ struct XcbPresentation::State {
+@@ -73,6 +77,46 @@ struct XcbPresentation::State {
  	};
  	std::map<uint64_t,Hosted> hosted;
  	std::map<uint64_t,uint64_t> transient_owners;
-+	std::function<std::array<int32_t,4>(uint64_t)> insets_provider;
++	std::function<std::array<int32_t,5>(uint64_t)> insets_provider;
++	uint32_t last_style=0;
 +	// The window manager frames windows that have a caption (CloakServer's title bar); RAVEN_FRAME=raven keeps the old way, where the program's
 +	// frame is drawn by Raven and the window manager adds none.
 +	static bool wm_frames() { static const bool on=!std::getenv("RAVEN_FRAME") || std::string_view(std::getenv("RAVEN_FRAME"))!="raven"; return on; }
 +	std::array<int32_t,4> inset_for(uint64_t handle,uint32_t width,uint32_t height) {
 +		if (!insets_provider || !wm_frames()) return {0,0,0,0};
-+		auto value=insets_provider(handle);
++		const auto given=insets_provider(handle);
++		last_style=uint32_t(given[4]);
++		std::array<int32_t,4> value{given[0],given[1],given[2],given[3]};
 +		for (auto &part : value) part=std::max(part,0);
 +		if (int64_t(value[0])+value[2]+8>=int64_t(width) || int64_t(value[1])+value[3]+8>=int64_t(height)) return {0,0,0,0};
 +		return value;
++	}
++	// Tells the window manager which title bar buttons the program's window has (a dialog has no zoom, a fixed window no resizing): lights
++	// for the buttons it lacks are greyed (_CLOKE_TITLEBAR[4] bits 3 to 5: close, minimize, zoom) and a fixed window gets equal minimum and maximum sizes.
++	void apply_hints(Window &window,uint32_t style,uint32_t host_width,uint32_t host_height) {
++		const bool framed=window.inset!=std::array<int32_t,4>{0,0,0,0};
++		const bool fixed=framed && !(style & 0x40000U);
++		if (window.hint_style==(style|0x80000000U) && (!fixed || (window.hint_width==host_width && window.hint_height==host_height))) return;
++		window.hint_style=style|0x80000000U; window.hint_width=host_width; window.hint_height=host_height;
++		if (!framed) return;
++		uint32_t title[6]={0,0,0,0,0,0};
++		if (!(style & 0x80000U)) title[4]|=1U<<3;
++		if (!(style & 0x20000U)) title[4]|=1U<<4;
++		if (!(style & 0x10000U) || fixed) title[4]|=1U<<5;
++		property(window.id,atoms[cloke_titlebar],XCB_ATOM_CARDINAL,32,6,title);
++		if (fixed) {
++			// WM_SIZE_HINTS: flags PMinSize|PMaxSize, four unused longs, then the minimum and the maximum size.
++			uint32_t hints[18]={};
++			hints[0]=16|32; hints[5]=hints[7]=host_width; hints[6]=hints[8]=host_height;
++			property(window.id,XCB_ATOM_WM_NORMAL_HINTS,XCB_ATOM_WM_SIZE_HINTS,32,18,hints);
++		} else {
++			xcb_delete_property(connection,window.id,XCB_ATOM_WM_NORMAL_HINTS);
++		}
 +	}
 +	std::array<int32_t,4> inset_of(uint64_t handle) const {
 +		const auto found=windows.find(handle);
@@ -535,7 +575,7 @@ index 684ba7e..77f1aa6 100644
  	xcb_connection_t *connection=nullptr;
  	xcb_screen_t *screen=nullptr;
  	xcb_gcontext_t gc=0;
-@@ -161,7 +178,8 @@ struct XcbPresentation::State {
+@@ -161,7 +205,8 @@ struct XcbPresentation::State {
  
  	void pointer_event(DesktopEventKind kind,uint32_t button=0,uint32_t pressed=0) {
  		if (!pointer_window && kind==DesktopEventKind::pointer_motion) return;
@@ -545,7 +585,7 @@ index 684ba7e..77f1aa6 100644
  	}
  
  	void property(xcb_window_t window,xcb_atom_t name,xcb_atom_t type,uint8_t format,uint32_t count,const void *data) {
-@@ -390,8 +408,11 @@ struct XcbPresentation::State {
+@@ -390,8 +435,11 @@ struct XcbPresentation::State {
  		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
  			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
  			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
@@ -559,7 +599,7 @@ index 684ba7e..77f1aa6 100644
  		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
  		return id;
  	}
-@@ -444,7 +465,7 @@ struct XcbPresentation::State {
+@@ -444,7 +492,7 @@ struct XcbPresentation::State {
  		const auto owner=windows.find(parent);
  		if (owner==windows.end() || !owner->second->id) throw std::runtime_error("X11 popup has no presented parent window");
  		Reply place(xcb_translate_coordinates_reply(connection,xcb_translate_coordinates(connection,owner->second->id,screen->root,
@@ -568,7 +608,7 @@ index 684ba7e..77f1aa6 100644
  		if (!place) throw std::runtime_error("cannot place X11 popup");
  		const std::array<int32_t,4> area{place->dst_x,place->dst_y,place->dst_x+int32_t(width),place->dst_y+int32_t(height)};
  		if (found==windows.end()) {
-@@ -534,12 +555,16 @@ struct XcbPresentation::State {
+@@ -534,12 +582,17 @@ struct XcbPresentation::State {
  		if (found==windows.end()) {
  			auto window=std::make_unique<Window>();
  			window->width=width; window->height=height;
@@ -586,10 +626,11 @@ index 684ba7e..77f1aa6 100644
 +				const uint32_t hints[]={2,0,0,0,0};
 +				property(window->id,atoms[motif_hints],atoms[motif_hints],32,5,hints);
 +			}
++			apply_hints(*window,last_style,host_width,host_height);
  			set_title(*window,title);
  			set_maximized(*window,window->maximized,false);
  			apply_transient(handle,*window);
-@@ -562,13 +587,28 @@ struct XcbPresentation::State {
+@@ -562,13 +615,29 @@ struct XcbPresentation::State {
  		if (window.maximized && window.pending_width && window.pending_height &&
  			(window.pending_width!=width || window.pending_height!=height)) return;
  		if (window.pending_width==width && window.pending_height==height) window.resized=false;
@@ -608,6 +649,7 @@ index 684ba7e..77f1aa6 100644
 +		if (tracing()) std::fprintf(stderr,"x11: present %llx frame %ux%u host %ux%u inset %d,%d,%d,%d\n",(unsigned long long)handle,width,height,host_width,host_height,inset[0],inset[1],inset[2],inset[3]);
  		window.width=width; window.height=height;
 -		attach_frame(window,width,height,pixels);
++		apply_hints(window,last_style,host_width,host_height);
 +		if (inset_changed) window.shown_width=0;
 +		if (inset==std::array<int32_t,4>{0,0,0,0}) {
 +			attach_frame(window,width,height,pixels);
@@ -621,7 +663,7 @@ index 684ba7e..77f1aa6 100644
  		xcb_flush(connection);
  		if (xcb_connection_has_error(connection)) throw std::runtime_error("X11 connection failed during presentation");
  	}
-@@ -691,8 +731,9 @@ struct XcbPresentation::State {
+@@ -691,8 +760,9 @@ struct XcbPresentation::State {
  			const auto &event=*reinterpret_cast<const xcb_configure_notify_event_t *>(generic);
  			auto *window=window_of(event.window);
  			if (!window || window->is_popup || event.window!=event.event) return;
@@ -633,7 +675,7 @@ index 684ba7e..77f1aa6 100644
  			return;
  		}
  		case XCB_MAP_NOTIFY: case XCB_UNMAP_NOTIFY: {
-@@ -754,7 +795,7 @@ struct XcbPresentation::State {
+@@ -754,7 +824,7 @@ struct XcbPresentation::State {
  			root_x=event.root_x; root_y=event.root_y;
  			const auto *window=window_of(event.event);
  			// Under a popup grab the pointer outside the program's windows is reported to the popup; it is over no window then.
@@ -642,7 +684,7 @@ index 684ba7e..77f1aa6 100644
  			pointer_window=handle_of(event.event);
  			pointer_x=event.event_x; pointer_y=event.event_y;
  			pointer_event(DesktopEventKind::pointer_motion);
-@@ -854,6 +895,7 @@ struct XcbPresentation::State {
+@@ -854,6 +924,7 @@ struct XcbPresentation::State {
  		const xcb_window_t parent=found!=windows.end() && found->second->id ? found->second->id : screen->root;
  		shown=shown && parent!=screen->root;
  		width=std::clamp(width,1U,8192U); height=std::clamp(height,1U,8192U);
@@ -650,7 +692,7 @@ index 684ba7e..77f1aa6 100644
  		auto &entry=hosted[window];
  		if (!entry.id) {
  			entry.id=xcb_generate_id(connection);
-@@ -893,7 +935,8 @@ struct XcbPresentation::State {
+@@ -893,7 +964,8 @@ struct XcbPresentation::State {
  		release_constraint();
  		const auto found=windows.find(handle);
  		if (rectangle && found!=windows.end() && !found->second->is_popup && found->second->id) {
@@ -660,11 +702,11 @@ index 684ba7e..77f1aa6 100644
  			// A rectangle of a point or two holds the pointer still: raw motion keeps being reported.
  			const bool locked=value[2]-value[0]<=2 && value[3]-value[1]<=2;
  			confinement=xcb_generate_id(connection);
-@@ -1021,6 +1064,7 @@ DesktopPresentation XcbPresentation::callbacks()
+@@ -1021,6 +1093,7 @@ DesktopPresentation XcbPresentation::callbacks()
  	result.platform=HostPlatform::xcb;
  	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
  	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
-+	result.frame_insets=[this](std::function<std::array<int32_t,4>(uint64_t)> provider) { state->insets_provider=std::move(provider); };
++	result.frame_insets=[this](std::function<std::array<int32_t,5>(uint64_t)> provider) { state->insets_provider=std::move(provider); };
  	return result;
  }
  

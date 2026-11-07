@@ -341,5 +341,6 @@ wizard (language dialog OK, license radio button, Next, with the bar and correct
 An earlier image crashed the whole desktop session on the click on OK of the Inno language dialog in this mode (twice); an image built after the
 title-bar session's CloakServer commits (b2c0498, with a crash log in /var/log/cloakserver-crash.log) did not, in two tries, and the log stayed
 empty. Cause of the earlier crash not found; if it comes back, `RAVEN_FRAME=raven` avoids it and the crash log shows where CloakServer died.
-Not done: dialogs and fixed-size windows should hide the zoom light (`_CLOKE_TITLEBAR` bit 5 of [4], and min=max size hints), tool windows,
-minimize reporting; the zoom/unzoom test program vanished in two of five tries before (no error), not seen since.
+Buttons: Raven sets `_CLOKE_TITLEBAR` from the window style (no WS_SYSMENU greys the close light, no WS_MINIMIZEBOX the minimize light, no
+WS_MAXIMIZEBOX the zoom light) and gives a window without WS_THICKFRAME equal minimum and maximum size hints (no resizing, no zoom). Checked
+with the Inno Setup language dialog: only the close light is active. Not done: tool windows (a small bar), minimize reporting; the zoom/unzoom test program vanished in two of five tries before (no error), not seen since.
