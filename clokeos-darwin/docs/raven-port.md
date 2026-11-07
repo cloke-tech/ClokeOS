@@ -273,3 +273,11 @@ format: the bitmap's own colours when it has that depth, else the grey ramp (as 
 PayPal "Donate" and "Subscribe" show in the Welcome dialog. The earlier changes of this section (`SelectPalette` keeps the palette,
 `RealizePalette` copies it into a selected indexed section, the colour table in the format query) stay: they are what Windows does.
 Still open: the `?` for the em dashes in the Compil32 title.
+
+### Dashes and quotes in titles and menus (2026-11-07)
+
+The `?` in `Untitled — Inno Setup Compiler` came from the frame's text drawing (canvas.h `draw_text`): with a width limit (caption and
+menu labels have one) it took the fast path whose `printable()` replaces every character outside Latin, Greek and Latin Extended
+Additional with `?`, and only an unlimited line used the fallback faces. A 32-bit test program (title with U+2014 and U+2013) showed
+it; the text was intact in the window (`GetWindowTextW` returned it). Text with such characters now takes the fallback faces
+whatever the limit and is shortened with an ellipsis when it is wider than the limit. Checked: the test title and the Compil32 title.

@@ -215,6 +215,30 @@ index d3abdc2..da2c67f 100644
  	}
  	const bool breakpoint = signal == SIGTRAP && (info.si_code == TRAP_BRKPT || info.si_code == SI_KERNEL);
  	if (breakpoint && registers.rip == (x86 ? state->return_gate : child.gate) + 1) {
+diff --git a/native/desktop/canvas.h b/native/desktop/canvas.h
+index 588d950..35e40a8 100644
+--- a/native/desktop/canvas.h
++++ b/native/desktop/canvas.h
+@@ -164,9 +164,16 @@ inline int32_t draw_text(TextRenderer &renderer, Canvas &canvas, std::u16string_
+ 	std::optional<size_t> underline = std::nullopt, int32_t limit = INT32_MAX)
+ {
+ 	const auto font = interface_font();
+-	if (needs_fallback(text) && limit == INT32_MAX) {
+-		const std::vector<uint16_t> units(text.begin(), text.end());
+-		const auto width = text_width(renderer, text);
++	if (needs_fallback(text)) {
++		// Characters the interface face lacks (dashes, quotes) take the fallback faces; a limit shortens the text with an ellipsis.
++		std::u16string shown(text);
++		if (limit != INT32_MAX && text_width(renderer, shown) > limit) {
++			while (shown.size() > 1 && text_width(renderer, shown + u"...") > limit)
++				shown.pop_back();
++			shown += u"...";
++		}
++		const std::vector<uint16_t> units(shown.begin(), shown.end());
++		const auto width = text_width(renderer, shown);
+ 		const auto metrics = renderer.logical_metrics(font);
+ 		const uint32_t box_width = uint32_t(width + 2), box_height = uint32_t(metrics.height);
+ 		const auto coverage = renderer.render(font, units, box_width, box_height, 0, 0);
 diff --git a/native/desktop/foreign_surface.cpp b/native/desktop/foreign_surface.cpp
 index 26451b4..2829ba1 100644
 --- a/native/desktop/foreign_surface.cpp
