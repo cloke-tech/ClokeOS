@@ -21,7 +21,7 @@
 
 // Der arm64-Kernel von PureDarwin im VM trägt nur 39 Bit Benutzeradresse (Zugriff ab 2^39 hängt, mmap geht): Fenster [2^38, 2^39)
 static uint64_t DELTA, RESERVE;  // Fenster für den Gastspeicher, in reserve_guest gewählt
-#define CODE_SIZE (48u << 20)
+#define CODE_SIZE (120u << 20)   // direkte Sprünge (b) reichen +-128 MiB
 #define MAXI 48
 #define T0 22
 #define T1 23
@@ -32,7 +32,7 @@ static uint64_t DELTA, RESERVE;  // Fenster für den Gastspeicher, in reserve_gu
 static uint32_t *cp, *code_base, *code_end, *code_blocks;
 static JitCtx *gctx;
 static uint32_t *g_enter, *g_E1, *g_E2, *g_M, *g_Mi, *g_MP;
-static uint64_t st_blocks, st_insns, st_fb;
+static uint64_t st_blocks, st_insns, st_fb, st_retry, st_open, st_flush, st_miss;
 static int trace_jit;
 
 // ------------------------------------------------------------------------------------------------ Emitter
@@ -146,6 +146,10 @@ static uint8_t *guest_reserved;
 #define GP_NONE 0xff
 static uint8_t *gprot;
 static uint32_t *cflushes;   // Zähler je Hostseite: wie oft sie wegen Schreibzugriff entwertet wurde
+static uint16_t *bcnt;       // harmlose Schreibfehler je Codeseite; ab SMC_BENIGN_MAX wird die Seite nicht mehr überwacht (gemischte Code-/Datenseite)
+#define SMC_BENIGN_MAX 24
+static uint8_t *nosmc;
+static uint64_t *blist; static uint32_t nbl, cbl;   // Seiten, für die es eine Bitkarte gibt
 static uint8_t **cbits;      // je Codeseite eine Bitkarte (ein Bit je Byte der Hostseite) der übersetzten Quellbytes
 static uint64_t unprot[64]; static int nunprot;   // Codeseiten, die nach einem harmlosen Schreibzugriff vorübergehend offen sind
 static uint64_t code_lo, code_hi;
@@ -161,7 +165,7 @@ static int reserve_guest(void) {
 			if (p == MAP_FAILED) continue;
 			if ((uint64_t)p + n > top) { munmap(p, n); continue; }
 			guest_reserved = p; DELTA = (uint64_t)p; RESERVE = n;
-				gprot = malloc(n >> 12); memset(gprot, GP_NONE, n >> 12); cflushes = calloc(n >> 14, 4); cbits = calloc(n >> 14, sizeof(void *));
+				gprot = malloc(n >> 12); memset(gprot, GP_NONE, n >> 12); cflushes = calloc(n >> 14, 4); cbits = calloc(n >> 14, sizeof(void *)); bcnt = calloc(n >> 14, 2); nosmc = calloc(n >> 14, 1);
 			if (getenv("UCRUN_JIT_TRACE")) fprintf(stderr, "jit: Gastfenster %p, %llu GiB\n", p, (unsigned long long)(n >> 30));
 			return 0;
 		}
@@ -201,7 +205,7 @@ static void cset_add(uint64_t pg) {
 static void cbits_set(uint64_t a, uint64_t n) {   // Quellbytes [a, a+n) als übersetzt vermerken
 	while (n) {
 		uint64_t pg = a >> 14, off = a & 16383, k = 16384 - off < n ? 16384 - off : n;
-		if (!cbits[pg]) cbits[pg] = calloc(2048, 1);
+		if (!cbits[pg]) { cbits[pg] = calloc(2048, 1); if (nbl == cbl) { cbl = cbl ? cbl * 2 : 256; blist = realloc(blist, cbl * 8); } blist[nbl++] = pg; }
 		for (uint64_t i = off; i < off + k; i++) cbits[pg][i >> 3] |= 1 << (i & 7);
 		a += k; n -= k;
 	}
@@ -214,8 +218,8 @@ static int cbits_hit(uint64_t pg, uint64_t off, uint64_t n) {   // sind Bytes [o
 static int keep_open;   // gerade wird ein Befehl nach einem harmlosen Schreibfehler wiederholt: die Seiten noch nicht wieder schützen
 static void reprotect_open(void) { if (keep_open) return; for (int i = 0; i < nunprot; i++) host_apply(unprot[i]); nunprot = 0; }
 static void cset_clear(void) {   // alle Codeseiten wieder normal schützen
-	for (uint32_t i = 0; i < cset_cap; i++) if (cset[i] && cset[i] != ~0ULL) { free(cbits[cset[i] - 1]); cbits[cset[i] - 1] = 0; }
-	nunprot = 0;
+	for (uint32_t i = 0; i < nbl; i++) { free(cbits[blist[i]]); cbits[blist[i]] = 0; }
+	nbl = 0; nunprot = 0;
 	for (uint32_t i = 0; i < cset_cap; i++) if (cset[i]) { uint64_t pg = cset[i] - 1; int tomb = cset[i] == ~0ULL; cset[i] = 0; if (!tomb) host_apply(pg); }
 	cset_n = 0;
 }
@@ -316,7 +320,10 @@ static int smc_fault(uint64_t addr) {
 		for (int i = 0; i < 4; i++) { uint8_t v = gprot[pg * 4 + i]; if (v != GP_NONE) { mapped = 1; any |= v; } }
 		int prot = PROT_NONE; if (mapped) { if (any & (PROT_READ | PROT_EXEC)) prot |= PROT_READ; if (any & PROT_WRITE) prot |= PROT_READ | PROT_WRITE; }
 		mprotect((void *)(DELTA + pg * HPAGE), HPAGE, prot);
-		unprot[nunprot++] = pg;
+		if (++bcnt[pg] > SMC_BENIGN_MAX) {   // gemischte Seite: Überwachung aufgeben (selbstveränderter Code genau dort würde nicht mehr erkannt)
+			nosmc[pg] = 1;
+			for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (cset[h] == pg + 1) { cset[h] = ~0ULL; break; }
+		} else unprot[nunprot++] = pg;
 		return 2;
 	}
 	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (cset[h] == pg + 1) { cset[h] = ~0ULL; break; }   // Grabstein: Suche geht weiter, Eintrag zählt nicht mehr
@@ -923,7 +930,7 @@ static int gen_string(Insn *I) {
 typedef struct { uint64_t pc; uint32_t off; uint8_t fs, len; } IMap;
 typedef struct { uint64_t pc; uint32_t *code; int nf; uint32_t ep; } Blk;   // ep: Gültigkeitsrunde (jit_flush erhöht sie, ohne die Tabelle zu leeren)
 static uint32_t cur_ep = 1;
-#define BTAB (1u << 16)
+#define BTAB (1u << 18)
 static Blk btab[BTAB]; static int nblk;
 typedef struct { uint32_t *start; uint32_t i0, i1; } BRange;
 static BRange *branges; static uint32_t nbr, cbr; static IMap *imap; static uint32_t nim, cim;
@@ -942,7 +949,7 @@ static Blk *blk_add(uint64_t pc, uint32_t *code, int nf) {
 }
 
 void jit_flush(void) {
-	cset_clear(); smc_pending = 0;
+	cset_clear(); smc_pending = 0; st_flush++;
 	code_lo = ~0ULL; code_hi = 0; jit_flush_epoch++; cur_ep++; nblk = 0; cp = code_blocks; nbr = nim = 0; flushed = 1;
 	if (gctx) memset((void *)gctx->jcache, 0, 4096 * 16);
 }
@@ -956,7 +963,7 @@ static void safe_decode(uint64_t pc, Insn *I) {
 	in_decode = 0;
 }
 static Blk *translate(uint64_t pc) {
-	if (cp + 16384 > code_end || nblk > 40000) jit_flush();
+	if (cp + 16384 > code_end || nblk > 180000) jit_flush();
 	reprotect_open();
 	pthread_jit_write_protect_np(0);
 	static Insn ins[MAXI + 2]; int n = 0; uint64_t cur = pc; int follows = 0, term = 0;
@@ -1000,7 +1007,7 @@ static Blk *translate(uint64_t pc) {
 	for (int i = 0; i < n; i++) {   // Seiten, aus denen übersetzt wird, gegen Schreiben schützen (selbstverändernder Code)
 		Insn *I = &ins[i]; if (I->len <= 0) continue;
 		for (uint64_t pg = I->pc >> 14; pg <= (I->pc + I->len - 1) >> 14; pg++)
-			if (pg < (RESERVE >> 14) && !cset_has(pg) && cflushes[pg] < SMC_MAX_FLUSHES && gprot[pg * 4] != GP_NONE) { cset_add(pg); host_apply(pg); }
+			if (pg < (RESERVE >> 14) && !cset_has(pg) && cflushes[pg] < SMC_MAX_FLUSHES && !nosmc[pg] && gprot[pg * 4] != GP_NONE) { cset_add(pg); host_apply(pg); }
 		if (I->pc + I->len <= RESERVE && cset_has(I->pc >> 14)) cbits_set(I->pc, I->len);
 	}
 	if (nbr == cbr) { cbr = cbr ? cbr * 2 : 4096; branges = realloc(branges, cbr * sizeof *branges); }
@@ -1189,8 +1196,8 @@ int jit_run(JitCtx *c) {
 	pthread_jit_write_protect_np(1);
 	for (;;) {
 		((enter_fn)(void *)g_enter)(c, b->code);
-		if (c->status == JIT_RETRY_OPEN) { keep_open = 1; b = translate(c->rip); keep_open = 0; pthread_jit_write_protect_np(1); continue; }   // harmloser Schreibzugriff auf eine Codeseite: Befehl wiederholen
-		if (c->status == JIT_RETRY) { jit_flush(); b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }   // Schreibzugriff auf Codeseite: alles entwerten, neu übersetzen
+		if (c->status == JIT_RETRY_OPEN) { st_open++; keep_open = 1; b = translate(c->rip); keep_open = 0; pthread_jit_write_protect_np(1); continue; }   // harmloser Schreibzugriff auf eine Codeseite: Befehl wiederholen
+		if (c->status == JIT_RETRY) { st_retry++; jit_flush(); b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }   // Schreibzugriff auf Codeseite: alles entwerten, neu übersetzen
 		if (c->status != JIT_MISS) return (int)c->status;
 		uint64_t pc = c->next_pc; uint32_t *site = (uint32_t *)c->exit_site;
 		flushed = 0;
@@ -1199,8 +1206,18 @@ int jit_run(JitCtx *c) {
 		else if (!site) { uint64_t *e = (uint64_t *)c->jcache + 2 * (pc & 4095); e[0] = pc; e[1] = (uint64_t)b->code; }
 	}
 }
-void jit_invalidate(uint64_t g, uint64_t n) { if (code_hi && g < code_hi && g + n > code_lo) jit_flush(); }
+// Übersetzter Code aus [g, g+n) ungültig (Speicher freigegeben/überschrieben): nur entwerten, wenn dort wirklich übersetzte Bytes liegen
+void jit_invalidate(uint64_t g, uint64_t n) {
+	if (!code_hi || g >= code_hi || g + n <= code_lo) return;
+	for (uint32_t i = 0; i < nbl; i++) {
+		uint64_t pg = blist[i], a = pg << 14, e = a + 16384;
+		if (e <= g || a >= g + n) continue;
+		uint64_t from = g > a ? g : a, to = g + n < e ? g + n : e;
+		if (cbits_hit(pg, from - a, to - from)) { jit_flush(); return; }
+	}
+}
 void jit_stats(uint64_t *blocks, uint64_t *insns, uint64_t *fbs) { *blocks = st_blocks; *insns = st_insns; *fbs = st_fb; }
+void jit_stats2(uint64_t out[4]) { out[0] = st_retry; out[1] = st_open; out[2] = st_flush; out[3] = st_miss; }
 
 uint64_t jit_eflags_of(const JitCtx *c) {
 	if (c->expl) return c->eflags;

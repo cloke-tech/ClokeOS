@@ -65,6 +65,7 @@ void jit_invalidate(uint64_t g, uint64_t n);      // übersetzte Blöcke verwerf
 int jit_run(JitCtx *c);                           // läuft ab c->rip bis zu einem Ereignis (JIT_SYSCALL/FALLBACK/PENDING/FAULT)
 void jit_flush(void);                             // alle übersetzten Blöcke verwerfen (Code im Gast geändert/entladen)
 void jit_stats(uint64_t *blocks, uint64_t *translated_insns, uint64_t *fallbacks);
+void jit_stats2(uint64_t out[4]);                 // Entwertungen durch Schreibzugriffe auf Code, harmlose Schreibfehler auf Codeseiten, Leerungen
 // Hilfen für den Unicorn-Abgleich
 uint64_t jit_eflags_of(const JitCtx *c);          // eflags aus nzcv/eflags zusammensetzen
 void jit_set_eflags(JitCtx *c, uint64_t ef);      // eflags von Unicorn übernehmen

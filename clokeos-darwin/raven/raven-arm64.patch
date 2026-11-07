@@ -313,10 +313,10 @@ index 54d58db..cfa9893 100644
  print('patched uncaught_exceptions at', hex(offset))
 diff --git a/native/platform/unicorn_guest.cpp b/native/platform/unicorn_guest.cpp
 new file mode 100644
-index 0000000..1da33f1
+index 0000000..52420fd
 --- /dev/null
 +++ b/native/platform/unicorn_guest.cpp
-@@ -0,0 +1,1201 @@
+@@ -0,0 +1,1205 @@
 +// ClokeOS arm64: guest-process control with Unicorn, see mach_guest.h
 +// Raven drives its x86-64 guest with ptrace-like calls (cpu/native_cpu.cpp). On x86_64 hosts the guest is a real process; on arm64
 +// there is no x86 code to run natively, so the guest lives in a Unicorn engine inside this process and the same calls are answered
@@ -384,6 +384,10 @@ index 0000000..1da33f1
 +					std::fprintf(stderr, "\n");
 +				}
 +			}
++			uint64_t more[4] = {};
++			jit_stats2(more);
++			if (blocks)
++				std::fprintf(stderr, "raven: JIT code invalidations %llu, harmless code-page writes %llu, flushes %llu\n", (unsigned long long)more[0], (unsigned long long)more[1], (unsigned long long)more[2]);
 +			if (blocks)
 +				std::fprintf(stderr, "raven: JIT %llu blocks, %llu instructions translated, %llu fallbacks to Unicorn (%lu runs)\n", (unsigned long long)blocks,
 +					(unsigned long long)insns, (unsigned long long)fallbacks, jit_nfb);
