@@ -143,6 +143,10 @@ static void ldst(int load, int size, int sx /*0 / 1 nach x / 2 nach w*/, int rt,
 
 // ------------------------------------------------------------------------------------------------ Gastspeicher
 static uint8_t *guest_reserved;
+#define GP_NONE 0xff
+static uint8_t *gprot;
+static uint32_t *cflushes;   // Zähler je Hostseite: wie oft sie wegen Schreibzugriff entwertet wurde
+static uint64_t code_lo, code_hi;
 static int reserve_guest(void) {
 	if (guest_reserved) return 0;
 	// Das Fenster muss ganz unter 2^39 liegen: der arm64-Kernel von PureDarwin im VM trägt nur 39 Bit Benutzeradresse (mmap darüber geht,
@@ -155,6 +159,7 @@ static int reserve_guest(void) {
 			if (p == MAP_FAILED) continue;
 			if ((uint64_t)p + n > top) { munmap(p, n); continue; }
 			guest_reserved = p; DELTA = (uint64_t)p; RESERVE = n;
+				gprot = malloc(n >> 12); memset(gprot, GP_NONE, n >> 12); cflushes = calloc(n >> 14, 4);
 			if (getenv("UCRUN_JIT_TRACE")) fprintf(stderr, "jit: Gastfenster %p, %llu GiB\n", p, (unsigned long long)(n >> 30));
 			return 0;
 		}
@@ -162,28 +167,129 @@ static int reserve_guest(void) {
 	return -1;
 }
 uint64_t jit_guest_limit(void) { return reserve_guest() ? 0 : RESERVE; }
+uint64_t jit_guest_delta(void) { return guest_reserved ? DELTA : 0; }
+
+// Schutz je 4-KiB-Gastseite (gprot: GP_NONE = nicht abgebildet, sonst Bits PROT_READ|PROT_WRITE|PROT_EXEC des Gastes). Der Host hat 16-KiB-Seiten:
+// der Host-Schutz einer Seite ist die Vereinigung der vier Gastseiten (es gibt keine Fehler für Gastseiten, die nur Teil einer offenen
+// Hostseite sind). Seiten, aus denen übersetzt wurde, sind zusätzlich schreibgeschützt (Erkennung von selbstveränderndem Code).
+#define HPAGE 16384ULL
+static uint64_t *cset; static uint32_t cset_n, cset_cap;   // Codeseiten (Hostseiten-Nummer = Gastadresse >> 14), offene Adressierung, 0 = frei (Seite 0 gibt es nicht)
+static volatile int smc_pending;
+#define SMC_MAX_FLUSHES 400
+static int cset_has(uint64_t pg) {
+	if (!cset_cap) return 0;
+	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) { if (!cset[h]) return 0; if (cset[h] == pg + 1) return 1; }
+}
+static void host_apply(uint64_t pg) {   // Host-Schutz der Hostseite pg aus gprot (und Codeschutz) setzen
+	uint8_t any = 0, mapped = 0;
+	for (int i = 0; i < 4; i++) { uint8_t v = gprot[pg * 4 + i]; if (v != GP_NONE) { mapped = 1; any |= v; } }
+	int prot = PROT_NONE;
+	if (mapped) { if (any & (PROT_READ | PROT_EXEC)) prot |= PROT_READ; if (any & PROT_WRITE) prot |= PROT_READ | PROT_WRITE; }
+	if (cset_has(pg) && !(prot == PROT_NONE)) prot &= ~PROT_WRITE;
+	mprotect((void *)(DELTA + pg * HPAGE), HPAGE, prot);
+}
+static void cset_add(uint64_t pg) {
+	if (cset_n * 2 >= cset_cap) {
+		uint32_t nc = cset_cap ? cset_cap * 2 : 1024; uint64_t *n = calloc(nc, 8);
+		for (uint32_t i = 0; i < cset_cap; i++) if (cset[i] && cset[i] != ~0ULL) { uint64_t q = cset[i] - 1; for (uint32_t h = (uint32_t)(q * 0x9E3779B97F4A7C15ULL >> 40) & (nc - 1);; h = (h + 1) & (nc - 1)) if (!n[h]) { n[h] = q + 1; break; } }
+		free(cset); cset = n; cset_cap = nc;
+	}
+	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (!cset[h]) { cset[h] = pg + 1; cset_n++; break; }
+}
+static void cset_clear(void) {   // alle Codeseiten wieder normal schützen
+	for (uint32_t i = 0; i < cset_cap; i++) if (cset[i]) { uint64_t pg = cset[i] - 1; int tomb = cset[i] == ~0ULL; cset[i] = 0; if (!tomb) host_apply(pg); }
+	cset_n = 0;
+}
+static int guest_range_ok(uint64_t g, uint64_t n) { return n && g + n >= g && g + n <= RESERVE; }
+
+// anonymer Speicher [g, g+n) mit Gastschutz prot; Inhalt Null
+int jit_guest_map(uint64_t g, uint64_t n, int prot) {
+	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
+	// Hostseiten am Rand, in denen schon Nachbarseiten abgebildet sind: neu abgebildete Teile nullen
+	uint64_t h0 = p0 >> 2, h1 = (p1 - 1) >> 2;
+	uint64_t zero_lo = ~0ULL, zero_hi = 0;
+	for (uint64_t h = h0; h <= h1; h++) {
+		int had = 0; for (int i = 0; i < 4; i++) if (gprot[h * 4 + i] != GP_NONE) had = 1;
+		if (had) { uint64_t a = h * 4 > p0 ? h * 4 : p0, b = h * 4 + 4 < p1 ? h * 4 + 4 : p1; (void)a; (void)b; if (h == h0 || h == h1) { if (zero_lo == ~0ULL) zero_lo = h; zero_hi = h; } }
+	}
+	for (uint64_t q = p0; q < p1; q++) gprot[q] = (uint8_t)prot;
+	for (uint64_t h = h0; h <= h1; h++) host_apply(h);
+	// bereits benutzbare Randseiten: Inhalt der neuen Gastseiten löschen (frische Hostseiten sind schon Null)
+	if (zero_lo != ~0ULL) {
+		uint64_t a = g, e = g + n;
+		for (uint64_t h = zero_lo; h <= zero_hi; h++) {
+			if (h != h0 && h != h1) continue;
+			uint64_t ha = h * HPAGE, he = ha + HPAGE, x0 = a > ha ? a : ha, x1 = e < he ? e : he;
+			if (x1 > x0 && (prot & PROT_WRITE)) memset((void *)(DELTA + x0), 0, x1 - x0);
+		}
+	}
+	return 0;
+}
+// Teil einer Datei/eines gemeinsamen Speicherobjekts: ganze Hostseiten, g und off auf 16 KiB gleich ausgerichtet
+int jit_guest_map_fd(uint64_t g, uint64_t n, int prot, int fd, uint64_t off) {
+	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	if ((g & (HPAGE - 1)) != (off & (HPAGE - 1))) return -2;
+	uint64_t hs = (g + DELTA) & ~(HPAGE - 1), he = (g + DELTA + n + HPAGE - 1) & ~(HPAGE - 1);
+	uint64_t o = off - (g & (HPAGE - 1));
+	if (mmap((void *)hs, he - hs, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, fd, (off_t)o) == MAP_FAILED) return -3;
+	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
+	for (uint64_t q = p0; q < p1; q++) gprot[q] = (uint8_t)prot;
+	for (uint64_t h = p0 >> 2; h <= (p1 - 1) >> 2; h++) host_apply(h);
+	return 0;
+}
+void jit_guest_unmap(uint64_t g, uint64_t n) {
+	if (!guest_reserved || !guest_range_ok(g, n)) return;
+	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
+	for (uint64_t q = p0; q < p1; q++) gprot[q] = GP_NONE;
+	for (uint64_t h = p0 >> 2; h <= (p1 - 1) >> 2; h++) {
+		int any = 0; for (int i = 0; i < 4; i++) if (gprot[h * 4 + i] != GP_NONE) any = 1;
+		if (!any) { if (cset_has(h)) { /* bleibt im Satz, bis geleert */ } mmap((void *)(DELTA + h * HPAGE), HPAGE, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE, -1, 0); }
+		else {   // Teil der Hostseite bleibt: den abgegebenen Teil nullen (Seite ist ohnehin schreibbar oder nicht benutzt)
+			host_apply(h);
+		}
+	}
+	if (code_hi) jit_invalidate(g, n);
+}
+int jit_guest_protect(uint64_t g, uint64_t n, int prot) {
+	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
+	for (uint64_t q = p0; q < p1; q++) if (gprot[q] != GP_NONE) gprot[q] = (uint8_t)prot;
+	for (uint64_t h = p0 >> 2; h <= (p1 - 1) >> 2; h++) host_apply(h);
+	return 0;
+}
+int jit_guest_prot(uint64_t g) { return reserve_guest() || g >= RESERVE ? GP_NONE : gprot[g >> 12]; }
+// Host-Zugriff (Raven liest/schreibt Gastspeicher): 0 wenn alle Seiten abgebildet (nicht PROT_NONE)
+int jit_guest_access(uint64_t g, uint64_t n) {
+	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	for (uint64_t q = g >> 12; q < (g + n + 4095) >> 12; q++) if (gprot[q] == GP_NONE || gprot[q] == 0) return -1;
+	return 0;
+}
+// Altschnittstelle (ucrun): lesbar+schreibbar, genullt
 uint8_t *jit_guest_alloc(uint64_t g, uint64_t n) {
-	if (reserve_guest() || g + n > RESERVE) return 0;
-	uint64_t hs = (g + DELTA) & ~16383ULL, he = (g + DELTA + n + 16383) & ~16383ULL;
-	if (mprotect((void *)hs, he - hs, PROT_READ | PROT_WRITE)) return 0;
+	if (jit_guest_map(g & ~4095ULL, ((g + n + 4095) & ~4095ULL) - (g & ~4095ULL), PROT_READ | PROT_WRITE)) return 0;
 	return (uint8_t *)(g + DELTA);
 }
-void jit_guest_free(uint64_t g, uint64_t n) {
-	if (!guest_reserved || !n) return;
-	uint64_t hs = g + DELTA, he = hs + n, fs_ = (hs + 16383) & ~16383ULL, fe = he & ~16383ULL;
-	if (fs_ < fe) {
-		if (hs < fs_) memset((void *)hs, 0, fs_ - hs);
-		if (he > fe) memset((void *)fe, 0, he - fe);
-		mmap((void *)fs_, fe - fs_, PROT_NONE, MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_NORESERVE, -1, 0);
-	} else if ((hs & ~16383ULL) == ((he - 1) & ~16383ULL) || 1) {
-		memset((void *)hs, 0, n);  // Teil einer Host-Seite: Inhalt nullen, Seite bleibt offen
-	}
+void jit_guest_free(uint64_t g, uint64_t n) { jit_guest_unmap(g & ~4095ULL, ((g + n + 4095) & ~4095ULL) - (g & ~4095ULL)); }
+// Wird von der Fehlerbehandlung benutzt: gehört die Adresse zu einer Codeseite? Dann Schutz aufheben und Entwertung vormerken.
+static int smc_fault(uint64_t addr) {
+	if (!guest_reserved || addr < DELTA || addr >= DELTA + RESERVE) return 0;
+	uint64_t pg = (addr - DELTA) >> 14;
+	if (!cset_has(pg)) return 0;
+	for (uint32_t h = (uint32_t)(pg * 0x9E3779B97F4A7C15ULL >> 40) & (cset_cap - 1);; h = (h + 1) & (cset_cap - 1)) if (cset[h] == pg + 1) { cset[h] = ~0ULL; break; }   // Grabstein: Suche geht weiter, Eintrag zählt nicht mehr
+	uint8_t any = 0, mapped = 0;
+	for (int i = 0; i < 4; i++) { uint8_t v = gprot[pg * 4 + i]; if (v != GP_NONE) { mapped = 1; any |= v; } }
+	int prot = PROT_NONE; if (mapped) { if (any & (PROT_READ | PROT_EXEC)) prot |= PROT_READ; if (any & PROT_WRITE) prot |= PROT_READ | PROT_WRITE; }
+	mprotect((void *)(DELTA + pg * HPAGE), HPAGE, prot);
+	if (cflushes && cflushes[pg] < 0xffffffffu) cflushes[pg]++;
+	smc_pending = 1;
+	return 1;
 }
 
 // ------------------------------------------------------------------------------------------------ Decoder
 enum { OP_FB, OP_NOP, OP_MOV, OP_LEA, OP_ALU, OP_INC, OP_DEC, OP_NEG, OP_NOT, OP_MUL1, OP_IMUL1, OP_DIV, OP_IDIV, OP_IMUL2,
        OP_SHIFT, OP_PUSH, OP_POP, OP_CALL, OP_CALLI, OP_RET, OP_JMP, OP_JMPI, OP_JCC, OP_SETCC, OP_CMOV, OP_MOVZX, OP_MOVSX,
-       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE };
+       OP_MOVSXD, OP_CDQ, OP_CWDE, OP_XCHG, OP_STRING, OP_SYSCALL, OP_LEAVE, OP_BSWAP, OP_SSE, OP_INT3, OP_UD2 };
 typedef struct { uint8_t k, n, hi; } Opd;  // k: 0 -, 1 Register, 2 Speicher, 3 Immediate
 typedef struct {
 	int op, sz, ssz, cc, alu, len, rep, count, live, cl, imm3, strop, branchy, followed;
@@ -270,6 +376,7 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 	if (op == 0x0f) {
 		uint8_t o2 = p[i++];
 		if (o2 == 0x05) { I->op = OP_SYSCALL; I->len = i; return; }
+		if (o2 == 0x0b) { I->op = OP_UD2; I->len = i; return; }
 		if (o2 == 0x1f) { MODRM(osz); I->op = OP_NOP; I->len = i; return; }
 		if (o2 == 0x1e && rep == 1 && p[i] == 0xfa) { I->op = OP_NOP; I->len = i + 1; return; }  // endbr64
 		if (o2 >= 0x80 && o2 <= 0x8f) { int cc = o2 & 15; int64_t d = rd32(p + i); i += 4; I->op = OP_JCC; I->cc = cc; I->len = i; I->target = pc + i + d; return; }
@@ -279,8 +386,10 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 		if (o2 == 0xb6 || o2 == 0xb7 || o2 == 0xbe || o2 == 0xbf) { int ss = (o2 & 1) ? 2 : 1; MODRM(ss); I->op = (o2 < 0xb8) ? OP_MOVZX : OP_MOVSX; I->sz = osz; I->ssz = ss; I->d = mkreg(regf, osz, rex); I->s = rmo; I->len = i; return; }
 		if (o2 >= 0xc8 && o2 <= 0xcf) { if (osz == 2) FAIL; I->op = OP_BSWAP; I->sz = osz; I->d = mkreg((o2 & 7) | B, osz, rex); I->len = i; return; }
 		{
-			int sop, arg, fl, msz, fmt, pfx = rep == 1 ? 0xf3 : rep == 2 ? 0xf2 : opsz16 ? 0x66 : 0;
-			if (sse_class(o2, pfx, &sop, &arg, &fl, &msz, &fmt)) {
+			int sop, arg, fl, msz, fmt, pfx = rep == 1 ? 0xf3 : rep == 2 ? 0xf2 : opsz16 ? 0x66 : 0, ok = 0;
+			if (o2 == 0x38 || o2 == 0x3a) { int o3 = p[i++]; ok = sse_class2(o2 == 0x38 ? 1 : 2, o3, pfx, &sop, &arg, &fl, &msz, &fmt); if (ok && sop == S_PEXTR) { if (arg == 2 && W) arg = 3; } if (ok && sop == S_PINSR && arg == 2 && W) arg = 3; }
+			else ok = sse_class(o2, pfx, &sop, &arg, &fl, &msz, &fmt);
+			if (ok) {
 				if (sop == S_CVT && arg == CV_I2F) msz = W ? 8 : 4;
 				MODRM(16);
 				if (rmo.k == 1 && pfx == 0 && o2 == 0x12) sop = S_MOVHLPS; else if (rmo.k == 1 && pfx == 0 && o2 == 0x16) sop = S_MOVLHPS;
@@ -350,6 +459,7 @@ static void decode(const uint8_t *p, uint64_t pc, Insn *I) {
 	case 0xc2: case 0xc3: I->op = OP_RET; I->len = i; if (op == 0xc2) { uint16_t v; memcpy(&v, p + i, 2); I->imm = v; I->len += 2; } return;
 	case 0xc6: case 0xc7: { int s8 = op == 0xc6 ? 1 : osz; MODRM(s8); if ((regf & 7) != 0) FAIL; I->op = OP_MOV; I->sz = s8; I->d = rmo; I->s.k = 3; I->imm = s8 == 1 ? IMM8 : IMMZ(osz); I->len = i; return; }
 	case 0xc9: I->op = OP_LEAVE; I->len = i; return;
+	case 0xcc: I->op = OP_INT3; I->len = i; return;
 	case 0xe8: { int64_t d = rd32(p + i); i += 4; I->op = OP_CALL; I->len = i; I->target = pc + i + d; return; }
 	case 0xe9: { int64_t d = rd32(p + i); i += 4; I->op = OP_JMP; I->len = i; I->target = pc + i + d; return; }
 	case 0xeb: { int64_t d = (int8_t)p[i++]; I->op = OP_JMP; I->len = i; I->target = pc + i + d; return; }
@@ -760,7 +870,7 @@ static Blk btab[BTAB]; static int nblk;
 typedef struct { uint32_t *start; uint32_t i0, i1; } BRange;
 static BRange *branges; static uint32_t nbr, cbr; static IMap *imap; static uint32_t nim, cim;
 static int flushed;
-static uint64_t code_lo = ~0ULL, code_hi;
+static uint64_t code_lo = ~0ULL;
 uint64_t jit_flush_epoch;
 
 static Blk *blk_lookup(uint64_t pc) {
@@ -774,6 +884,7 @@ static Blk *blk_add(uint64_t pc, uint32_t *code, int nf) {
 }
 
 void jit_flush(void) {
+	cset_clear(); smc_pending = 0;
 	code_lo = ~0ULL; code_hi = 0; jit_flush_epoch++; memset(btab, 0, sizeof btab); nblk = 0; cp = code_blocks; nbr = nim = 0; flushed = 1;
 	if (gctx) memset((void *)gctx->jcache, 0, 4096 * 16);
 }
@@ -807,7 +918,7 @@ static Blk *translate(uint64_t pc) {
 		}
 		n++; cur += I->len;
 		if (I->op == OP_JMP && follows < 4 && n < MAXI / 2) { cur = I->target; I->followed = 1; follows++; continue; }
-		if (I->op == OP_JMP || I->op == OP_JCC || I->op == OP_CALL || I->op == OP_CALLI || I->op == OP_RET || I->op == OP_JMPI || I->op == OP_SYSCALL) term = 1;
+		if (I->op == OP_JMP || I->op == OP_JCC || I->op == OP_CALL || I->op == OP_CALLI || I->op == OP_RET || I->op == OP_JMPI || I->op == OP_SYSCALL || I->op == OP_INT3 || I->op == OP_UD2) term = 1;
 	}
 	// Flag-Lebendigkeit rückwärts
 	int L = 1;
@@ -826,6 +937,11 @@ static Blk *translate(uint64_t pc) {
 	}
 	cur_live_in = L;
 	if (pc < code_lo) code_lo = pc; if (cur + 16 > code_hi) code_hi = cur + 16; if (pc + 1 > code_hi) code_hi = pc + 1; for (int i = 0; i < n; i++) { if (ins[i].pc < code_lo) code_lo = ins[i].pc; if (ins[i].pc + 16 > code_hi) code_hi = ins[i].pc + 16; }
+	for (int i = 0; i < n; i++) {   // Seiten, aus denen übersetzt wird, gegen Schreiben schützen (selbstverändernder Code)
+		Insn *I = &ins[i]; if (I->len <= 0) continue;
+		for (uint64_t pg = I->pc >> 14; pg <= (I->pc + I->len - 1) >> 14; pg++)
+			if (pg < (RESERVE >> 14) && !cset_has(pg) && cflushes[pg] < SMC_MAX_FLUSHES && gprot[pg * 4] != GP_NONE) { cset_add(pg); host_apply(pg); }
+	}
 	if (nbr == cbr) { cbr = cbr ? cbr * 2 : 4096; branges = realloc(branges, cbr * sizeof *branges); }
 	uint32_t *start = cp; branges[nbr].start = start; branges[nbr].i0 = nim;
 	fs = FS_CTX; nslow = 0; nexs = 0; trunc_ = 0; nlits = 0;
@@ -873,6 +989,8 @@ static Blk *translate(uint64_t pc) {
 		case OP_RET: {
 			Addr a = {4, 20, 0}; ldst(1, 8, 0, 17, a); addsub_i(0, 0, 4, 4, 8 + (uint32_t)I->imm, 1); exit_indirect(fs); ended = 1; break; }
 		case OP_SYSCALL: save_flags(fs, 0); movimm(16, I->pc + I->len); str_ctx(16, C_RIP); exit_status(JIT_SYSCALL); ended = 1; break;
+		case OP_INT3: save_flags(fs, 0); movimm(16, I->pc + I->len); str_ctx(16, C_RIP); exit_status(JIT_INT3); ended = 1; break;
+		case OP_UD2: save_flags(fs, 0); movimm(16, I->pc); str_ctx(16, C_RIP); exit_status(JIT_UD); ended = 1; break;
 		case OP_STRING: gen_string(I); break;
 		default:
 			if (!gen_insn(I)) { exit_fb(I->pc, 1, I->pc + I->len); st_fb++; ended = 1; trunc_ = 1; }
@@ -953,9 +1071,11 @@ static void emit_common(void) {
 }
 
 static void fault_handler(int sig, siginfo_t *si, void *uc_) {
-	ucontext_t *uc = uc_; uint64_t pcv = uc->uc_mcontext->__ss.__pc; if (trace_jit) fprintf(stderr, "jit: Signal %d pc %llx addr %p\n", sig, (unsigned long long)pcv, si->si_addr);
+	ucontext_t *uc = uc_; uint64_t pcv = uc->uc_mcontext->__ss.__pc; int smc = 0; if (trace_jit) fprintf(stderr, "jit: Signal %d pc %llx addr %p\n", sig, (unsigned long long)pcv, si->si_addr);
 	if (in_decode) { in_decode = 0; _longjmp(decode_jb, 1); }
+	smc = smc_fault((uint64_t)si->si_addr);
 	if (!gctx || pcv < (uint64_t)code_blocks || pcv >= (uint64_t)code_end) {
+		if (smc) return;           // Schreibzugriff von Raven/Unicorn auf eine Codeseite: Schutz ist weg, der Befehl läuft nochmal
 		signal(sig, SIG_DFL); return;  // kein JIT-Code: Standardverhalten beim erneuten Fehler
 	}
 	// Block suchen (branges ist nach Adresse sortiert)
@@ -969,7 +1089,7 @@ static void fault_handler(int sig, siginfo_t *si, void *uc_) {
 	if (m->fs == FS_SUB) nz ^= 0x20000000ULL;
 	if (m->fs == FS_FCMP) { uint64_t N = nz >> 31 & 1, Z = nz >> 30 & 1, V = nz >> 28 & 1; nz = (N | V) << 29 | (Z | V) << 30 | V << 8; }
 	if (m->fs != FS_CTX) { gctx->nzcv = nz; gctx->expl = 0; }
-	gctx->rip = m->pc; gctx->fb_end = m->len ? m->pc + m->len : 0; gctx->aux = (uint64_t)si->si_addr; gctx->count = 1; gctx->status = JIT_FAULT;
+	gctx->rip = m->pc; gctx->fb_end = m->len ? m->pc + m->len : 0; gctx->aux = (uint64_t)si->si_addr; gctx->count = 1; gctx->status = smc ? JIT_RETRY : JIT_FAULT;
 	uc->uc_mcontext->__ss.__pc = (uint64_t)g_E2;
 	uc->uc_mcontext->__ss.__x[19] = (uint64_t)gctx;
 }
@@ -1002,10 +1122,12 @@ int jit_init(JitCtx *c) {
 
 int jit_run(JitCtx *c) {
 	typedef uint64_t (*enter_fn)(JitCtx *, void *);
+	if (smc_pending) jit_flush();
 	Blk *b = blk_lookup(c->rip); if (!b) b = translate(c->rip);
 	pthread_jit_write_protect_np(1);
 	for (;;) {
 		((enter_fn)(void *)g_enter)(c, b->code);
+		if (c->status == JIT_RETRY) { jit_flush(); b = translate(c->rip); pthread_jit_write_protect_np(1); continue; }   // Schreibzugriff auf Codeseite: alles entwerten, neu übersetzen
 		if (c->status != JIT_MISS) return (int)c->status;
 		uint64_t pc = c->next_pc; uint32_t *site = (uint32_t *)c->exit_site;
 		flushed = 0;

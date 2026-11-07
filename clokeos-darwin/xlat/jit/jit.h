@@ -10,6 +10,9 @@
 #define JIT_FALLBACK 3  // rip = erster Befehl, den Unicorn ausführen soll; count = Anzahl Befehle
 #define JIT_PENDING 4   // Host-Signal vorgemerkt; rip = Fortsetzung
 #define JIT_FAULT 5     // Host-Zugriffsfehler im Gast-Befehl rip; aux = Adresse
+#define JIT_INT3 6      // int3: rip = Adresse hinter dem Befehl
+#define JIT_UD 7        // ud2: rip = Adresse des Befehls
+#define JIT_RETRY 8     // intern: Schreibzugriff auf eine Codeseite
 
 typedef struct JitCtx {
 	uint64_t r[16];            // 0
@@ -48,6 +51,13 @@ uint64_t jit_guest_limit(void);                   // Gastadressen müssen darunt
 
 int jit_init(JitCtx *c);                          // 0 = ok
 uint8_t *jit_guest_alloc(uint64_t g, uint64_t n); // Host-Speicher für Gastbereich [g, g+n), genullt; 0 bei Fehler
+uint64_t jit_guest_delta(void);                   // Host-Adresse = Gastadresse + delta (0 vor der Reservierung)
+int jit_guest_map(uint64_t g, uint64_t n, int prot);   // anonym, Gastschutz prot (PROT_*), genullt
+int jit_guest_map_fd(uint64_t g, uint64_t n, int prot, int fd, uint64_t off);  // gemeinsames Speicherobjekt; g und off gleich ausgerichtet (16 KiB)
+void jit_guest_unmap(uint64_t g, uint64_t n);
+int jit_guest_protect(uint64_t g, uint64_t n, int prot);
+int jit_guest_prot(uint64_t g);                   // Schutz der Gastseite (255 = nicht abgebildet)
+int jit_guest_access(uint64_t g, uint64_t n);     // 0: Raven darf den Bereich lesen/schreiben
 void jit_guest_free(uint64_t g, uint64_t n);
 void jit_invalidate(uint64_t g, uint64_t n);      // übersetzte Blöcke verwerfen, falls [g, g+n) Code enthielt
 int jit_run(JitCtx *c);                           // läuft ab c->rip bis zu einem Ereignis (JIT_SYSCALL/FALLBACK/PENDING/FAULT)

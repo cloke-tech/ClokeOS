@@ -101,7 +101,7 @@ static int gen_sse(Insn *I) {
 		return 1; }
 	case S_PACK: {
 		int s = vsrc(I, 16);
-		static const uint32_t lo[3] = {0x0E214800, 0x2E212800, 0x0E614800}, hi[3] = {0x4E214800, 0x6E212800, 0x4E614800};
+		static const uint32_t lo[4] = {0x0E214800, 0x2E212800, 0x0E614800, 0x2E612800}, hi[4] = {0x4E214800, 0x6E212800, 0x4E614800, 0x6E612800};
 		E(lo[arg] | d << 5 | 17); E(hi[arg] | s << 5 | 17); vmov(d, 17); return 1; }
 	case S_MOVD: {
 		int w = I->sz == 8;
@@ -230,6 +230,49 @@ static int gen_sse(Insn *I) {
 	case S_PSADBW: {
 		int s = vsrc(I, 16);
 		E(0x6E207400 | s << 16 | d << 5 | 17); E(0x6E202800 | 17 << 5 | 17); E(0x6E602800 | 17 << 5 | 17); E(0x6EA02800 | 17 << 5 | 17); vmov(d, 17); return 1; }
+	case S_PSHUFB: {
+		int s = vsrc(I, 16);
+		E(0x4F04E5E0 | 17); E(0x4E201C00 | 17 << 16 | s << 5 | 17); E(0x4E000000 | 17 << 16 | d << 5 | d); return 1; }   // movi v17.16b,#0x8f; and; tbl
+	case S_PABS: { int s = vsrc(I, 16); E(0x4E20B800 | arg << 22 | s << 5 | d); return 1; }
+	case S_PMOV: {
+		int s = vsrc(I, I->ssz), sg = (arg & 8) != 0, k = arg & 7, u = sg ? 0 : 0x20000000;
+		// Stufen: bw: 8->16 | bd: 8->16->32 | bq: 8->16->32->64 | wd: 16->32 | wq: 16->32->64 | dq: 32->64
+		static const int first[6] = {0, 0, 0, 1, 1, 2}, last[6] = {0, 1, 2, 1, 2, 2};
+		int src = s;
+		static const uint32_t base[3] = {0x0F08A400, 0x0F10A400, 0x0F20A400};
+		for (int st = first[k]; st <= last[k]; st++) { E((base[st] | u) | src << 5 | (st == last[k] ? d : 17)); src = st == last[k] ? d : 17; }
+		return 1; }
+	case S_PALIGNR: {
+		int s = vsrc(I, 16);
+		if (imm < 16) E(0x6E000000 | d << 16 | imm << 11 | s << 5 | d);
+		else if (imm < 32) { vzero(17); E(0x6E000000 | 17 << 16 | (imm - 16) << 11 | d << 5 | d); }
+		else vzero(d);
+		return 1; }
+	case S_ROUND: {
+		int s = vsrc(I, I->ssz), vec = fmt < 2, dbl = fmt & 1, m = (imm & 4) ? 0 : (imm & 3);   // Bit 2: MXCSR (hier immer "nächste gerade")
+		static const uint32_t sc[4][2] = {{0x1E244000, 0x1E644000}, {0x1E254000, 0x1E654000}, {0x1E24C000, 0x1E64C000}, {0x1E25C000, 0x1E65C000}};
+		static const uint32_t vc[4][2] = {{0x4E218800, 0x4E618800}, {0x4E219800, 0x4E619800}, {0x4EA18800, 0x4EE18800}, {0x4EA19800, 0x4EE19800}};
+		if (vec) E(vc[m][dbl] | s << 5 | d); else { E(sc[m][dbl] | s << 5 | 17); vins(d, 0, 17, 0, dbl ? 3 : 2); }
+		return 1; }
+	case S_PEXTR: {   // reg-Feld = xmm (Quelle), r/m = Ziel (Allzweck oder Speicher)
+		int k = imm; int esz = arg == 0 ? 0 : arg == 1 ? 1 : arg == 2 ? 2 : 3, lane = k & ((16 >> esz) - 1);
+		if (I->s.k == 1) vumov(I->s.n, d, lane, esz);
+		else { vumov(T0, d, lane, esz); Addr a = gen_addr(I); ldst(0, 1 << esz, 0, T0, a); }
+		return 1; }
+	case S_PINSR: {   // reg-Feld = xmm (Ziel), r/m = Allzweckregister oder Speicher
+		int esz = arg == 0 ? 0 : arg == 2 ? 2 : 3, lane = imm & ((16 >> esz) - 1), g;
+		if (I->s.k == 1) g = I->s.n; else { ld_mem(I, T0, 1 << esz, 0); g = T0; }
+		E(0x4E001C00 | ((lane << (esz + 1)) | (1 << esz)) << 16 | g << 5 | d); return 1; }
+	case S_BLEND: {
+		int s = vsrc(I, 16);
+		if (arg >= 100) {   // Maske = Vorzeichenbits von xmm0
+			int sz = arg == 100 ? 0 : arg == 101 ? 2 : 3; E(0x4E20A800 | sz << 22 | 0 << 5 | 17); E(0x6EA01C00 | 17 << 16 | s << 5 | d); return 1;
+		}
+		uint8_t m[16]; memset(m, 0, 16);
+		if (arg == 0) { for (int j = 0; j < 4; j++) if (imm >> j & 1) memset(m + 4 * j, 0xff, 4); }
+		else if (arg == 1) { for (int j = 0; j < 2; j++) if (imm >> j & 1) memset(m + 8 * j, 0xff, 8); }
+		else { for (int j = 0; j < 8; j++) if (imm >> j & 1) memset(m + 2 * j, 0xff, 2); }
+		vlit(17, m); E(0x6EA01C00 | 17 << 16 | s << 5 | d); return 1; }
 	case S_CMPF: {
 		int s = vsrc(I, I->ssz), vec = fmt < 2, dbl = fmt & 1, pr = imm & 7;
 		uint32_t eq = vec ? (dbl ? 0x4E60E400u : 0x4E20E400u) : (dbl ? 0x5E60E400u : 0x5E20E400u);

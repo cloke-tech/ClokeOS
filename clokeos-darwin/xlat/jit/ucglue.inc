@@ -41,6 +41,7 @@ static uc_err jit_run_loop(Th *t) {
 			break;
 		case JIT_FALLBACK: case JIT_FAULT:
 			e = jit_uc_fallback(u, &jctx);
+			if (e && getenv("UCRUN_JIT_DBG")) fprintf(stderr, "jit-fb: st=%d rip=%llx end=%llx count=%llu e=%d (%s) after-rip=%llx\n", st, (unsigned long long)jctx.rip, (unsigned long long)jctx.fb_end, (unsigned long long)jctx.count, (int)e, uc_strerror(e), (unsigned long long)jctx.rip);
 			if (e) {  // Fehler im Gast: Zustand steht in Unicorn (Anfang des Befehls)
 				uint64_t pc; uc_reg_read(u, UC_X86_REG_RIP, &pc);
 				int sg = fault_signal(u, e, pc);

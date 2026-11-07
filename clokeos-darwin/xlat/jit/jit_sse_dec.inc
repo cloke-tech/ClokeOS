@@ -2,7 +2,7 @@
 // Die Erzeugung des arm64-Codes steht in jit_sse_gen.inc.
 enum { S_NONE = 0, S_MOV128, S_MOVSS, S_MOVSD, S_MOVLP, S_MOVHP, S_MOVDUP, S_FARITH, S_FLOGIC, S_N3, S_PACK, S_MOVD, S_MOVQX, S_PSHUF,
        S_SHIFTI, S_SHIFTX, S_CVT, S_COMIS, S_MOVMSK, S_PMOVMSKB, S_SHUFP, S_PEXTRW, S_PINSRW, S_PMADDWD, S_PMULH, S_PMULUDQ, S_PSADBW, S_CMPF,
-       S_MOVHLPS, S_MOVLHPS, S_MXCSR, S_PALIGNR, S_PSHUFB, S_N3U, S_PMOV, S_ROUND, S_PTEST, S_PEXTR, S_PINSR, S_BLEND, S_X87 };
+       S_MOVHLPS, S_MOVLHPS, S_MXCSR, S_PALIGNR, S_PSHUFB, S_PMOV, S_PABS, S_ROUND, S_PTEST, S_PEXTR, S_PINSR, S_BLEND, S_X87 };
 #define SF_IMM 1      // Befehl hat ein imm8
 #define SF_ST 2       // das r/m-Feld ist das Ziel
 #define SF_GPR 4      // ein Operand ist ein Allzweckregister (reg- oder r/m-Feld je nach Art)
@@ -11,6 +11,43 @@ enum { S_NONE = 0, S_MOV128, S_MOVSS, S_MOVSD, S_MOVLP, S_MOVHP, S_MOVDUP, S_FAR
 // fmt für S_FARITH/S_FLOGIC/S_CMPF: 0 ps, 1 pd, 2 ss, 3 sd
 enum { CV_I2F, CV_F2I_T, CV_F2I, CV_PS2PD, CV_PD2PS, CV_S2D, CV_D2S, CV_DQ2PS, CV_PS2DQ, CV_PS2DQ_T, CV_DQ2PD };
 
+// SSSE3/SSE4.1: Tabelle für 0F 38 xx (map 1) und 0F 3A xx (map 2), nur mit Präfix 66
+static int sse_class2(int map, int o3, int pfx, int *sop, int *arg, int *fl, int *msz, int *fmt) {
+	*sop = S_NONE; *arg = 0; *fl = 0; *msz = 16; *fmt = 0;
+	if (pfx != 0x66) return 0;
+	if (map == 1) {
+		if (o3 >= 0x20 && o3 <= 0x25) { *sop = S_PMOV; *arg = (o3 - 0x20) | 8; static const int m[6] = {8, 4, 2, 8, 4, 8}; *msz = m[o3 - 0x20]; return 1; }
+		if (o3 >= 0x30 && o3 <= 0x35) { *sop = S_PMOV; *arg = o3 - 0x30; static const int m[6] = {8, 4, 2, 8, 4, 8}; *msz = m[o3 - 0x30]; return 1; }
+		switch (o3) {
+		case 0x00: *sop = S_PSHUFB; return 1;
+		case 0x1c: case 0x1d: case 0x1e: *sop = S_PABS; *arg = o3 - 0x1c; return 1;
+		case 0x29: *sop = S_N3; *arg = 0x6EE08C00; return 1;
+		case 0x37: *sop = S_N3; *arg = 0x4EE03400; return 1;
+		case 0x2b: *sop = S_PACK; *arg = 3; return 1;
+		case 0x38: *sop = S_N3; *arg = 0x4E206C00; return 1;
+		case 0x39: *sop = S_N3; *arg = 0x4EA06C00; return 1;
+		case 0x3a: *sop = S_N3; *arg = 0x6E606C00; return 1;
+		case 0x3b: *sop = S_N3; *arg = 0x6EA06C00; return 1;
+		case 0x3c: *sop = S_N3; *arg = 0x4E206400; return 1;
+		case 0x3d: *sop = S_N3; *arg = 0x4EA06400; return 1;
+		case 0x3e: *sop = S_N3; *arg = 0x6E606400; return 1;
+		case 0x3f: *sop = S_N3; *arg = 0x6EA06400; return 1;
+		case 0x40: *sop = S_N3; *arg = 0x4EA09C00; return 1;
+		case 0x10: *sop = S_BLEND; *arg = 100; return 1;     // pblendvb (Maske xmm0)
+		case 0x14: *sop = S_BLEND; *arg = 101; return 1;     // blendvps
+		case 0x15: *sop = S_BLEND; *arg = 102; return 1;     // blendvpd
+		default: return 0;
+		}
+	}
+	switch (o3) {
+	case 0x08: case 0x09: case 0x0a: case 0x0b: *sop = S_ROUND; *fmt = o3 == 0x08 ? 0 : o3 == 0x09 ? 1 : o3 == 0x0a ? 2 : 3; *fl |= SF_IMM; *msz = *fmt == 2 ? 4 : *fmt == 3 ? 8 : 16; return 1;
+	case 0x0c: case 0x0d: case 0x0e: *sop = S_BLEND; *arg = o3 - 0x0c; *fl |= SF_IMM; return 1;
+	case 0x0f: *sop = S_PALIGNR; *fl |= SF_IMM; return 1;
+	case 0x14: case 0x15: case 0x16: *sop = S_PEXTR; *arg = o3 - 0x14; *fl |= SF_IMM | SF_GPR | SF_ST; return 1;
+	case 0x20: case 0x22: *sop = S_PINSR; *arg = o3 == 0x20 ? 0 : 2; *fl |= SF_IMM | SF_GPR; return 1;
+	default: return 0;
+	}
+}
 static int sse_class(int o2, int pfx, int *sop, int *arg, int *fl, int *msz, int *fmt) {
 	*sop = S_NONE; *arg = 0; *fl = 0; *msz = 16; *fmt = pfx == 0xf3 ? 2 : pfx == 0xf2 ? 3 : pfx == 0x66 ? 1 : 0;
 	int p0 = pfx == 0, p66 = pfx == 0x66, pf3 = pfx == 0xf3, pf2 = pfx == 0xf2;
