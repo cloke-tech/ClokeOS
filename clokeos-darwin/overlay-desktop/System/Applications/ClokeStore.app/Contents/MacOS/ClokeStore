@@ -1,0 +1,5 @@
+#!/bin/sh
+# Cloke Store: startet den lokalen Dienst (Resources/clokestore.py), der die Oberfläche
+# ausliefert und im Browser öffnet. Er beendet sich, wenn die Oberfläche geschlossen wird.
+DIR="$(cd "$(dirname "$0")/../Resources" && pwd)"
+exec python3 "$DIR/clokestore.py" "$@"

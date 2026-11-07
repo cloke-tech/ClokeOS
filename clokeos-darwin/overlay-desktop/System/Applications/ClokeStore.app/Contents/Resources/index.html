@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="clokestore-token" content="">
+<title>Cloke Store</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop offset='0' stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%236d28d9'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Cpath d='M32 14c-6 0-10 4-10 10 0 5-3 8-5 14h30c-2-6-5-9-5-14 0-6-4-10-10-10z' fill='none' stroke='white' stroke-width='3.5' stroke-linejoin='round'/%3E%3Cpath d='M20 46h24' stroke='white' stroke-width='3.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+:root{
+  color-scheme: light dark;
+  --accent:#7a4dff;
+  --bg:#ffffff;
+  --bg-2:#f6f4fa;
+  --side:rgba(245,242,250,.86);
+  --ink:#1c1626;
+  --ink-2:#6d6678;
+  --ink-3:#9a93a6;
+  --line:rgba(40,20,70,.10);
+  --fill:rgba(60,30,110,.06);
+  --get-bg:rgba(122,77,255,.12);
+  --get-bg-hover:rgba(122,77,255,.20);
+  --get-ink:#6a3df0;
+  --done-bg:rgba(60,30,110,.07);
+  --done-ink:#8a8296;
+  --ok:#1f9d55;
+  --warn:#c25a00;
+  --err:#d1263a;
+  --card-shadow:0 1px 2px rgba(30,10,60,.10),0 10px 30px rgba(30,10,60,.14);
+  --sheet-bg:#ffffff;
+  --scrim:rgba(20,10,35,.38);
+  --font:-apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",system-ui,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --accent:#a78bff;
+    --bg:#17111d;
+    --bg-2:#1f1727;
+    --side:rgba(33,24,43,.84);
+    --ink:#f4f0f9;
+    --ink-2:#a69db4;
+    --ink-3:#766d85;
+    --line:rgba(255,255,255,.09);
+    --fill:rgba(255,255,255,.07);
+    --get-bg:rgba(167,139,255,.20);
+    --get-bg-hover:rgba(167,139,255,.30);
+    --get-ink:#cbbcff;
+    --done-bg:rgba(255,255,255,.08);
+    --done-ink:#8f869d;
+    --ok:#4cd388;
+    --warn:#ffa24a;
+    --err:#ff6b7d;
+    --card-shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.5);
+    --sheet-bg:#251b30;
+    --scrim:rgba(5,2,10,.55);
+  }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font:14px/1.4 var(--font);color:var(--ink);background:var(--bg);-webkit-font-smoothing:antialiased;overflow:hidden}
+button,input{font:inherit;color:inherit}
+a{color:inherit;text-decoration:none}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:6px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* ---------- Shell ---------- */
+.shell{display:grid;grid-template-columns:252px minmax(0,1fr);height:100vh}
+.side{background:var(--side);-webkit-backdrop-filter:blur(28px) saturate(1.4);backdrop-filter:blur(28px) saturate(1.4);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px 12px 12px;overflow-y:auto;gap:2px}
+.search{position:relative;margin:2px 4px 14px}
+.search input{width:100%;height:32px;border:0;border-radius:9px;background:var(--fill);padding:0 10px 0 32px;outline:none;color:var(--ink)}
+.search input::placeholder{color:var(--ink-3)}
+.search input:focus{box-shadow:0 0 0 2px var(--accent)}
+.search svg{position:absolute;left:10px;top:8px;width:16px;height:16px;color:var(--ink-3);pointer-events:none}
+.navs{display:contents}
+.nav-group{display:flex;flex-direction:column;gap:2px}
+.nav-title{font-size:12px;font-weight:600;color:var(--ink-3);padding:14px 10px 4px}
+.nav a{display:flex;align-items:center;gap:10px;height:34px;padding:0 10px;border-radius:9px;font-weight:500;color:var(--ink)}
+.nav a svg{width:19px;height:19px;flex:none;color:var(--accent)}
+.nav a:hover{background:var(--fill)}
+.nav a[aria-current=page]{background:var(--accent);color:#fff}
+.nav a[aria-current=page] svg{color:#fff}
+.nav .badge[hidden]{display:none}
+.nav .badge{margin-left:auto;min-width:20px;height:20px;border-radius:10px;padding:0 6px;background:var(--err);color:#fff;font-size:12px;font-weight:600;display:grid;place-items:center}
+.side-foot{margin-top:auto;padding:14px 8px 2px;display:flex;flex-direction:column;gap:10px}
+.conn{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--ink-2)}
+.conn i{width:8px;height:8px;border-radius:50%;background:var(--ink-3);flex:none}
+.conn.on i{background:var(--ok)}
+.seg{display:inline-flex;background:var(--fill);border-radius:8px;padding:2px;align-self:flex-start}
+.seg button{border:0;background:none;padding:3px 10px;border-radius:6px;font-size:12px;font-weight:600;color:var(--ink-2);cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--bg);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.18)}
+
+main{overflow-y:auto;overflow-x:hidden;outline:none;scroll-behavior:auto}
+.page{max-width:1180px;margin:0 auto;padding:30px 40px 72px}
+.page-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px}
+h1{font-size:32px;line-height:1.1;font-weight:700;letter-spacing:-.02em;margin:0}
+.lead{color:var(--ink-2);margin:6px 0 0;font-size:15px;max-width:60ch}
+h2{font-size:22px;font-weight:700;letter-spacing:-.015em;margin:0}
+.shelf{margin-top:40px}
+.shelf-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:6px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+.more{color:var(--accent);font-weight:500;font-size:14px}
+.more:hover{text-decoration:underline}
+.back{display:inline-flex;align-items:center;gap:4px;color:var(--accent);font-weight:500;margin:-6px 0 18px -6px;padding:4px 6px;border:0;background:none;cursor:pointer;border-radius:8px}
+.back svg{width:18px;height:18px}
+
+/* ---------- Icons ---------- */
+.icon{--s:56px;width:var(--s);height:var(--s);border-radius:22.4%;flex:none;display:grid;place-items:center;position:relative;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.22),0 1px 3px rgba(20,5,40,.28)}
+.icon svg{width:56%;height:56%;filter:drop-shadow(0 1px 1px rgba(0,0,0,.25))}
+.icon img{width:100%;height:100%;object-fit:cover;display:block}
+.icon .ini{color:#fff;font-weight:700;font-size:calc(var(--s)*.42);letter-spacing:-.02em;text-shadow:0 1px 2px rgba(0,0,0,.3)}
+.icon::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.24),rgba(255,255,255,0) 52%);pointer-events:none}
+
+/* ---------- Get button ---------- */
+.get{--h:30px;height:var(--h);min-width:74px;padding:0 16px;border:0;border-radius:999px;background:var(--get-bg);color:var(--get-ink);font-weight:700;font-size:14px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px;transition:background .15s,transform .1s;white-space:nowrap}
+.get:hover{background:var(--get-bg-hover)}
+.get:active{transform:scale(.96)}
+.get.installed{background:var(--done-bg);color:var(--done-ink);font-weight:600;cursor:default}
+.get.installed:hover{background:var(--done-bg)}
+.get.update{background:var(--accent);color:#fff}
+.get.update:hover{filter:brightness(1.08);background:var(--accent)}
+.get.working{min-width:var(--h);width:var(--h);padding:0;background:var(--done-bg);cursor:default}
+.get.big{--h:36px;min-width:92px;font-size:15px;padding:0 22px}
+.get.on-dark{background:rgba(255,255,255,.92);color:#2a1a4a}
+.get.on-dark:hover{background:#fff}
+.get.on-dark.installed{background:rgba(255,255,255,.25);color:rgba(255,255,255,.85)}
+.get.on-dark.working{background:rgba(255,255,255,.25)}
+.ring{width:20px;height:20px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:3}
+.ring .trk{stroke:rgba(128,120,150,.35)}
+.ring .val{stroke:var(--accent);stroke-linecap:round;transition:stroke-dashoffset .3s}
+.on-dark .ring .val{stroke:#fff}
+.ring.indet{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(270deg)}}
+.btn{height:34px;padding:0 16px;border-radius:9px;border:0;background:var(--fill);font-weight:600;cursor:pointer;color:var(--ink)}
+.btn:hover{background:var(--get-bg)}
+.btn.primary{background:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--err)}
+.btn[disabled]{opacity:.5;cursor:default}
+
+/* ---------- Hero (papercut) ---------- */
+.heroes{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.hero{position:relative;border-radius:22px;overflow:hidden;color:#fff;box-shadow:var(--card-shadow);cursor:pointer;isolation:isolate;min-height:270px;display:flex;flex-direction:column;justify-content:space-between;transition:transform .2s}
+.hero:hover{transform:translateY(-2px)}
+.hero.lead-card{grid-column:1/-1;min-height:360px}
+.hero.light{color:#22123f}
+.hero .art{position:absolute;inset:0;z-index:-1}
+.hero .art svg{width:100%;height:100%;display:block}
+.hero .mark{position:absolute;right:5%;top:8%;width:30%;max-width:240px;opacity:.20;pointer-events:none;z-index:-1}
+.hero.lead-card .mark{width:24%;right:7%;top:10%}
+.hero .copy{padding:28px 32px 0;max-width:min(62%,560px)}
+.hero.lead-card .copy{padding-top:34px}
+.hero h3{margin:0;font-size:30px;line-height:1.08;font-weight:700;letter-spacing:-.022em;text-wrap:balance}
+.hero.lead-card h3{font-size:40px}
+.hero p{margin:10px 0 0;font-size:16px;line-height:1.35;opacity:.92;text-wrap:pretty}
+.hero .bar{display:flex;align-items:center;gap:12px;margin:0;padding:12px 16px 12px 16px;background:rgba(18,8,32,.34);-webkit-backdrop-filter:blur(22px) saturate(1.5);backdrop-filter:blur(22px) saturate(1.5);color:#fff}
+.hero.light .bar{background:rgba(255,255,255,.5);color:#22123f}
+.hero .bar .t{min-width:0;flex:1}
+.hero .bar .t b{display:block;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hero .bar .t>span{display:block;font-size:13px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Rows ---------- */
+.rows{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));column-gap:40px}
+.rows.one{grid-template-columns:1fr}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;align-items:center;padding:11px 0;border-bottom:1px solid var(--line)}
+.row-main{display:flex;align-items:center;gap:14px;min-width:0;border-radius:12px}
+.row-main .t{min-width:0}
+.row-main .t b{display:block;font-size:15px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row-main .t>span{display:block;color:var(--ink-2);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Detail ---------- */
+.d-head{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap}
+.d-head .icon{--s:132px}
+.d-title{flex:1;min-width:260px}
+.d-title h1{font-size:34px}
+.d-sub{font-size:17px;color:var(--ink-2);margin:4px 0 0}
+.d-src{margin-top:6px;font-size:14px}
+.d-src a{color:var(--accent);font-weight:500}
+.d-act{display:flex;align-items:center;gap:12px;margin-top:18px;flex-wrap:wrap}
+.d-note{margin-top:12px;font-size:13px;color:var(--warn);display:flex;gap:6px;align-items:flex-start;max-width:60ch}
+.strip{display:grid;grid-auto-flow:column;grid-auto-columns:1fr;margin:30px 0 0;border-block:1px solid var(--line);padding:14px 0}
+.strip>div{padding:2px 10px;text-align:center;border-left:1px solid var(--line);min-width:0}
+.strip>div:first-child{border-left:0}
+.strip small{display:block;font-size:12px;color:var(--ink-3);font-weight:600}
+.strip b{display:block;font-size:18px;font-weight:650;margin:3px 0 1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.strip span{display:block;font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.block{margin-top:34px}
+.block h2{padding-bottom:10px;border-bottom:1px solid var(--line);margin-bottom:14px}
+.block p{margin:0 0 10px;font-size:15px;line-height:1.5;max-width:72ch;text-wrap:pretty}
+.shots{display:flex;gap:14px;overflow-x:auto;padding-bottom:10px}
+.shots img{height:260px;border-radius:12px;border:1px solid var(--line);flex:none;background:var(--fill)}
+dl.info{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:48px;margin:0}
+dl.info div{display:flex;justify-content:space-between;gap:16px;padding:10px 0;border-bottom:1px solid var(--line);min-width:0}
+dl.info dt{color:var(--ink-2);flex:none}
+dl.info dd{margin:0;text-align:right;min-width:0;overflow-wrap:anywhere}
+.mono{font-family:var(--mono);font-size:12.5px}
+.copy-link{color:var(--accent);cursor:pointer;border:0;background:none;padding:0;font:inherit}
+.copy-link:hover{text-decoration:underline}
+
+/* ---------- Sources ---------- */
+.src{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:16px;align-items:center;padding:16px 0;border-bottom:1px solid var(--line)}
+.src .logo{width:48px;height:48px;border-radius:12px;background:var(--fill);display:grid;place-items:center;color:var(--accent)}
+.src .logo svg{width:24px;height:24px}
+.src b{font-size:16px}
+.src .u{font-family:var(--mono);font-size:12px;color:var(--ink-2);overflow-wrap:anywhere}
+.src .meta{font-size:13px;color:var(--ink-2);margin-top:3px;display:flex;gap:6px 14px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:10px;background:var(--fill);font-size:12px;font-weight:600;color:var(--ink-2);margin-left:8px;vertical-align:2px}
+.chip.ok{color:var(--ok)}
+.chip.warn{color:var(--warn)}
+.chip.err{color:var(--err)}
+.src .ctl{display:flex;align-items:center;gap:12px}
+.switch{position:relative;width:42px;height:26px;border-radius:13px;border:0;background:var(--ink-3);cursor:pointer;padding:0;transition:background .15s;flex:none}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.3);transition:transform .15s}
+.switch[aria-checked=true]{background:var(--ok)}
+.switch[aria-checked=true]::after{transform:translateX(16px)}
+.note{margin-top:28px;padding:16px 18px;border-radius:14px;background:var(--bg-2);color:var(--ink-2);font-size:13.5px;line-height:1.5}
+.note b{color:var(--ink)}
+.note code,.sheet code{font-family:var(--mono);font-size:12.5px;background:var(--fill);padding:1px 5px;border-radius:5px;color:var(--ink)}
+
+/* ---------- Empty ---------- */
+.empty{text-align:center;padding:72px 20px;color:var(--ink-2)}
+.empty h2{color:var(--ink);margin-bottom:8px}
+.empty p{max-width:46ch;margin:0 auto 16px}
+.banner{display:flex;gap:10px;align-items:center;padding:10px 14px;border-radius:12px;background:var(--bg-2);color:var(--ink-2);font-size:13px;margin-bottom:22px}
+.banner.warn{color:var(--warn)}
+.banner b{color:var(--ink)}
+.skeleton{height:56px;border-radius:12px;background:linear-gradient(90deg,var(--fill),transparent,var(--fill));background-size:200% 100%;animation:sh 1.4s linear infinite;margin:10px 0}
+@keyframes sh{to{background-position:-200% 0}}
+
+/* ---------- Sheet & toast ---------- */
+.scrim{position:fixed;inset:0;background:var(--scrim);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);display:grid;place-items:center;padding:20px;z-index:50;animation:fade .15s}
+.sheet{width:min(520px,100%);max-height:90vh;overflow:auto;background:var(--sheet-bg);border-radius:18px;box-shadow:0 20px 70px rgba(0,0,0,.45);padding:26px 26px 20px;animation:pop .2s cubic-bezier(.2,.9,.3,1.2)}
+.sheet h2{font-size:20px;margin-bottom:6px}
+.sheet p{color:var(--ink-2);margin:6px 0 14px;line-height:1.5}
+.sheet .field{display:flex;gap:8px;margin:14px 0 6px}
+.sheet input[type=text]{flex:1;height:38px;border-radius:9px;border:1px solid var(--line);background:var(--fill);padding:0 12px;outline:none}
+.sheet input[type=text]:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--get-bg)}
+.sheet .hint{font-size:12.5px;color:var(--ink-3)}
+.sheet .msg{margin-top:12px;font-size:13.5px}
+.sheet .msg.err{color:var(--err)}
+.sheet .found{margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.sheet .found b{display:block;font-size:15px}
+.sheet .found span{color:var(--ink-2);font-size:13px}
+.sheet .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+.cmd{display:flex;gap:10px;align-items:center;background:var(--fill);border-radius:10px;padding:10px 12px;font-family:var(--mono);font-size:13px;margin:8px 0;overflow-wrap:anywhere}
+.cmd span{flex:1}
+@keyframes fade{from{opacity:0}}
+@keyframes pop{from{opacity:0;transform:scale(.94) translateY(8px)}}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 18px;border-radius:12px;font-weight:500;box-shadow:0 8px 30px rgba(0,0,0,.35);z-index:60;max-width:min(560px,90vw);animation:pop .2s}
+.toast.err{background:var(--err);color:#fff}
+
+/* ---------- Responsive ---------- */
+@media (max-width:980px){
+  .page{padding:24px 24px 60px}
+  .hero.lead-card h3{font-size:34px}
+  .hero .copy{max-width:78%}
+  dl.info{grid-template-columns:1fr}
+}
+@media (max-width:820px){
+  body{overflow:auto}
+  .shell{display:block;height:auto}
+  .side{position:sticky;top:0;z-index:20;flex-direction:row;flex-wrap:wrap;align-items:center;border-right:0;border-bottom:1px solid var(--line);padding:10px 12px;overflow:visible;gap:8px}
+  .search{margin:0;flex:1 1 100%}
+  .navs{display:flex;overflow-x:auto;flex:1 1 100%;gap:4px;scrollbar-width:none}
+  .nav-group{display:contents}
+  .nav-title{display:none}
+  .nav a{flex:none;height:32px;padding:0 12px}
+  .side-foot{display:none}
+  main{overflow:visible}
+  .heroes{grid-template-columns:1fr}
+  .hero,.hero.lead-card{min-height:300px}
+  .hero.lead-card h3,.hero h3{font-size:28px}
+  .hero .copy{max-width:100%;padding:24px 22px 0}
+  .hero .mark{display:none}
+  .rows{grid-template-columns:1fr}
+  .strip{grid-auto-flow:row;grid-template-columns:repeat(2,1fr)}
+  .strip>div{border-left:0;padding:10px 8px}
+  .d-head .icon{--s:96px}
+  .d-head{gap:18px}
+  .src{grid-template-columns:auto minmax(0,1fr)}
+  .src .ctl{grid-column:1/-1;justify-content:flex-end}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001s!important;transition-duration:.001s!important}
+}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="side" aria-label="Navigation">
+    <form class="search" role="search">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/></svg>
+      <label class="sr" for="q" id="qlabel">Suchen</label>
+      <input id="q" type="search" autocomplete="off" spellcheck="false">
+    </form>
+    <div class="navs">
+      <nav class="nav-group nav" id="nav-main"></nav>
+      <nav class="nav-group nav" id="nav-cat"></nav>
+      <nav class="nav-group nav" id="nav-rest"></nav>
+    </div>
+    <div class="side-foot">
+      <div class="conn" id="conn"><i></i><span></span></div>
+      <div class="seg" role="group" aria-label="Sprache / Language">
+        <button type="button" data-act="lang" data-lang="de">Deutsch</button>
+        <button type="button" data-act="lang" data-lang="en">English</button>
+      </div>
+    </div>
+  </aside>
+  <main id="main" tabindex="-1" aria-live="polite"></main>
+</div>
+<div id="layer"></div>
+
+<script>
+(() => {
+'use strict';
+
+/* =========================================================
+   Cloke Store – Oberfläche
+   - Standardquelle: cloke-tech/ClokeOS-Apps (index.json, format 1)
+   - weitere Quellen: GitHub-Repo oder direkte index.json-URL
+   - Installation über den lokalen Dienst (clokestore.py), sonst Befehl zum Kopieren
+   ========================================================= */
+
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const hash32 = s => { let h = 2166136261; for (const c of String(s)) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; };
+const safeLS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+/* ---------------- Sprache ---------------- */
+const STR = {
+  de: {
+    search:'Suchen', discover:'Entdecken', apps:'Programme', system:'Systemprogramme', addon:'Erweiterungen', package:'Pakete',
+    updates:'Updates', sources:'Quellen', categories:'Kategorien', back:'Zurück', seeAll:'Alle ansehen',
+    get:'Laden', installed:'Installiert', update:'Aktualisieren', installing:'Wird installiert', remove:'Entfernen',
+    cat_system:'Systemprogramm', cat_addon:'Erweiterung', cat_package:'Paket', cat_other:'Programm',
+    version:'Version', size:'Größe', category:'Kategorie', source:'Quelle', license:'Lizenz', arch:'Architektur', archAll:'Alle',
+    info:'Informationen', description:'Beschreibung', preview:'Vorschau', recommended:'Empfohlene Pakete',
+    ident:'Kennung', path:'Ablageort', checksum:'Prüfsumme (SHA-256)', pkgfile:'Paketdatei', homepage:'Webseite', copy:'Kopieren', copied:'Kopiert',
+    from:'Aus {0}', fromSrc:'Von {0}',
+    connOn:'Mit ClokeOS verbunden', connOff:'Nur Katalog (Browser)',
+    results:'Ergebnisse für „{0}“', noResults:'Nichts gefunden', noResultsTxt:'Zu „{0}“ gibt es in den aktiven Quellen keine Treffer.',
+    notFound:'Nicht gefunden', notFoundTxt:'Dieses Programm gibt es in den aktiven Quellen nicht.',
+    allApps:'Alle Programme', allAppsLead:'{0} Programme und {1} Pakete aus {2} Quellen.',
+    sysLead:'Gehören zum ClokeOS-Image und lassen sich neu installieren oder reparieren.', addonLead:'Zum Nachinstallieren. Sie liegen unter Programme.', pkgLead:'Binärpakete, die Programme brauchen oder empfehlen.',
+    upTitle:'Updates', upNone:'Alles aktuell', upNoneTxt:'Für die installierten Programme gibt es keine neuere Version.',
+    upAvail:'Verfügbare Updates', upAll:'Alle aktualisieren', upInstalled:'Installiert',
+    upNoHelper:'Updates brauchen den Store-Dienst', upNoHelperTxt:'Im Browser sieht der Store nur den Katalog. Starte Cloke Store als Programm in ClokeOS (oder <code>python3 clokestore.py</code>), dann erkennt er installierte Versionen.',
+    srcTitle:'Quellen', srcLead:'Der Store liest Programme aus Verzeichnissen mit einer index.json. ClokeOS-Apps ist immer dabei.',
+    srcAdd:'Quelle hinzufügen', srcDefault:'Standard', srcLive:'Aktuell', srcCache:'Zwischenspeicher', srcSnap:'Eingebaute Kopie', srcErr:'Nicht erreichbar',
+    srcCount:'{0} Programme', srcCount1:'1 Programm', srcPkgCount:'{0} Pakete', srcPkgCount1:'1 Paket', srcRemove:'Quelle entfernen', srcReload:'Neu laden', srcSkipped:'{0} ungültige Einträge übersprungen',
+    srcNote:'<b>So funktionieren Quellen.</b> Jede Quelle ist ein Verzeichnis mit einer <code>index.json</code> (<code>format: 1</code>), wie in ClokeOS-Apps. Programme aus eigenen Quellen werden in <code>~/Applications</code> installiert. Systemprogramme und Pakete kommen nur aus der Standardquelle. Die SHA-256-Prüfsumme muss stimmen, sie schützt aber nicht vor einer bösartigen Quelle: Füge nur Quellen hinzu, denen du vertraust.',
+    addTitle:'Quelle hinzufügen', addTxt:'Gib ein GitHub-Repository oder die Adresse einer index.json ein.', addPh:'z. B. nutzer/repo oder https://…/index.json',
+    addCheck:'Prüfen', addDo:'Hinzufügen', cancel:'Abbrechen', close:'Schließen', checking:'Wird geprüft …',
+    addHint:'Bei GitHub-Repos sucht der Store die index.json auf dem Zweig main, dann master.',
+    addFound:'Gefunden: {0}', addDup:'Diese Quelle ist schon eingerichtet.', addBad:'Unter dieser Adresse liegt keine gültige index.json (format 1).', addNet:'Die Adresse ist nicht erreichbar.', addEmpty:'Gib ein Repository oder eine Adresse ein.', addProto:'Nur https-Adressen sind erlaubt.',
+    addWarn:'Programme aus dieser Quelle werden nicht von ClokeOS geprüft. Du installierst sie in deinem Benutzerordner.',
+    howTitle:'{0} installieren', howTxt:'Der Store installiert Programme selbst, sobald er als ClokeOS-Programm läuft (Cloke Store.app). Hier im Browser siehst du nur den Katalog. So geht es von Hand:',
+    howDefault:'Im Terminal ausführen:', howExt:'Paket laden, Prüfsumme vergleichen, entpacken und das .app-Bundle nach ~/Applications legen:',
+    toastInstalled:'{0} ist installiert', toastUpdated:'{0} ist aktualisiert', toastRemoved:'{0} wurde entfernt', toastFail:'{0}: {1}', toastLost:'Verbindung zum Store-Dienst verloren',
+    toastSrcAdded:'Quelle „{0}“ hinzugefügt', toastSrcRemoved:'Quelle entfernt',
+    archNote:'Läuft nur auf x86_64, nicht auf arm64.', tryAgain:'Erneut versuchen', loading:'Katalog wird geladen …', offlineBanner:'Die Quelle ist gerade nicht erreichbar. Der Store zeigt den zuletzt bekannten Stand.',
+    sizeRange:'{0} – {1}', unknown:'Unbekannt', noDesc:'Für dieses Programm gibt die Quelle keine Beschreibung an.'
+  },
+  en: {
+    search:'Search', discover:'Discover', apps:'Apps', system:'System apps', addon:'Add-ons', package:'Packages',
+    updates:'Updates', sources:'Sources', categories:'Categories', back:'Back', seeAll:'See all',
+    get:'Get', installed:'Installed', update:'Update', installing:'Installing', remove:'Remove',
+    cat_system:'System app', cat_addon:'Add-on', cat_package:'Package', cat_other:'App',
+    version:'Version', size:'Size', category:'Category', source:'Source', license:'License', arch:'Architecture', archAll:'All',
+    info:'Information', description:'Description', preview:'Preview', recommended:'Recommended packages',
+    ident:'Identifier', path:'Location', checksum:'Checksum (SHA-256)', pkgfile:'Package file', homepage:'Website', copy:'Copy', copied:'Copied',
+    from:'From {0}', fromSrc:'By {0}',
+    connOn:'Connected to ClokeOS', connOff:'Catalog only (browser)',
+    results:'Results for “{0}”', noResults:'No results', noResultsTxt:'Nothing in the active sources matches “{0}”.',
+    notFound:'Not found', notFoundTxt:'This app is not in the active sources.',
+    allApps:'All apps', allAppsLead:'{0} apps and {1} packages from {2} sources.',
+    sysLead:'Part of the ClokeOS image. You can reinstall or repair them here.', addonLead:'Install on demand. They appear in Applications.', pkgLead:'Binary packages that apps need or recommend.',
+    upTitle:'Updates', upNone:'Everything is up to date', upNoneTxt:'There is no newer version for the installed apps.',
+    upAvail:'Available updates', upAll:'Update all', upInstalled:'Installed',
+    upNoHelper:'Updates need the store service', upNoHelperTxt:'In a browser the store only sees the catalog. Start Cloke Store as an app in ClokeOS (or <code>python3 clokestore.py</code>) and it detects installed versions.',
+    srcTitle:'Sources', srcLead:'The store reads apps from folders with an index.json. ClokeOS-Apps is always included.',
+    srcAdd:'Add source', srcDefault:'Default', srcLive:'Up to date', srcCache:'Cached', srcSnap:'Built-in copy', srcErr:'Unreachable',
+    srcCount:'{0} apps', srcCount1:'1 app', srcPkgCount:'{0} packages', srcPkgCount1:'1 package', srcRemove:'Remove source', srcReload:'Reload', srcSkipped:'{0} invalid entries skipped',
+    srcNote:'<b>How sources work.</b> A source is a folder with an <code>index.json</code> (<code>format: 1</code>), like ClokeOS-Apps. Apps from your own sources install into <code>~/Applications</code>. System apps and packages only come from the default source. The SHA-256 checksum must match, but it does not protect against a malicious source: only add sources you trust.',
+    addTitle:'Add source', addTxt:'Enter a GitHub repository or the address of an index.json.', addPh:'e.g. user/repo or https://…/index.json',
+    addCheck:'Check', addDo:'Add', cancel:'Cancel', close:'Close', checking:'Checking …',
+    addHint:'For GitHub repos the store looks for index.json on main, then master.',
+    addFound:'Found: {0}', addDup:'This source is already set up.', addBad:'There is no valid index.json (format 1) at this address.', addNet:'The address cannot be reached.', addEmpty:'Enter a repository or an address.', addProto:'Only https addresses are allowed.',
+    addWarn:'ClokeOS does not review apps from this source. They install into your home folder.',
+    howTitle:'Install {0}', howTxt:'The store installs apps itself once it runs as a ClokeOS app (Cloke Store.app). In a browser you only see the catalog. By hand:',
+    howDefault:'Run in Terminal:', howExt:'Download the package, compare the checksum, unpack it and put the .app bundle into ~/Applications:',
+    toastInstalled:'{0} is installed', toastUpdated:'{0} is updated', toastRemoved:'{0} was removed', toastFail:'{0}: {1}', toastLost:'Lost connection to the store service',
+    toastSrcAdded:'Source “{0}” added', toastSrcRemoved:'Source removed',
+    archNote:'Runs on x86_64 only, not on arm64.', tryAgain:'Try again', loading:'Loading catalog …', offlineBanner:'The source is unreachable right now. The store shows the last known state.',
+    sizeRange:'{0} – {1}', unknown:'Unknown', noDesc:'The source gives no description for this app.'
+  }
+};
+let LANG = safeLS.get('cloke.store.lang', null) || ((navigator.language || 'de').toLowerCase().startsWith('de') ? 'de' : 'en');
+const t = (k, ...a) => (STR[LANG][k] ?? STR.en[k] ?? k).replace(/\{(\d)\}/g, (_, i) => a[i] ?? '');
+const cnt = (k, n) => n === 1 ? t(k + '1') : t(k, n);
+const fmtSize = n => {
+  if (!Number.isFinite(n) || n <= 0) return '–';
+  const u = ['B','KB','MB','GB']; let i = 0, v = n;
+  while (v >= 1024 && i < u.length - 1) { v /= 1024; i++; }
+  return new Intl.NumberFormat(LANG, { maximumFractionDigits: v < 10 && i > 0 ? 1 : 0 }).format(v) + ' ' + u[i];
+};
+
+/* ---------------- Gestaltung der Symbole ---------------- */
+const G = {
+  calc:'<rect x="5" y="3" width="14" height="18" rx="2.5"/><rect x="8" y="6.2" width="8" height="3.3" rx=".8"/><path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01"/>',
+  cal:'<rect x="4" y="5" width="16" height="15" rx="2.5"/><path d="M4 10h16M8 3v4M16 3v4M8.5 14h.01M12 14h.01M15.5 14h.01M8.5 17h.01M12 17h.01"/>',
+  note:'<rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4"/>',
+  term:'<rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="m7 10 3 2-3 2M12.5 15H17"/>',
+  files:'<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  sliders:'<path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/>',
+  pulse:'<path d="M3 12h4l3-7 4 14 3-7h4"/>',
+  disk:'<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+  globe:'<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.6 2.6 3.9 5.6 3.9 9s-1.300 6.400-3.900 9c-2.600-2.600-3.900-5.600-3.900-9S9.400 5.600 12 3z"/>',
+  wine:'<path d="M7.500 3h9l-.600 6.200a3.900 3.900 0 0 1-7.800 0z"/><path d="M12 13.200V20M8 21h8M7.800 8h8.400"/>',
+  tux:'<path d="M12 3c-2.400 0-3.900 2.100-3.900 4.800 0 1.500-.5 2.600-1.600 4.300C5.500 13.700 5 15.600 5.500 17.600c.5 1.800 2.500 2.800 4.600 2.800h3.800c2.100 0 4.100-1 4.600-2.800.5-2-.1-3.900-1-5.500-1.100-1.700-1.600-2.800-1.600-4.300C16 5.100 14.400 3 12 3z"/><path d="M10.200 8h.01M13.800 8h.01M10.800 10.600l1.200.9 1.200-.9"/>',
+  grid:'<path d="M6 6h.01M12 6h.01M18 6h.01M6 12h.01M12 12h.01M18 12h.01M6 18h.01M12 18h.01M18 18h.01" stroke-width="3.2"/>',
+  box:'<path d="M12 3 20 7v10l-8 4-8-4V7z"/><path d="m4 7 8 4 8-4M12 11v10"/>',
+  tools:'<path d="M14.500 6.500a4 4 0 0 0 4.800 4.800l-9 9a2.100 2.100 0 0 1-3-3z"/><path d="M14.500 6.500 17 4l3 3-2.500 2.500"/>'
+};
+const GRADS = [['#a78bfa','#6d28d9'],['#ff7a9c','#d6336c'],['#5ac8fa','#0a84ff'],['#34d399','#0f9d6b'],['#ffb347','#f06d1a'],['#c58a5a','#7a4a2a'],['#9aa0ff','#4f46e5'],['#2dd4bf','#0e7490']];
+const KNOWN = {
+  'com.clokeos.rechner': { g:'calc', c:['#ffa13a','#f2620d'], de:'Taschenrechner für den Alltag', en:'A calculator for everyday sums', dd:'Der Rechner startet xcalc in einem eigenen Fenster. Er ist Teil des ClokeOS-Images.', ed:'Calculator starts xcalc in its own window. It is part of the ClokeOS image.' },
+  'com.clokeos.kalender': { g:'cal', c:['#ff6b5e','#d1253a'], de:'Termine im Monatsraster', en:'Appointments in a month grid', dd:'Der Kalender zeigt den Monat mit der Tagesliste und einem Feld für neue Termine. Er läuft in einem Terminal-Fenster.', ed:'Calendar shows a month grid with a day list and a field for new events. It runs inside a terminal window.' },
+  'com.clokeos.launchpad': { g:'grid', c:['#b79bff','#6d3de0'], de:'Alle Programme auf einen Blick', en:'All your apps at a glance', dd:'Programme zeigt alle installierten Programme als Raster. Tippen sucht, Eingabe startet den ersten Treffer, Esc schließt.', ed:'Applications shows every installed app in a grid. Typing searches, Return starts the first match, Esc closes.' },
+  'com.clokeos.notizen': { g:'note', c:['#ffd84a','#f0a500'], de:'Schnelle Textnotizen', en:'Quick text notes', dd:'Notizen öffnet den Texteditor nano in einem Terminal-Fenster. Gedacht für kurze Gedanken, nicht für lange Dokumente.', ed:'Notes opens the nano text editor in a terminal window. Meant for quick thoughts, not long documents.' },
+  'com.clokeos.search': { g:'globe', c:['#4aa3ff','#4f46e5'], de:'Der Webbrowser von ClokeOS', en:'The ClokeOS web browser', dd:'Search läuft standardmäßig mit NetSurf. Mit dem Paket WebKit zeigt es moderne Webseiten deutlich besser an.', ed:'Search runs on NetSurf by default. With the WebKit package it shows modern web pages much better.' },
+  'com.clokeos.systemeinstellungen': { g:'sliders', c:['#a3a0b0','#5d5a6b'], de:'Darstellung, Dock, Sprache und mehr', en:'Appearance, Dock, language and more', dd:'Die Systemeinstellungen sind ein Fenster in CloakServer: Darstellung, Hintergrund, Schreibtisch und Dock, Sprache und Region, Freigaben und Programme.', ed:'System Settings is a CloakServer window: appearance, wallpaper, desktop and Dock, language and region, sharing and applications.' },
+  'com.clokeos.aktivitaet': { g:'pulse', c:['#3ddc7d','#0f9a47'], de:'Prozesse und Auslastung', en:'Processes and load', dd:'Die Aktivitätsanzeige zeigt laufende Prozesse und die Auslastung des Systems.', ed:'Activity Monitor shows running processes and system load.' },
+  'com.clokeos.festplatte': { g:'disk', c:['#8ea2ff','#4a4fd8'], de:'Datenträger und Partitionen verwalten', en:'Manage disks and partitions', dd:'Das Festplattendienstprogramm legt Partitionen an, löscht und formatiert sie (FAT32, ext4) und ändert ihre Größe. Das Startvolume bleibt unangetastet.', ed:'Disk Utility adds, erases, formats (FAT32, ext4) and resizes partitions. The startup volume stays untouched.' },
+  'com.clokeos.linux': { g:'tux', c:['#4a4a55','#1d1d24'], de:'Linux-Programme über tux ausführen', en:'Run Linux programs through tux', dd:'Öffnet ein Terminal mit tux-run. Linux-Programme laufen in ihrem eigenen Verzeichnis /TUX und bleiben so von der Mac-Welt getrennt.', ed:'Opens a terminal running tux-run. Linux programs live in their own tree at /TUX and stay apart from the Mac world.' },
+  'com.clokeos.terminal': { g:'term', c:['#3a3a46','#121218'], de:'Die Kommandozeile', en:'The command line', dd:'Terminal startet xfce4-terminal mit den Farben und der Schrift des ClokeOS-Prototyps.', ed:'Terminal starts xfce4-terminal with the colors and font of the ClokeOS prototype.' },
+  'com.clokeos.fundus': { g:'files', c:['#5ac8fa','#0a74e6'], de:'Dateien ansehen und ordnen', en:'Browse and organize files', dd:'Fundus ist der Dateimanager von ClokeOS (ein Thunar dahinter). Er öffnet auch .dmg-Abbilder und .exe-Programme.', ed:'Fundus is the ClokeOS file manager (Thunar underneath). It also opens .dmg images and .exe programs.' },
+  'org.dillo.dillo': { g:'globe', c:['#d29a64','#7a4a2a'], featured:2, hd:'Schlank surfen mit Dillo', he:'Light browsing with Dillo', de:'Ein schlanker Webbrowser', en:'A lightweight web browser', dd:'Dillo ist ein sehr kleiner, schneller Webbrowser. In ClokeOS dient er als Beispiel dafür, wie sich ein Programm nachinstallieren lässt.', ed:'Dillo is a very small, fast web browser. In ClokeOS it serves as the example of an app you add later.' },
+  'org.winehq.wine': { g:'wine', c:['#c2185b','#5a0f3a'], featured:1, hd:'Windows-Programme, direkt auf ClokeOS', he:'Windows programs, right on ClokeOS', de:'.exe- und .msi-Programme ausführen', en:'Run .exe and .msi programs', dd:'Wine 11.0 führt Windows-Programme aus. Laufwerk C: liegt unter /NT, ein Doppelklick in Fundus startet eine .exe. Das Programm öffnet den Wine-Dateimanager auf C:. Nur auf x86_64: auf arm64 gibt es noch keine Übersetzungsschicht.', ed:'Wine 11.0 runs Windows programs. Drive C: lives at /NT, and a double-click in Fundus starts an .exe. The app opens Wine’s file manager on C:. x86_64 only: arm64 has no translation layer yet.', x86only:true },
+  'webkit': { g:'box', c:['#4fb4ff','#2447d8'], featured:3, hd:'Moderne Webseiten in Search', he:'Modern web pages in Search', de:'Web-Engine für Search', en:'Web engine for Search', dd:'WebKitGTK als Binärpaket. Search nutzt es, sobald es installiert ist, und fällt sonst auf NetSurf zurück.', ed:'WebKitGTK as a binary package. Search uses it once installed and falls back to NetSurf otherwise.' }
+};
+
+/* ---------------- Standardquelle & eingebaute Kopie ---------------- */
+const DEFAULT_URL = 'https://raw.githubusercontent.com/cloke-tech/ClokeOS-Apps/main/index.json';
+const REL = 'https://github.com/cloke-tech/ClokeOS-Apps/releases/download/apps-2.8/';
+const snapApp = (id, name, nameDe, path, cat, sha, size, rec) => ({ id, name, name_de: nameDe, path, category: cat, version: '2.8', package: { url: REL + id + '-2.8.tgz', sha256: sha, size }, recommends: rec || [] });
+const SNAPSHOT = {
+  format: 1, repo: 'cloke-tech/ClokeOS-Apps', version: '2.8',
+  apps: [
+    snapApp('org.dillo.dillo','Dillo','Dillo','/Applications/Dillo.app','addon','3f9c3ff79db6b5637d1be7c30bf03a87906059cc0363e9b4362bbfe32bb934b7',1119),
+    snapApp('org.winehq.wine','Wine','Wine','/Applications/Wine.app','addon','6e3f3f407856d267953f5aa917ab2b2299f60bab990341cbf443ce3970eb06c4',1320),
+    snapApp('com.clokeos.rechner','Calculator','Rechner','/System/Applications/Calculator.app','system','170171f4a7adc008722b9ef32b705263e54135affad0897d7e03cf5ed5e2d967',1727),
+    snapApp('com.clokeos.kalender','Calendar','Kalender','/System/Applications/Calendar.app','system','26228614fd5c5843b3b6680b36df752ac8e5fb2615b9a25504a49a946abe8f8d',1703),
+    snapApp('com.clokeos.launchpad','Launchpad','Programme','/System/Applications/Launchpad.app','system','52ce6f07636077d399d5c7922a53dc1416c9b86b50f760b4141cd3d40d2f0959',1688),
+    snapApp('com.clokeos.notizen','Notes','Notizen','/System/Applications/Notes.app','system','4089658c358ca39ce00062193914f3d634a64a82c6b8ac624df4ee3555fda392',1658),
+    snapApp('com.clokeos.search','Search','Search','/System/Applications/Search.app','system','c0311742c5cf92f8d5ea96f71dff44a9cdbd0360648fb2491e48cd3a678c5d1c',2015,['webkit']),
+    snapApp('com.clokeos.systemeinstellungen','System Settings','Systemeinstellungen','/System/Applications/SystemSettings.app','system','92eb2ba3f896dd5699585e0254eaa48cb4a2e50a22eaf80a730431badc2173ef',1675),
+    snapApp('com.clokeos.aktivitaet','Activity Monitor','Aktivitätsanzeige','/System/Applications/Utilities/ActivityMonitor.app','system','e07773a4a4bcffe78f1f9000d40714ddcce40d078e9ed34c8fd1499161358edc',1725),
+    snapApp('com.clokeos.festplatte','Disk Utility','Festplattendienstprogramm','/System/Applications/Utilities/DiskUtility.app','system','a7321f49f8d073235dea14f2c3a3dac48210a4b40df8422b4fb3694d48f3d3c9',1987),
+    snapApp('com.clokeos.linux','Linux','Linux','/System/Applications/Utilities/Linux.app','system','fef72c954523c0d091856a3538fd86cce4732ed39c61e81913bb51d923e3d642',2096),
+    snapApp('com.clokeos.terminal','Terminal','Terminal','/System/Applications/Utilities/Terminal.app','system','31c37a87d865643ada5c70b56643b3f81a0b85d268d6c125d6f9aacdf717e423',1535),
+    snapApp('com.clokeos.fundus','Fundus','Fundus','/System/Library/CoreServices/Fundus.app','system','e2302bd589def4e21591a34272c9708568ba58866d863768df4fc32bf19ee978',1482)
+  ],
+  packages: [{
+    id: 'webkit', name: 'WebKit for Search', version: '2.54.2', license: 'LGPL-2.1 / BSD (WebKitGTK), LGPL-2.1+ (glib-networking)',
+    source: 'https://github.com/cloke-tech/ClokeOS/tree/main/clokeos-darwin/webkit', install: 'extract-root',
+    arch: {
+      arm64: { url: 'https://github.com/cloke-tech/ClokeOS/releases/download/webkit-arm64-1/webkit-pd-arm64.tgz', sha256: '8f85cd4ce417fe93a697c314b64ac2989c7c1795b3daff8bc2bb0b21d09d5c84', size: 35843535 },
+      x86_64: { url: 'https://github.com/cloke-tech/ClokeOS/releases/download/webkit-x86_64-1/webkit-pd-x86_64.tgz', sha256: '607bcd948d3e1bbe697be1cd4dcbcc25469b50db1996d0e2ea5c5c564809cb0e', size: 37651033 }
+    }
+  }]
+};
+
+/* ---------------- Zustand ---------------- */
+const TOKEN = ($('meta[name=clokestore-token]')?.content || '').trim();
+const HELPER = !!TOKEN;
+const DEFAULT_SRC = { id: 'default', name: 'ClokeOS-Apps', url: DEFAULT_URL, builtin: true };
+let extSources = safeLS.get('cloke.store.sources', []);            // [{id,url,name,enabled}]
+let defaultEnabled = safeLS.get('cloke.store.default.enabled', true);
+let SOURCES = [];        // aktive und inaktive, mit Laufzeitdaten
+let ITEMS = [];          // Einträge aus aktiven Quellen
+let loading = true;
+let sys = { arch: null, cloke_app: false, installed: {} };       // vom Dienst
+const jobs = {};         // key -> {id, pct}
+let lostToast = false;
+
+const saveSources = () => { safeLS.set('cloke.store.sources', extSources); safeLS.set('cloke.store.default.enabled', defaultEnabled); };
+
+/* ---------------- Katalog laden ---------------- */
+async function fetchJSON(url, ms = 10000) {
+  const c = new AbortController(); const to = setTimeout(() => c.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: c.signal, cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.json();
+  } finally { clearTimeout(to); }
+}
+const isIndex = j => j && typeof j === 'object' && j.format === 1 && (Array.isArray(j.apps) || Array.isArray(j.packages));
+const okId = s => typeof s === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(s);
+const okHttp = u => { try { const x = new URL(u); return x.protocol === 'https:' || (x.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(x.hostname)); } catch { return false; } };
+const okPkg = p => p && typeof p === 'object' && okHttp(p.url) && /^[0-9a-f]{64}$/i.test(p.sha256 || '');
+const str = (v, max = 400) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+function normalize(raw, src) {
+  const out = []; let skipped = 0;
+  for (const a of raw.apps || []) {
+    if (!a || !okId(a.id) || typeof a.name !== 'string' || !okPkg(a.package)) { skipped++; continue; }
+    out.push({
+      key: src.id + ':' + a.id, src, kind: 'app', id: a.id, name: str(a.name, 80), nameDe: str(a.name_de, 80) || str(a.name, 80),
+      path: str(a.path, 300), category: ['system', 'addon'].includes(a.category) ? a.category : 'other', version: str(a.version, 40) || str(raw.version, 40),
+      pkg: { url: a.package.url, sha256: a.package.sha256.toLowerCase(), size: Number(a.package.size) || 0 },
+      recommends: Array.isArray(a.recommends) ? a.recommends.filter(okId) : [],
+      summary: { de: str(a.summary_de || a.summary, 160), en: str(a.summary, 160) || str(a.summary_de, 160) },
+      desc: { de: str(a.description_de || a.description, 2000), en: str(a.description, 2000) || str(a.description_de, 2000) },
+      developer: str(a.developer, 80), icon: okHttp(a.icon) ? a.icon : '', shots: (Array.isArray(a.screenshots) ? a.screenshots : []).filter(okHttp).slice(0, 8),
+      homepage: okHttp(a.homepage) ? a.homepage : '', license: str(a.license, 120), featured: a.featured ? 5 : 0
+    });
+  }
+  for (const p of raw.packages || []) {
+    if (!p || !okId(p.id) || typeof p.name !== 'string') { skipped++; continue; }
+    const arch = {}; for (const [k, v] of Object.entries(p.arch || {})) if (okPkg(v) && /^[\w-]+$/.test(k)) arch[k] = { url: v.url, sha256: v.sha256.toLowerCase(), size: Number(v.size) || 0 };
+    const flat = okPkg(p.package) ? { url: p.package.url, sha256: p.package.sha256.toLowerCase(), size: Number(p.package.size) || 0 } : null;
+    if (!Object.keys(arch).length && !flat) { skipped++; continue; }
+    out.push({
+      key: src.id + ':' + p.id, src, kind: 'package', id: p.id, name: str(p.name, 80), nameDe: str(p.name, 80), path: '', category: 'package', version: str(p.version, 40),
+      pkg: flat, arch, install: str(p.install, 30), recommends: [],
+      summary: { de: str(p.summary_de || p.summary, 160), en: str(p.summary, 160) || str(p.summary_de, 160) },
+      desc: { de: str(p.description_de || p.description, 2000), en: str(p.description, 2000) || str(p.description_de, 2000) },
+      developer: str(p.developer, 80), icon: okHttp(p.icon) ? p.icon : '', shots: [], homepage: okHttp(p.source) ? p.source : '',
+      license: str(p.license, 160), featured: p.featured ? 5 : 0
+    });
+  }
+  return { items: out, skipped };
+}
+
+async function loadSource(src) {
+  src.status = 'loading'; src.skipped = 0;
+  const cacheKey = 'cloke.store.cache.' + src.id;
+  let raw = null;
+  try {
+    raw = await fetchJSON(src.url);
+    if (!isIndex(raw)) throw new Error('format');
+    src.status = 'live'; src.fetchedAt = Date.now(); safeLS.set(cacheKey, { at: src.fetchedAt, raw });
+  } catch (e) {
+    const c = safeLS.get(cacheKey, null);
+    if (c && isIndex(c.raw)) { raw = c.raw; src.status = 'cache'; src.fetchedAt = c.at; }
+    else if (src.builtin) { raw = SNAPSHOT; src.status = 'snapshot'; src.fetchedAt = 0; }
+    else { src.status = 'error'; raw = null; }
+  }
+  if (raw) {
+    if (!src.builtin && raw.repo && src.name === src.url) src.name = str(raw.repo, 60);
+    const n = normalize(raw, src); src.items = n.items; src.skipped = n.skipped; src.version = str(raw.version, 20);
+  } else { src.items = []; }
+  return src;
+}
+
+async function loadAll() {
+  loading = true; render();
+  SOURCES = [{ ...DEFAULT_SRC, enabled: defaultEnabled }, ...extSources.map(s => ({ ...s, builtin: false }))];
+  await Promise.all(SOURCES.filter(s => s.enabled).map(loadSource));
+  ITEMS = SOURCES.filter(s => s.enabled).flatMap(s => s.items || []);
+  loading = false;
+  await probe();
+  render();
+}
+
+/* ---------------- Dienst (nur mit clokestore.py) ---------------- */
+async function api(path, body) {
+  const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: { 'X-ClokeStore-Token': TOKEN, 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+  return j;
+}
+async function probe() {
+  if (!HELPER) return;
+  try {
+    const j = await api('/api/state', { items: ITEMS.map(i => ({ key: i.key, id: i.id, kind: i.kind, path: i.path, builtin: i.src.builtin })) });
+    sys = { arch: j.arch, cloke_app: j.cloke_app, installed: j.installed || {} };
+  } catch { /* Dienst weg: Anzeige bleibt */ }
+}
+if (HELPER) setInterval(() => api('/api/ping', {}).then(() => { lostToast = false; }).catch(() => { if (!lostToast) { lostToast = true; toast(t('toastLost'), true); } }), 15000);
+
+const cmpVer = (a, b) => {
+  const pa = String(a).split(/[.\-+]/), pb = String(b).split(/[.\-+]/);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? '0', y = pb[i] ?? '0', nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+    if (nx && ny) { if (+x !== +y) return +x < +y ? -1 : 1; }
+    else if (x !== y) return x < y ? -1 : 1;
+  }
+  return 0;
+};
+const inst = it => sys.installed[it.key] || null;
+const stateOf = it => jobs[it.key] ? 'working' : (inst(it) ? (it.version && inst(it).version && cmpVer(inst(it).version, it.version) < 0 ? 'update' : 'installed') : 'get');
+const pkgOf = it => it.pkg || it.arch[sys.arch] || Object.values(it.arch)[0];
+const updatesList = () => ITEMS.filter(i => stateOf(i) === 'update');
+
+/* ---------------- Bausteine ---------------- */
+const meta = it => KNOWN[it.id] && it.src.builtin ? KNOWN[it.id] : null;
+const nameOf = it => LANG === 'de' ? it.nameDe : it.name;
+const summaryOf = it => { const k = meta(it); return it.summary[LANG] || (k && k[LANG]) || t('cat_' + it.category); };
+const descOf = it => { const k = meta(it); return it.desc[LANG] || (k && (LANG === 'de' ? k.dd : k.ed)) || ''; };
+const grad = it => { const k = meta(it); return k?.c || GRADS[hash32(it.id) % GRADS.length]; };
+const lum = hex => { const n = parseInt(hex.slice(1), 16); const f = c => { c /= 255; return c <= .03928 ? c / 12.92 : ((c + .055) / 1.055) ** 2.4; }; return .2126 * f(n >> 16) + .7152 * f((n >> 8) & 255) + .0722 * f(n & 255); };
+const mixHex = (a, b, p) => { const A = parseInt(a.slice(1), 16), B = parseInt(b.slice(1), 16); const m = s => Math.round(((A >> s) & 255) * (1 - p) + ((B >> s) & 255) * p); return '#' + ((1 << 24) | (m(16) << 16) | (m(8) << 8) | m(0)).toString(16).slice(1); };
+function glyphOf(it) {
+  const k = meta(it); if (k?.g) return k.g;
+  if (it.kind === 'package') return 'box';
+  const n = (it.name + ' ' + it.id).toLowerCase();
+  const map = [[/calc|rechner/, 'calc'], [/calendar|kalender/, 'cal'], [/note|notiz/, 'note'], [/term|shell|konsole/, 'term'], [/browser|web|search|surf/, 'globe'], [/file|files|fundus|manager/, 'files'], [/setting|einstell|prefer/, 'sliders'], [/monitor|activity|pulse/, 'pulse'], [/disk|drive|platte/, 'disk'], [/wine|windows/, 'wine'], [/linux|tux/, 'tux'], [/tool|util/, 'tools']];
+  for (const [re, g] of map) if (re.test(n)) return g;
+  return null;
+}
+function iconHTML(it, size) {
+  const [c1, c2] = grad(it); const g = glyphOf(it);
+  const st = `--s:${size}px;background:linear-gradient(150deg,${c1},${c2})`;
+  const inner = g ? `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${G[g]}</svg>` : `<span class="ini" aria-hidden="true">${esc([...nameOf(it)][0]?.toUpperCase() || '?')}</span>`;
+  /* Eigenes Symbol der Quelle; lädt es nicht, tritt der Platzhalter (Glyphe oder Anfangsbuchstabe) an seine Stelle */
+  if (it.icon) return `<span class="icon" style="${st}" data-fb="${esc(inner)}"><img src="${esc(it.icon)}" alt="" loading="lazy" data-fallback="1"></span>`;
+  return `<span class="icon" style="${st}">${inner}</span>`;
+}
+function ring(pct) {
+  const r = 8, c = 2 * Math.PI * r;
+  if (pct == null) return `<svg class="ring indet" viewBox="0 0 20 20" aria-hidden="true"><circle class="trk" cx="10" cy="10" r="${r}"/><circle class="val" cx="10" cy="10" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${c * .72}"/></svg>`;
+  return `<svg class="ring" viewBox="0 0 20 20" aria-hidden="true"><circle class="trk" cx="10" cy="10" r="${r}"/><circle class="val" cx="10" cy="10" r="${r}" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - pct / 100)}"/></svg>`;
+}
+function getBtn(it, big, dark) {
+  const st = stateOf(it);
+  const cls = `get ${st} ${big ? 'big' : ''} ${dark ? 'on-dark' : ''}`;
+  const attrs = `data-key="${esc(it.key)}" data-big="${big ? 1 : 0}" data-dark="${dark ? 1 : 0}"`;
+  if (st === 'working') return `<button class="${cls}" ${attrs} disabled aria-label="${esc(t('installing'))}">${ring(jobs[it.key].pct)}</button>`;
+  if (st === 'installed') return `<button class="${cls}" ${attrs} data-act="noop" aria-label="${esc(t('installed') + ': ' + nameOf(it))}">${t('installed')}</button>`;
+  const label = st === 'update' ? t('update') : t('get');
+  return `<button class="${cls}" ${attrs} data-act="get" aria-label="${esc(label + ': ' + nameOf(it))}">${label}</button>`;
+}
+function refreshButtons(key) {
+  const it = ITEMS.find(i => i.key === key); if (!it) return;
+  $$('.get').filter(b => b.dataset.key === key).forEach(b => { b.outerHTML = getBtn(it, b.dataset.big === '1', b.dataset.dark === '1'); });
+  refreshBadge();
+}
+const href = it => '#/app/' + encodeURIComponent(it.key);
+const catName = it => t('cat_' + it.category);
+
+function row(it) {
+  return `<div class="row"><a class="row-main" href="${href(it)}">${iconHTML(it, 56)}<span class="t"><b>${esc(nameOf(it))}</b><span>${esc(summaryOf(it))}</span></span></a>${getBtn(it, false, false)}</div>`;
+}
+function rows(list, one) { return `<div class="rows${one ? ' one' : ''}">${list.map(row).join('')}</div>`; }
+
+/* Papercut-Kulisse für die großen Karten: geschichtetes Papier, vom Hintergrundbild von ClokeOS inspiriert */
+function paperArt(it) {
+  const [c1, c2] = grad(it); const id = 'p' + hash32(it.id);
+  let s = hash32(it.id + 'x') || 1; const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296;
+  const W = 800, H = 420, n = 5; let layers = '';
+  for (let i = 0; i < n; i++) {
+    const base = H * .42 + i * H * .115, pts = [];
+    for (let k = 0; k <= 5; k++) pts.push([W * k / 5, base + (rnd() - .5) * H * .26]);
+    let d = `M0 ${H} L0 ${pts[0][1].toFixed(1)}`;
+    for (let k = 1; k < pts.length; k++) { const [px, py] = pts[k - 1], [x, y] = pts[k]; d += ` Q${px.toFixed(1)} ${py.toFixed(1)} ${((px + x) / 2).toFixed(1)} ${((py + y) / 2).toFixed(1)}`; }
+    d += ` L${W} ${pts[5][1].toFixed(1)} L${W} ${H} Z`;
+    const col = mixHex(mixHex(c1, c2, .35 + i * .13), '#12061f', .06 + i * .09);
+    layers += `<path d="${d}" fill="${col}" filter="url(#${id})"/>`;
+  }
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMax slice" aria-hidden="true"><defs><linearGradient id="${id}g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${mixHex(c1, c2, .75)}"/></linearGradient><filter id="${id}" x="-5%" y="-30%" width="110%" height="160%"><feDropShadow dx="0" dy="-3" stdDeviation="5" flood-color="#10031f" flood-opacity=".38"/></filter></defs><rect width="${W}" height="${H}" fill="url(#${id}g)"/>${layers}</svg>`;
+}
+function hero(it, lead) {
+  const k = meta(it); const head = (k && (LANG === 'de' ? k.hd : k.he)) || nameOf(it); const [c1, c2] = grad(it);
+  const light = lum(mixHex(c1, c2, .3)) > .42; const g = glyphOf(it);
+  const mark = g ? `<svg class="mark" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${G[g]}</svg>` : '';
+  return `<article class="hero ${lead ? 'lead-card' : ''} ${light ? 'light' : ''}" data-href="${href(it)}" tabindex="0" role="link" aria-label="${esc(nameOf(it))}">
+    <div class="art">${paperArt(it)}</div>${mark}
+    <div class="copy"><h3>${esc(head)}</h3><p>${esc(summaryOf(it))}</p></div>
+    <div class="bar">${iconHTML(it, 46)}<span class="t"><b>${esc(nameOf(it))}</b><span>${esc(catName(it))}</span></span>${getBtn(it, false, !light)}</div>
+  </article>`;
+}
+function shelf(title, list, to) {
+  if (!list.length) return '';
+  return `<section class="shelf"><div class="shelf-head"><h2>${esc(title)}</h2>${to ? `<a class="more" href="${to}">${t('seeAll')}</a>` : ''}</div>${rows(list)}</section>`;
+}
+const bannerOffline = () => SOURCES.some(s => s.enabled && s.status === 'cache' || s.enabled && s.status === 'snapshot') ? `<div class="banner warn" role="status">${t('offlineBanner')}</div>` : '';
+
+/* ---------------- Seiten ---------------- */
+function pageDiscover() {
+  const apps = ITEMS.filter(i => i.kind === 'app'), pk = ITEMS.filter(i => i.kind === 'package');
+  const feat = [...ITEMS].sort((a, b) => ((meta(a)?.featured || a.featured || 9) - (meta(b)?.featured || b.featured || 9)));
+  const picks = feat.filter(i => (meta(i)?.featured || i.featured)).concat(feat.filter(i => !(meta(i)?.featured || i.featured) && i.category === 'addon')).slice(0, 3);
+  const heroList = picks.length ? picks : feat.slice(0, 3);
+  const extra = SOURCES.filter(s => s.enabled && !s.builtin && s.items?.length);
+  return `<div class="page"><div class="page-head"><div><h1>${t('discover')}</h1></div></div>${bannerOffline()}
+    ${heroList.length ? `<div class="heroes">${heroList.map((it, i) => hero(it, i === 0)).join('')}</div>` : ''}
+    ${shelf(t('addon'), apps.filter(i => i.category === 'addon' && i.src.builtin), '#/c/addon')}
+    ${shelf(t('system'), apps.filter(i => i.category === 'system'), '#/c/system')}
+    ${shelf(t('package'), pk.filter(i => i.src.builtin), '#/c/package')}
+    ${extra.map(s => shelf(t('from', s.name), s.items.slice(0, 6), '#/s/' + encodeURIComponent(s.id))).join('')}</div>`;
+}
+function pageList(title, lead, list) {
+  return `<div class="page"><div class="page-head"><div><h1>${esc(title)}</h1><p class="lead">${lead}</p></div></div>${bannerOffline()}${list.length ? rows(list) : `<div class="empty"><h2>${t('noResults')}</h2></div>`}</div>`;
+}
+function pageCategory(cat) {
+  const list = ITEMS.filter(i => i.category === cat).sort((a, b) => nameOf(a).localeCompare(nameOf(b), LANG));
+  return pageList(t(cat), t({ system: 'sysLead', addon: 'addonLead', package: 'pkgLead' }[cat]), list);
+}
+function pageAll() {
+  const list = [...ITEMS].sort((a, b) => nameOf(a).localeCompare(nameOf(b), LANG));
+  const n = SOURCES.filter(s => s.enabled).length;
+  return pageList(t('allApps'), t('allAppsLead', ITEMS.filter(i => i.kind === 'app').length, ITEMS.filter(i => i.kind === 'package').length, n), list);
+}
+function pageSource(id) {
+  const s = SOURCES.find(x => x.id === id);
+  if (!s) return pageNotFound();
+  return pageList(s.name, esc(s.url), s.items || []);
+}
+function matches(it, q) {
+  const h = [it.name, it.nameDe, it.id, it.summary.de, it.summary.en, meta(it)?.de, meta(it)?.en, it.developer, t('cat_' + it.category)].join(' ').toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w => h.includes(w));
+}
+function pageSearch(q) {
+  const list = ITEMS.filter(i => matches(i, q)).sort((a, b) => nameOf(a).localeCompare(nameOf(b), LANG));
+  if (!list.length) return `<div class="page"><div class="empty"><h2>${t('noResults')}</h2><p>${t('noResultsTxt', esc(q))}</p></div></div>`;
+  return `<div class="page"><div class="page-head"><h1>${t('results', esc(q))}</h1></div>${rows(list, true)}</div>`;
+}
+function pageNotFound() { return `<div class="page"><div class="empty"><h2>${t('notFound')}</h2><p>${t('notFoundTxt')}</p><a class="btn primary" href="#/discover" style="display:inline-grid;place-items:center">${t('discover')}</a></div></div>`; }
+
+function pageDetail(key) {
+  const it = ITEMS.find(i => i.key === key); if (!it) return pageNotFound();
+  const pk = pkgOf(it); const k = meta(it);
+  let size = fmtSize(pk?.size);
+  if (it.kind === 'package' && !sys.arch) { const sizes = Object.values(it.arch).map(a => a.size).filter(Boolean).sort((a, b) => a - b); if (sizes.length > 1) size = t('sizeRange', fmtSize(sizes[0]), fmtSize(sizes[sizes.length - 1])); }
+  const archVal = it.kind === 'package' ? (sys.arch || Object.keys(it.arch).join(', ') || t('archAll')) : t('archAll');
+  const recs = it.recommends.map(id => ITEMS.find(x => x.src === it.src && x.id === id)).filter(Boolean);
+  const d = descOf(it);
+  const st = inst(it);
+  const note = k?.x86only ? `<div class="d-note"><span aria-hidden="true">⚠︎</span><span>${t('archNote')}</span></div>` : '';
+  const canRemove = HELPER && st?.managed;
+  return `<div class="page"><button class="back" data-act="back"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4-6 6 6 6"/></svg>${t('back')}</button>
+    <div class="d-head">${iconHTML(it, 132)}
+      <div class="d-title"><h1>${esc(nameOf(it))}</h1><p class="d-sub">${esc(summaryOf(it))}</p>
+        <div class="d-src">${it.developer ? esc(t('fromSrc', it.developer)) + ' · ' : ''}<a href="#/s/${encodeURIComponent(it.src.id)}">${esc(it.src.name)}</a></div>
+        <div class="d-act">${getBtn(it, true, false)}${canRemove ? `<button class="btn danger" data-act="remove" data-key="${esc(it.key)}">${t('remove')}</button>` : ''}</div>${note}
+      </div></div>
+    <div class="strip">
+      <div><small>${t('version')}</small><b>${esc(it.version || '–')}</b><span>${st?.version && st.version !== it.version ? esc(t('installed') + ' ' + st.version) : '&nbsp;'}</span></div>
+      <div><small>${t('size')}</small><b>${esc(size)}</b><span>${it.kind === 'package' ? 'tgz' : 'tgz'}</span></div>
+      <div><small>${t('category')}</small><b>${esc(catName(it))}</b><span>${it.kind === 'app' ? '.app' : esc(it.install || '')}</span></div>
+      <div><small>${t('arch')}</small><b>${esc(archVal)}</b><span>&nbsp;</span></div>
+      <div><small>${t('source')}</small><b>${esc(it.src.name)}</b><span>${it.src.builtin ? t('srcDefault') : '&nbsp;'}</span></div>
+    </div>
+    ${it.shots.length ? `<section class="block"><h2>${t('preview')}</h2><div class="shots">${it.shots.map(u => `<img src="${esc(u)}" alt="" loading="lazy" data-fallback="1">`).join('')}</div></section>` : ''}
+    <section class="block"><h2>${t('description')}</h2>${d ? d.split(/\n{2,}/).map(p => `<p>${esc(p)}</p>`).join('') : `<p style="color:var(--ink-2)">${t('noDesc')}</p>`}</section>
+    ${recs.length ? `<section class="block"><h2>${t('recommended')}</h2>${rows(recs, true)}</section>` : ''}
+    <section class="block"><h2>${t('info')}</h2><dl class="info">
+      <div><dt>${t('ident')}</dt><dd class="mono">${esc(it.id)}</dd></div>
+      <div><dt>${t('version')}</dt><dd>${esc(it.version || '–')}</dd></div>
+      ${it.path ? `<div><dt>${t('path')}</dt><dd class="mono">${esc(it.src.builtin ? it.path : '~/Applications/' + it.path.split('/').pop())}</dd></div>` : ''}
+      ${it.license ? `<div><dt>${t('license')}</dt><dd>${esc(it.license)}</dd></div>` : ''}
+      ${pk ? `<div><dt>${t('checksum')}</dt><dd class="mono"><button class="copy-link" data-act="copy" data-text="${esc(pk.sha256)}" title="${esc(t('copy'))}">${esc(pk.sha256.slice(0, 16))}…</button></dd></div>
+      <div><dt>${t('pkgfile')}</dt><dd><a class="copy-link" href="${esc(pk.url)}" rel="noopener noreferrer" target="_blank">${esc(pk.url.split('/').pop())}</a></dd></div>` : ''}
+      ${it.homepage ? `<div><dt>${t('homepage')}</dt><dd><a class="copy-link" href="${esc(it.homepage)}" rel="noopener noreferrer" target="_blank">${esc(new URL(it.homepage).host)}</a></dd></div>` : ''}
+    </dl></section></div>`;
+}
+
+function pageUpdates() {
+  if (!HELPER) return `<div class="page"><div class="page-head"><h1>${t('upTitle')}</h1></div><div class="empty"><h2>${t('upNoHelper')}</h2><p>${t('upNoHelperTxt')}</p></div></div>`;
+  const up = updatesList(), done = ITEMS.filter(i => inst(i) && stateOf(i) !== 'update');
+  return `<div class="page"><div class="page-head"><div><h1>${t('upTitle')}</h1></div>${up.length ? `<button class="btn primary" data-act="update-all">${t('upAll')}</button>` : ''}</div>
+    ${up.length ? shelf(t('upAvail'), up) : `<div class="empty" style="padding:36px"><h2>${t('upNone')}</h2><p>${t('upNoneTxt')}</p></div>`}
+    ${done.length ? shelf(t('upInstalled'), done) : ''}</div>`;
+}
+
+const statusChip = s => ({ live: ['ok', t('srcLive')], cache: ['warn', t('srcCache')], snapshot: ['warn', t('srcSnap')], error: ['err', t('srcErr')], loading: ['', '…'] }[s.status] || ['', '']);
+function pageSources() {
+  const logo = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>';
+  return `<div class="page"><div class="page-head"><div><h1>${t('srcTitle')}</h1><p class="lead">${t('srcLead')}</p></div><button class="btn primary" data-act="add-source">${t('srcAdd')}</button></div>
+    ${SOURCES.map(s => { const [cls, txt] = statusChip(s); const apps = (s.items || []).filter(i => i.kind === 'app').length, pk = (s.items || []).filter(i => i.kind === 'package').length;
+      return `<div class="src"><div class="logo">${logo}</div><div><b>${esc(s.name)}</b>${s.builtin ? `<span class="chip">${t('srcDefault')}</span>` : ''}${s.enabled ? `<span class="chip ${cls}">${esc(txt)}</span>` : ''}
+        <div class="u">${esc(s.url)}</div><div class="meta">${s.enabled ? `<span>${cnt('srcCount', apps)}</span>${pk ? `<span>${cnt('srcPkgCount', pk)}</span>` : ''}${s.version ? `<span>${t('version')} ${esc(s.version)}</span>` : ''}${s.skipped ? `<span>${t('srcSkipped', s.skipped)}</span>` : ''}${s.fetchedAt ? `<span>${esc(new Date(s.fetchedAt).toLocaleString(LANG))}</span>` : ''}` : ''}</div></div>
+        <div class="ctl">${s.builtin ? '' : `<button class="btn danger" data-act="remove-source" data-id="${esc(s.id)}">${t('srcRemove')}</button>`}<button class="switch" role="switch" aria-checked="${s.enabled ? 'true' : 'false'}" aria-label="${esc(s.name)}" data-act="toggle-source" data-id="${esc(s.id)}"></button></div></div>`; }).join('')}
+    <div style="margin-top:18px"><button class="btn" data-act="reload">${t('srcReload')}</button></div>
+    <div class="note">${t('srcNote')}</div></div>`;
+}
+
+/* ---------------- Router ---------------- */
+const NAV = {
+  discover: '<path d="m12 3 2.400 5.600L20 11l-5.600 2.400L12 19l-2.400-5.600L4 11l5.600-2.400z"/>',
+  apps: '<rect x="4" y="4" width="6.500" height="6.500" rx="1.500"/><rect x="13.500" y="4" width="6.500" height="6.500" rx="1.500"/><rect x="4" y="13.500" width="6.500" height="6.500" rx="1.500"/><rect x="13.500" y="13.500" width="6.500" height="6.500" rx="1.500"/>',
+  system: '<rect x="5" y="5" width="14" height="14" rx="2.500"/><path d="M9 2.500V5M15 2.500V5M9 19v2.500M15 19v2.500M2.500 9H5M2.500 15H5M19 9h2.500M19 15h2.500"/>',
+  addon: '<path d="M10 4h4v3.500a1.500 1.500 0 0 0 3 0V4h3v6h-3.500a1.500 1.500 0 0 0 0 3H20v7h-6v-3.500a1.500 1.500 0 0 0-3 0V20H4v-7h3.500a1.500 1.500 0 0 0 0-3H4V4z"/>',
+  package: '<path d="M12 3 20 7v10l-8 4-8-4V7z"/><path d="m4 7 8 4 8-4M12 11v10"/>',
+  updates: '<circle cx="12" cy="12" r="9"/><path d="M12 7.500v7M8.800 11.800 12 15l3.200-3.200"/>',
+  sources: '<path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/>'
+};
+function parseRoute() {
+  const h = decodeURIComponent((location.hash || '#/discover').slice(1)); const p = h.split('/').filter(Boolean);
+  const [a, b] = [p[0] || 'discover', p.slice(1).join('/')];
+  return { name: a, arg: b };
+}
+function navHTML(id, label, cur, extra = '') {
+  return `<a href="#/${id}" ${cur ? 'aria-current="page"' : ''}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV[id.replace('c/', '')]}</svg>${esc(label)}${extra}</a>`;
+}
+function refreshBadge() { const b = $('#upbadge'); if (!b) return; const n = updatesList().length; b.hidden = !n; b.textContent = n; }
+function renderChrome(r) {
+  const cur = r.name === 'c' ? 'c/' + r.arg : r.name;
+  $('#nav-main').innerHTML = navHTML('discover', t('discover'), cur === 'discover') + navHTML('apps', t('apps'), cur === 'apps');
+  $('#nav-cat').innerHTML = `<div class="nav-title">${t('categories')}</div>` + ['system', 'addon', 'package'].map(c => navHTML('c/' + c, t(c), cur === 'c/' + c)).join('');
+  const n = HELPER ? updatesList().length : 0;
+  $('#nav-rest').innerHTML = `<div class="nav-title">&nbsp;</div>` + navHTML('updates', t('updates'), cur === 'updates', `<span class="badge" id="upbadge" ${n ? '' : 'hidden'}>${n}</span>`) + navHTML('sources', t('sources'), cur === 'sources');
+  $('#q').placeholder = t('search'); $('#qlabel').textContent = t('search');
+  const c = $('#conn'); c.className = 'conn' + (HELPER ? ' on' : ''); c.querySelector('span').textContent = HELPER ? t('connOn') : t('connOff');
+  $$('.seg button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.lang === LANG)));
+  document.documentElement.lang = LANG;
+}
+function render() {
+  const r = parseRoute(); renderChrome(r);
+  const main = $('#main');
+  if (loading) { main.innerHTML = `<div class="page"><div class="page-head"><h1>${t('loading')}</h1></div><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>`; return; }
+  let html;
+  switch (r.name) {
+    case 'discover': html = pageDiscover(); break;
+    case 'apps': html = pageAll(); break;
+    case 'c': html = ['system', 'addon', 'package'].includes(r.arg) ? pageCategory(r.arg) : pageNotFound(); break;
+    case 'app': html = pageDetail(r.arg); break;
+    case 'search': html = pageSearch(r.arg); break;
+    case 'updates': html = pageUpdates(); break;
+    case 'sources': html = pageSources(); break;
+    case 's': html = pageSource(r.arg); break;
+    default: html = pageNotFound();
+  }
+  main.innerHTML = html;
+  document.title = 'Cloke Store';
+}
+let lastScrollKey = '';
+function onRoute() {
+  const r = parseRoute();
+  if (r.name !== 'search') { const q = $('#q'); if (q.value) q.value = ''; }
+  render();
+  const key = r.name + '/' + r.arg;
+  if (key !== lastScrollKey && r.name !== 'search') $('#main').scrollTop = 0, window.scrollTo(0, 0);
+  lastScrollKey = key;
+}
+
+/* ---------------- Aktionen ---------------- */
+function toast(msg, err) {
+  $$('.toast').forEach(x => x.remove());
+  const el = document.createElement('div'); el.className = 'toast' + (err ? ' err' : ''); el.setAttribute('role', 'status'); el.textContent = msg; document.body.appendChild(el);
+  setTimeout(() => el.remove(), err ? 6000 : 3000);
+}
+async function copyText(s) {
+  try { await navigator.clipboard.writeText(s); } catch {
+    const ta = document.createElement('textarea'); ta.value = s; ta.style.cssText = 'position:fixed;opacity:0'; document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); } catch {} ta.remove();
+  }
+  toast(t('copied'));
+}
+function openSheet(html, onMount) {
+  closeSheet();
+  const layer = $('#layer'); layer.innerHTML = `<div class="scrim" data-act="scrim"><div class="sheet" role="dialog" aria-modal="true">${html}</div></div>`;
+  layer.dataset.prev = document.activeElement?.id || '';
+  onMount?.(layer.querySelector('.sheet'));
+  (layer.querySelector('input,button.primary,button') || layer).focus();
+}
+function closeSheet() { $('#layer').innerHTML = ''; }
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('#layer .scrim')) closeSheet();
+  if ((e.key === 'Enter' || e.key === ' ') && e.target.matches?.('.hero')) { e.preventDefault(); location.hash = e.target.dataset.href; }
+  if (e.key === '/' && !/input|textarea/i.test(document.activeElement?.tagName || '')) { e.preventDefault(); $('#q').focus(); }
+});
+
+function openHow(it) {
+  const pk = pkgOf(it);
+  const body = it.src.builtin
+    ? `<p>${t('howDefault')}</p><div class="cmd"><span>cloke install ${esc(it.id)}</span><button class="btn" data-act="copy" data-text="cloke install ${esc(it.id)}">${t('copy')}</button></div>`
+    : `<p>${t('howExt')}</p><div class="cmd"><span>${esc(pk.url)}</span><button class="btn" data-act="copy" data-text="${esc(pk.url)}">${t('copy')}</button></div><div class="cmd"><span>sha256 ${esc(pk.sha256)}</span><button class="btn" data-act="copy" data-text="${esc(pk.sha256)}">${t('copy')}</button></div>`;
+  openSheet(`<h2>${esc(t('howTitle', nameOf(it)))}</h2><p>${t('howTxt')}</p>${body}<div class="actions"><button class="btn primary" data-act="close">${t('close')}</button></div>`);
+}
+
+async function startInstall(it) {
+  if (!HELPER) { openHow(it); return; }
+  if (jobs[it.key]) return;
+  const builtin = it.src.builtin, wasUpdate = stateOf(it) === 'update';
+  jobs[it.key] = { pct: null }; refreshButtons(it.key);
+  try {
+    const { job } = await api('/api/install', { key: it.key, source: builtin ? 'default' : 'external', id: it.id, kind: it.kind, name: it.name, version: it.version, path: it.path, category: it.category, install: it.install || '', pkg: it.pkg, arch: it.arch || null, src: it.src.url });
+    for (;;) {
+      await new Promise(r => setTimeout(r, 450));
+      const j = await api('/api/jobs/' + encodeURIComponent(job));
+      jobs[it.key].pct = j.pct ?? null; refreshButtons(it.key);
+      if (j.state === 'done') break;
+      if (j.state === 'error') throw new Error(j.message || 'error');
+    }
+    delete jobs[it.key]; await probe(); refreshButtons(it.key); render();
+    toast(t(wasUpdate ? 'toastUpdated' : 'toastInstalled', nameOf(it)));
+  } catch (e) {
+    delete jobs[it.key]; refreshButtons(it.key); toast(t('toastFail', nameOf(it), e.message), true);
+  }
+}
+async function removeItem(it) {
+  try { await api('/api/remove', { key: it.key }); await probe(); render(); toast(t('toastRemoved', nameOf(it))); }
+  catch (e) { toast(t('toastFail', nameOf(it), e.message), true); }
+}
+
+/* Quelle hinzufügen */
+function candidates(input) {
+  const s = input.trim(); if (!s) return { error: 'addEmpty' };
+  let m;
+  if ((m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+)\/blob\/([^/]+)\/(.+?)\/?$/i))) return { urls: [`https://raw.githubusercontent.com/${m[1]}/${m[2]}/${m[3]}/${m[4]}`] };
+  if ((m = s.match(/^(?:https?:\/\/)?(?:www\.)?github\.com\/([\w.-]+)\/([\w.-]+?)(?:\.git)?(?:\/tree\/([^/]+))?\/?$/i))) {
+    const [, o, r, b] = m; return { urls: (b ? [b] : ['main', 'master']).map(br => `https://raw.githubusercontent.com/${o}/${r}/${br}/index.json`) };
+  }
+  if ((m = s.match(/^([\w.-]+)\/([\w.-]+)$/)) && !/^https?:/i.test(s)) return { urls: ['main', 'master'].map(br => `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${br}/index.json`) };
+  let u; try { u = new URL(/^[a-z]+:\/\//i.test(s) ? s : 'https://' + s); } catch { return { error: 'addBad' }; }
+  if (!okHttp(u.href)) return { error: 'addProto' };
+  return { urls: [/\.json$/i.test(u.pathname) ? u.href : u.href.replace(/\/?$/, '/') + 'index.json'] };
+}
+function openAddSource() {
+  let found = null;
+  openSheet(`<h2>${t('addTitle')}</h2><p>${t('addTxt')}</p>
+    <div class="field"><input type="text" id="src-in" placeholder="${esc(t('addPh'))}" autocomplete="off" spellcheck="false" aria-label="${esc(t('addTitle'))}"><button class="btn primary" id="src-check">${t('addCheck')}</button></div>
+    <div class="hint">${t('addHint')}</div><div id="src-out"></div>
+    <div class="actions"><button class="btn" data-act="close">${t('cancel')}</button><button class="btn primary" id="src-add" disabled>${t('addDo')}</button></div>`, sheet => {
+    const inp = $('#src-in', sheet), out = $('#src-out', sheet), add = $('#src-add', sheet), chk = $('#src-check', sheet);
+    const say = (cls, html) => { out.innerHTML = html ? `<div class="msg ${cls}">${html}</div>` : ''; };
+    const check = async () => {
+      found = null; add.disabled = true; const c = candidates(inp.value);
+      if (c.error) { say('err', t(c.error)); return; }
+      say('', t('checking')); chk.disabled = true;
+      let hit = null;
+      for (const url of c.urls) {
+        if (SOURCES.some(s => s.url === url)) { say('err', t('addDup')); chk.disabled = false; return; }
+        try { const j = await fetchJSON(url); if (isIndex(j)) { hit = { url, j }; break; } } catch { /* nächster Kandidat */ }
+      }
+      chk.disabled = false;
+      if (!hit) { say('err', t('addBad') + ' ' + t('addNet')); return; }
+      const name = str(hit.j.repo || hit.j.name || new URL(hit.url).host, 60);
+      const n = normalize(hit.j, { id: 'tmp', builtin: false, url: hit.url });
+      found = { url: hit.url, name, apps: n.items.filter(i => i.kind === 'app').length, pk: n.items.filter(i => i.kind === 'package').length };
+      out.innerHTML = `<div class="found"><b>${esc(t('addFound', name))}</b><span>${esc(cnt('srcCount', found.apps))}${found.pk ? ' · ' + esc(cnt('srcPkgCount', found.pk)) : ''}</span><div class="u mono" style="margin-top:4px;color:var(--ink-3);overflow-wrap:anywhere">${esc(hit.url)}</div></div><div class="msg" style="color:var(--warn)">${t('addWarn')}</div>`;
+      add.disabled = false;
+    };
+    chk.addEventListener('click', check);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); check(); } });
+    inp.addEventListener('input', () => { found = null; add.disabled = true; });
+    add.addEventListener('click', async () => {
+      if (!found) return;
+      extSources.push({ id: 's' + hash32(found.url).toString(36), url: found.url, name: found.name, enabled: true }); saveSources();
+      closeSheet(); toast(t('toastSrcAdded', found.name)); await loadAll();
+    });
+  });
+}
+
+document.addEventListener('click', e => {
+  const act = e.target.closest('[data-act]');
+  if (act) {
+    const a = act.dataset.act, key = act.dataset.key;
+    if (a === 'scrim') { if (e.target === act) closeSheet(); return; }
+    if (a === 'noop') return;
+    if (a === 'get') { e.stopPropagation(); const it = ITEMS.find(i => i.key === key); if (it) startInstall(it); return; }
+    if (a === 'close') { closeSheet(); return; }
+    if (a === 'back') { history.length > 1 ? history.back() : (location.hash = '#/discover'); return; }
+    if (a === 'copy') { copyText(act.dataset.text); return; }
+    if (a === 'remove') { const it = ITEMS.find(i => i.key === key); if (it) removeItem(it); return; }
+    if (a === 'lang') { LANG = act.dataset.lang; safeLS.set('cloke.store.lang', LANG); render(); return; }
+    if (a === 'add-source') { openAddSource(); return; }
+    if (a === 'reload') { loadAll(); return; }
+    if (a === 'remove-source') { extSources = extSources.filter(s => s.id !== act.dataset.id); saveSources(); toast(t('toastSrcRemoved')); loadAll(); return; }
+    if (a === 'toggle-source') {
+      const id = act.dataset.id;
+      if (id === 'default') defaultEnabled = !defaultEnabled; else { const s = extSources.find(x => x.id === id); if (s) s.enabled = !s.enabled; }
+      saveSources(); loadAll(); return;
+    }
+    if (a === 'update-all') { (async () => { for (const it of updatesList()) await startInstall(it); })(); return; }
+  }
+  const card = e.target.closest('[data-href]');
+  if (card && !e.target.closest('a,button')) location.hash = card.dataset.href;
+});
+document.addEventListener('error', e => {
+  const el = e.target;
+  if (el instanceof HTMLImageElement && el.dataset.fallback) {
+    const icon = el.closest('.icon');
+    if (icon && icon.dataset.fb) icon.innerHTML = icon.dataset.fb;      // Inhalt stammt aus iconHTML (Glyphe oder escapter Buchstabe)
+    else if (icon) el.remove(); else el.style.display = 'none';
+  }
+}, true);
+
+let qTimer;
+$('.search').addEventListener('submit', e => e.preventDefault());
+$('#q').addEventListener('input', e => {
+  clearTimeout(qTimer); const v = e.target.value.trim();
+  qTimer = setTimeout(() => {
+    const target = v ? '#/search/' + encodeURIComponent(v) : '#/discover';
+    if (location.hash.startsWith('#/search/') && v) history.replaceState(null, '', target), render(); else location.hash = target;
+  }, 120);
+});
+window.addEventListener('hashchange', onRoute);
+
+loadAll().then(() => { lastScrollKey = ''; });
+})();
+</script>
+</body>
+</html>

@@ -53,4 +53,4 @@ Not root: user scope. `--system`: write directly where the folder is writable (o
 - Searching apk needs an up-to-date Alpine index (`cloke update` as root refreshes it); Alpine installs are system-wide only.
 - Casks (macOS GUI apps from Homebrew) are for real Macs; most will not run on ClokeOS.
 - Signatures: only SHA-256 from the index (which comes from GitHub over https).
-- No graphical store yet ("Programme/Store"); the optional GUI was left out.
+- Cloke Store (`store/README.md`, app in `overlay-desktop/System/Applications/ClokeStore.app`): tested in the arm64 VM (launch from Launchpad, page renders in WebKit-Search, install and remove of Dillo through the service API with real `cloke`, install of the WebKit package). Not tested: clicking Install in the page, external sources against real GitHub, x86_64. Needs `webkit` installed; the image does not ship it, so without it the Store opens in whatever browser exists and NetSurf cannot show it.
