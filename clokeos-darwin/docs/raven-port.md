@@ -298,5 +298,9 @@ Checked in the VM: the Inno Setup Compiler appears in the launchpad with its own
 is `raven.native` for every program, so the global menu bar names every Windows program "raven.native" (a per-program class is
 the next step, and needs the title-bar session's answer, see below); programs with more than one shortcut get the first.
 
-Layout of the prefix: `$RAVEN_PREFIX` (ClokeOS: `~/Library/Raven`) holds `drive_c/` with the NT tree (`Windows`, `Program Files`,
-`Program Files (x86)`, `ProgramData`, `Users/<name>`), `registry.dat` and snapshots; more drives would be `drive_<letter>/`.
+Layout of the prefix (renamed 2026-11-07): `$RAVEN_PREFIX` (ClokeOS: `~/Library/Raven`) holds `NT/` (the C: drive, as on Windows: `Windows`,
+`Program Files`, `Program Files (x86)`, `ProgramData`, `Users/<name>`), `Volumes/<letter>/` for other drives, `registry.dat` and the
+snapshots. So `C:\Windows\` is `~/Library/Raven/NT/Windows/`, `C:\Users\root\` is `.../NT/Users/root/`. `RAVEN_C_DRIVE=<folder>` puts
+the C: drive somewhere else (for example a shared `/NT`). A prefix from before the rename (`drive_c`, `windows`, `drive_<x>`) is
+renamed when it is opened (NativePrefix, nt/prefix.cpp); the shortcuts' start scripts are rewritten by the next `--install-menu`.
+Checked in the VM: the old prefix migrated, `dir C:\Windows` lists `NT/Windows`, the Inno Setup bundle was rewritten to the new path.

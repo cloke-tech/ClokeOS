@@ -471,7 +471,7 @@ index 0616ece..7be193b 100644
  	if (!presentation.present) return;
  	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
 diff --git a/native/main.cpp b/native/main.cpp
-index 7fab6e2..4600f7d 100644
+index 7fab6e2..5a105ba 100644
 --- a/native/main.cpp
 +++ b/native/main.cpp
 @@ -39,6 +39,7 @@
@@ -537,15 +537,36 @@ index 7fab6e2..4600f7d 100644
  						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
  							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
  									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
-@@ -336,7 +352,7 @@ int main(int argc, char **argv)
+@@ -318,7 +334,7 @@ int main(int argc, char **argv)
+ 								// The 64-bit Registry Editor lives in the Windows folder itself.
+ 								const bool windows_folder = std::string_view(program) == "regedit.exe" && std::string_view(folder) == "system32";
+ 								const auto source_file = from / program,
+-									target = windows_folder ? prefix.root() / "drive_c" / "windows" / program : prefix.root() / "drive_c" / "windows" / folder / program;
++									target = windows_folder ? prefix.windows_directory() / program : prefix.windows_directory() / folder / program;
+ 								if (!std::filesystem::exists(source_file, error))
+ 									continue;
+ 								if (std::filesystem::exists(target, error) && std::filesystem::file_size(target, error) == std::filesystem::file_size(source_file, error) &&
+@@ -336,9 +352,9 @@ int main(int argc, char **argv)
  								const auto file = from / server;
  								if (std::filesystem::exists(file, error))
  									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
 -										std::to_string(std::filesystem::last_write_time(file, error).time_since_epoch().count()) + "\n";
 +										std::to_string(static_cast<long long>(std::filesystem::last_write_time(file, error).time_since_epoch().count())) + "\n";
  							}
- 						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
+-						const auto marker = prefix.root() / "drive_c" / "windows" / "raven-registered.txt";
++						const auto marker = prefix.windows_directory() / "raven-registered.txt";
  						std::string recorded;
+ 						if (std::ifstream input(marker); input)
+ 							recorded.assign(std::istreambuf_iterator<char>(input), {});
+@@ -347,7 +363,7 @@ int main(int argc, char **argv)
+ 							// The prefix counts as registered only when every registration succeeded; a failed one is tried again next time.
+ 							bool registered = true;
+ 							for (const char *folder : {"system32", "syswow64"}) {
+-								const auto program = prefix.root() / "drive_c" / "windows" / folder / "regsvr32.exe";
++								const auto program = prefix.windows_directory() / folder / "regsvr32.exe";
+ 								if (!std::filesystem::exists(program))
+ 									continue;
+ 								for (const char *server : servers) {
 @@ -357,7 +373,7 @@ int main(int argc, char **argv)
  										// Setup is quiet: only a failure says anything, on standard error.
  										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
@@ -555,6 +576,24 @@ index 7fab6e2..4600f7d 100644
  										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
  											server, static_cast<char *>(nullptr));
  										::_exit(127);
+@@ -385,7 +401,7 @@ int main(int argc, char **argv)
+ 						}
+ 					}
+ 					// The libraries installed for every program, in the system directory of the program's width.
+-					const auto system_directory = prefix.root() / "drive_c" / "windows" / (entry->image.is_64 ? "system32" : "syswow64");
++					const auto system_directory = prefix.windows_directory() / (entry->image.is_64 ? "system32" : "syswow64");
+ 					// The program's own manifest names the side-by-side assemblies its libraries come from; it is read from the file, as the
+ 					// first libraries are found before the process exists.
+ 					{
+@@ -396,7 +412,7 @@ int main(int argc, char **argv)
+ 								manifest.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
+ 								break;
+ 							}
+-						raven::activation_contexts().prepare(prefix.root() / "drive_c" / "windows" / "WinSxS" / "Manifests", entry->image.is_64, manifest,
++						raven::activation_contexts().prepare(prefix.windows_directory() / "WinSxS" / "Manifests", entry->image.is_64, manifest,
+ 							std::filesystem::absolute(argv[first_file]).parent_path());
+ 					}
+ 					// A library of the other width is passed over, as the Windows loader goes on searching past it.
 @@ -428,7 +444,7 @@ int main(int argc, char **argv)
  					// known once the program's launch is (below), before its libraries are loaded.
  					std::vector<std::filesystem::path> later_folders;
@@ -618,7 +657,7 @@ index 7fab6e2..4600f7d 100644
  			throw std::runtime_error("native execution requires an x86-64 Linux host");
 diff --git a/native/menu.h b/native/menu.h
 new file mode 100644
-index 0000000..acf9120
+index 0000000..3564449
 --- /dev/null
 +++ b/native/menu.h
 @@ -0,0 +1,387 @@
@@ -924,7 +963,7 @@ index 0000000..acf9120
 +inline int install(const NativePrefix &prefix, const fs::path &applications)
 +{
 +	std::vector<fs::path> links;
-+	const fs::path root = prefix.root() / "drive_c";
++	const fs::path root = prefix.c_drive();
 +	collect(root / "ProgramData/Microsoft/Windows/Start Menu/Programs", links);
 +	std::error_code ec;
 +	if (fs::is_directory(root / "Users", ec))
@@ -1185,10 +1224,16 @@ index e870fd7..f7a1992 100644
  		void *mapped = ::mmap(nullptr, sizeof(Shared), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
  		if (mapped == MAP_FAILED)
 diff --git a/native/nt/font_service.cpp b/native/nt/font_service.cpp
-index 8c089c3..51a2ba8 100644
+index 8c089c3..d537d5b 100644
 --- a/native/nt/font_service.cpp
 +++ b/native/nt/font_service.cpp
-@@ -117,7 +117,7 @@ std::vector<uint8_t> scan_fonts()
+@@ -112,12 +112,12 @@ std::vector<uint8_t> scan_fonts()
+ 	std::error_code error;
+ 	std::vector<std::filesystem::path> roots;
+ 	try {
+-		const auto installed = NativePrefix::from_environment().root() / "drive_c" / "windows" / "Fonts";
++		const auto installed = NativePrefix::from_environment().windows_directory() / "Fonts";
+ 		if (std::filesystem::is_directory(installed, error))
  			roots.push_back(installed);
  	} catch (const std::exception &) {}
  	// The fonts Raven bundles, such as the Raven Sans dialog faces, then the host's.
@@ -1227,6 +1272,115 @@ index 068df1d..aaa3822 100644
  			throw std::runtime_error("invalid mutex storage");
  		void *mapped = ::mmap(nullptr, sizeof(MutexState), PROT_READ | PROT_WRITE, MAP_SHARED, descriptor, 0);
  		if (mapped == MAP_FAILED)
+diff --git a/native/nt/paths.cpp b/native/nt/paths.cpp
+index f6d85f9..50f4f28 100644
+--- a/native/nt/paths.cpp
++++ b/native/nt/paths.cpp
+@@ -160,7 +160,7 @@ std::optional<std::filesystem::path> NativePaths::drive_root(char16_t letter) co
+ 		return std::nullopt;
+ 	if (letter == u'z')
+ 		return std::filesystem::path("/");
+-	auto root = prefix.root() / (std::string("drive_") + char(letter));
++	auto root = letter == u'c' ? prefix.c_drive() : prefix.drive_directory(char(letter));
+ 	std::error_code ignored;
+ 	if (letter != u'c' && !std::filesystem::is_directory(root, ignored))
+ 		return std::nullopt;
+diff --git a/native/nt/prefix.cpp b/native/nt/prefix.cpp
+index 77e12b3..2b77d70 100644
+--- a/native/nt/prefix.cpp
++++ b/native/nt/prefix.cpp
+@@ -10,17 +10,47 @@
+ 
+ namespace raven {
+ 
++std::filesystem::path NativePrefix::c_drive() const
++{
++	if (const char *chosen = std::getenv("RAVEN_C_DRIVE"); chosen && *chosen)
++		return chosen;
++	return directory / "NT";
++}
++
++std::filesystem::path NativePrefix::drive_directory(char letter) const
++{
++	return directory / "Volumes" / std::string(1, char(std::toupper(static_cast<unsigned char>(letter))));
++}
++
+ NativePrefix::NativePrefix(std::filesystem::path root) : directory(std::move(root))
+ {
+ 	if (directory.empty())
+ 		throw std::runtime_error("native prefix requires a directory");
++	// A prefix made before the folders were named like NT: drive_c becomes NT, windows becomes Windows, drive_<x> becomes Volumes/<X>.
++	{
++		std::error_code error;
++		const auto old_c = directory / "drive_c";
++		if (std::filesystem::is_directory(old_c, error) && !std::filesystem::exists(c_drive(), error)) {
++			std::filesystem::create_directories(c_drive().parent_path(), error);
++			std::filesystem::rename(old_c, c_drive(), error);
++			if (!error && std::filesystem::is_directory(c_drive() / "windows", error) && !std::filesystem::exists(c_drive() / "Windows", error))
++				std::filesystem::rename(c_drive() / "windows", c_drive() / "Windows", error);
++		}
++		for (char letter = 'a'; letter <= 'z'; ++letter) {
++			const auto old_drive = directory / (std::string("drive_") + letter);
++			if (letter != 'c' && std::filesystem::is_directory(old_drive, error) && !std::filesystem::exists(drive_directory(letter), error)) {
++				std::filesystem::create_directories(directory / "Volumes", error);
++				std::filesystem::rename(old_drive, drive_directory(letter), error);
++			}
++		}
++	}
+ 	// The folders every Windows installation has, so that programs can put files in the places they expect.
+-	for (const char *folder : {"windows", "windows/system32", "windows/syswow64", "Program Files/Common Files", "Program Files (x86)/Common Files",
++	for (const char *folder : {"Windows", "Windows/system32", "Windows/syswow64", "Program Files/Common Files", "Program Files (x86)/Common Files",
+ 			"ProgramData/Microsoft/Windows/Start Menu/Programs",
+ 			"Users/Public/Desktop", "Users/Public/Documents"})
+-		std::filesystem::create_directories(directory / "drive_c" / folder);
++		std::filesystem::create_directories(c_drive() / folder);
+ 	// The Fonts folder holds the installed fonts, as on Windows: links to the host's font files, made once when the folder is new.
+-	const auto fonts = directory / "drive_c" / "windows" / "Fonts";
++	const auto fonts = windows_directory() / "Fonts";
+ 	std::error_code error;
+ 	if (std::filesystem::create_directory(fonts, error)) {
+ 		std::vector<std::filesystem::path> roots{"/usr/share/fonts", "/usr/local/share/fonts"};
+@@ -42,7 +72,7 @@ void NativePrefix::place_runtime_components(const std::filesystem::path &runtime
+ {
+ 	// The loader takes these libraries from beside the runtime whatever the prefix holds: the copies only answer programs that search for,
+ 	// read or hash them. A newer runtime refreshes them.
+-	const auto windows = directory / "drive_c" / "windows";
++	const auto windows = windows_directory();
+ 	for (const auto &[source, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
+ 		for (const auto name : runtime_components) {
+ 			std::error_code error;
+@@ -92,12 +122,12 @@ std::optional<std::filesystem::path> NativePrefix::resolve(std::string_view wind
+ 	for (auto &character : text)
+ 		if (character == '\\')
+ 			character = '/';
+-	std::filesystem::path base = directory / "drive_c" / "windows";
++	std::filesystem::path base = windows_directory();
+ 	if (text.size() >= 2 && text[1] == ':') {
+ 		const char drive = char(text[0] | 0x20);
+ 		if (drive < 'a' || drive > 'z')
+ 			return std::nullopt;
+-		base = directory / (std::string("drive_") + drive);
++		base = drive == 'c' ? c_drive() : drive_directory(drive);
+ 		text.erase(0, 2);
+ 	}
+ 	if (!text.empty() && text[0] == '/')
+diff --git a/native/nt/prefix.h b/native/nt/prefix.h
+index 603827e..4647908 100644
+--- a/native/nt/prefix.h
++++ b/native/nt/prefix.h
+@@ -14,6 +14,12 @@ public:
+ 	static NativePrefix from_environment();
+ 	const std::filesystem::path &root() const { return directory; }
+ 	std::filesystem::path registry_file() const { return directory / "registry.dat"; }
++	// ClokeOS: the C: drive is the folder NT of the prefix (NT/Windows, NT/Program Files, NT/Users ...), or the folder RAVEN_C_DRIVE names.
++	// A prefix from before the rename (drive_c, windows) is renamed when the prefix is opened.
++	std::filesystem::path c_drive() const;
++	std::filesystem::path windows_directory() const { return c_drive() / "Windows"; }
++	// Other drives live in Volumes/<letter>.
++	std::filesystem::path drive_directory(char letter) const;
+ 	// Maps a Windows path to the prefix: drive letters become drive_<letter>, bare names live in the Windows directory.
+ 	std::optional<std::filesystem::path> resolve(std::string_view windows_path) const;
+ 	// Copies the libraries the runtime ships into System32 and SysWOW64, where programs that open them as files look for them.
 diff --git a/native/nt/process_info_api.cpp b/native/nt/process_info_api.cpp
 index e19f568..7da8c53 100644
 --- a/native/nt/process_info_api.cpp
