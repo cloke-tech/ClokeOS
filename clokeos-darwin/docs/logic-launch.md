@@ -961,4 +961,11 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
   in the track headers, instrument icons, pop-up values in the inspector.
 * Traces: `CLOKE_BUTTON_TRACE=1` also logs `-[NSControl drawRect:]` of button controls and `drawInRect:…respectFlipped:` calls
   (image size, rect, operation, CTM, clip).
+* Also added: `-[NSImageRep drawInRect:fromRect:operation:fraction:respectFlipped:hints:]` (10.6; Logic draws representations directly),
+  `-[NSView prepareContentInRect:]`/`preparedContentRect`, NSTextFieldCell `_setVerticallyCentered:`/`_typesetterBehavior`;
+  `NSCachedImageRep` paints into its own bitmap of its size instead of a hidden X11 window (whose surface need not match the content).
+* Track headers, still open: the instrument icon is a 68×68 `NSCachedImageRep` drawn in full at x = 32, but only its top-right corner
+  shows (cause not found: content of Logic's cached image or clipping); the volume slider is a 1×18 bitmap stretched to 108×18 at
+  x = 443, outside the 368-point header view (layout/width differs from the Mac, where the header is narrower); M/S/I letters missing.
+  `CLOKE_BUTTON_TRACE=1` also logs `[clokeos-rep]` (image representations drawn: size, pixels, source/target rect).
 

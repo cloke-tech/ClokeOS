@@ -7,3 +7,7 @@ s/^            fraction: fraction\];$/            fraction: fraction];\n    if (
 }
 # … CLOKE_BUTTON_TRACE=1: die ersten 3000 Aufrufe mit Bildgröße, Zielrechteck, Operation, Deckkraft, CTM und Clip-Hülle (Fehlersuche)
 /^     respectFlipped: \(BOOL\) respectFlipped$/,/^\}$/s/BOOL clk_flip = respectFlipped \&\& clk_cg != NULL \&\& \[clk_gc isFlipped\];\n/    BOOL clk_flip = respectFlipped \&\& clk_cg != NULL \&\& [clk_gc isFlipped];\n    {\n        static int clk_t = -1, clk_n;\n        if (clk_t < 0) clk_t = getenv("CLOKE_BUTTON_TRACE") != NULL;\n        if (clk_t \&\& clk_cg \&\& clk_n++ < 3000) {\n            CGAffineTransform m = CGContextGetCTM(clk_cg);\n            NSLog(@"[clokeos-image] %@ in %@ op=%ld frac=%.2f flip=%d ctx-flip=%d ctm=[%.0f %.0f %.0f %.0f %.0f %.0f] clip=%@", NSStringFromSize([self size]), NSStringFromRect(rect), (long) operation, fraction, (int) respectFlipped, (int) [clk_gc isFlipped], m.a, m.b, m.c, m.d, m.tx, m.ty, NSStringFromRect(NSRectFromCGRect(CGContextGetClipBoundingBox(clk_cg))));\n        }\n    }/
+# … lockFocus auf ein NSCachedImageRep zeichnet in dessen eigenes Bitmap (NSCachedImageRep.m.sed), nicht in ein Fenster
+/^                graphicsContextWithWindow: \[\(NSCachedImageRep \*\) representation$/,/^ +window\]\];$/c\
+                graphicsContextWithGraphicsPort: (CGContextRef) [(id) representation performSelector: @selector(_clkGraphicsPort)]\
+                                        flipped: NO];

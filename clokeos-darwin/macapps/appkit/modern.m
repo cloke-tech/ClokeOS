@@ -14,6 +14,8 @@
  *   NSFont: copyName, boundingRect (KTFont-Methoden, die CoreTexts CTFont*-Funktionen aufrufen; CTFontCreateWithName liefert NSFonts)
  *   NSCell: _contents (privat; Wert bzw. Knopftitel, bei Bildzellen nil), calcDrawInfo: (leer wie bei Apple)
  *   NSButtonCell: _imageRectWithRect: (privat; Bild mittig, notfalls verkleinert), _buttonType (privat; aus Hervorhebung/Zustand)
+ *   NSImageRep: drawInRect:fromRect:operation:fraction:respectFlipped:hints: (über ein NSImage); NSView prepareContentInRect:,
+ *            preparedContentRect (gemerkt, sonst sichtbarer Bereich); NSTextFieldCell _setVerticallyCentered:, _typesetterBehavior
  *   NSCell: _textAttributes (private Apple-Methode, gibt ein veränderbares Wörterbuch mit Schrift, Farbe und Absatzstil; Logic Pros MAToolKit-
  *            Zellen rufen sie über super auf und ändern das Ergebnis)
  *   NSFontDescriptor: fontDescriptorWithDesign: gibt den Deskriptor unverändert zurück (keine abgerundeten/Monospace-Varianten der Systemschrift)
@@ -414,6 +416,40 @@ static NSInteger bc_button_type(NSButtonCell *self, SEL s) {
     return NSMomentaryLightButton;
 }
 
+/* -[NSImageRep drawInRect:fromRect:operation:fraction:respectFlipped:hints:] (10.6; fehlte, Logic Pro zeichnet so Darstellungen direkt):
+ * über ein NSImage mit dieser Darstellung, das dieselbe Methode hat (Ausschnitt, Operation, Deckkraft, Kippen wie dort) */
+static BOOL rep_draw_full(NSImageRep *self, SEL s, NSRect dst, NSRect src, NSCompositingOperation op, CGFloat fraction, BOOL respectFlipped,
+                          NSDictionary *hints) {
+    NSSize sz = [self size];
+    if (getenv("CLOKE_BUTTON_TRACE")) {
+        static int n;
+        if (n++ < 200)
+            NSLog(@"[clokeos-rep] %@ size=%@ pixels=%ldx%ld from=%@ in=%@ op=%ld flip=%d", [self class], NSStringFromSize(sz), (long)[self pixelsWide],
+                  (long)[self pixelsHigh], NSStringFromRect(src), NSStringFromRect(dst), (long)op, (int)respectFlipped);
+    }
+    if (sz.width <= 0 || sz.height <= 0) return NO;
+    NSImage *img = [[NSImage alloc] initWithSize: sz];
+    [img addRepresentation: self];
+    [img drawInRect: dst fromRect: src operation: op fraction: fraction respectFlipped: respectFlipped hints: hints];
+    [img release];
+    return YES;
+}
+/* NSView prepareContentInRect:/preparedContentRect (10.9, reaktives Scrollen): ohne Vorausberechnung ist der vorbereitete Bereich, was
+ * die Ansicht setzt, sonst der sichtbare */
+static char k_prepared;
+static void view_prepare(NSView *self, SEL s, NSRect r) {
+    objc_setAssociatedObject(self, &k_prepared, [NSValue valueWithRect: r], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+}
+static NSRect view_prepared(NSView *self, SEL s) {
+    NSValue *v = objc_getAssociatedObject(self, &k_prepared);
+    return v ? [v rectValue] : [self visibleRect];
+}
+/* NSTextFieldCell _setVerticallyCentered: / _typesetterBehavior (privat): gemerkt bzw. die aktuelle Typesetter-Fassung */
+static char k_vcenter;
+static void tfc_set_vcenter(id self, SEL s, BOOL v) { objc_setAssociatedObject(self, &k_vcenter, @(v), OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
+static BOOL tfc_vcenter(id self, SEL s) { return [objc_getAssociatedObject(self, &k_vcenter) boolValue]; }
+static NSInteger tfc_typesetter(id self, SEL s) { return 2; /* NSTypesetterBehavior_10_4 */ }
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
@@ -444,6 +480,14 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSCell class], sel_registerName("_contents"), (IMP)cell_contents, "@@:");
     class_addMethod([NSButtonCell class], sel_registerName("_imageRectWithRect:"), (IMP)bc_image_rect, "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod([NSButtonCell class], sel_registerName("_buttonType"), (IMP)bc_button_type, "q@:");
+    class_addMethod([NSImageRep class], sel_registerName("drawInRect:fromRect:operation:fraction:respectFlipped:hints:"), (IMP)rep_draw_full,
+                    "c@:{CGRect={CGPoint=dd}{CGSize=dd}}{CGRect={CGPoint=dd}{CGSize=dd}}Qdc@");
+    class_addMethod([NSView class], sel_registerName("prepareContentInRect:"), (IMP)view_prepare, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
+    class_addMethod([NSView class], sel_registerName("setPreparedContentRect:"), (IMP)view_prepare, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
+    class_addMethod([NSView class], sel_registerName("preparedContentRect"), (IMP)view_prepared, "{CGRect={CGPoint=dd}{CGSize=dd}}@:");
+    class_addMethod(objc_getClass("NSTextFieldCell"), sel_registerName("_setVerticallyCentered:"), (IMP)tfc_set_vcenter, "v@:c");
+    class_addMethod(objc_getClass("NSTextFieldCell"), sel_registerName("_isVerticallyCentered"), (IMP)tfc_vcenter, "c@:");
+    class_addMethod(objc_getClass("NSTextFieldCell"), sel_registerName("_typesetterBehavior"), (IMP)tfc_typesetter, "q@:");
     class_addMethod([NSCell class], sel_registerName("calcDrawInfo:"), (IMP)cell_calc_draw_info, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
     if (objc_getClass("UTType"))
