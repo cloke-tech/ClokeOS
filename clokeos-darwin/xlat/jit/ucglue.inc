@@ -11,7 +11,7 @@ static void jit_choose(const uint8_t *file, const char *name) {
 	struct mach_header_64 *mh = (void *)file; struct load_command *lc = (void *)(mh + 1); int dyn = 0;
 	for (uint32_t i = 0; i < mh->ncmds; i++, lc = (void *)((char *)lc + lc->cmdsize)) if (lc->cmd == LC_LOAD_DYLINKER || lc->cmd == LC_MAIN) dyn = 1;
 	if (dyn) { fprintf(stderr, "ucrun: UCRUN_JIT: %s ist dynamisch gelinkt, läuft auf Unicorn (der JIT kann bisher nur statische Programme)\n", name); return; }
-	if (jit_init(&jctx) || jit_guest_limit() < (1ULL << 33)) { fprintf(stderr, "ucrun: UCRUN_JIT: JIT nicht verfügbar (Speicherreservierung/MAP_JIT), läuft auf Unicorn\n"); return; }
+	if (jit_init(&jctx) || jit_guest_limit() < (1ULL << 34)) { fprintf(stderr, "ucrun: UCRUN_JIT: JIT nicht verfügbar (Speicherreservierung/MAP_JIT), läuft auf Unicorn\n"); return; }
 	jit_on = 1; { uint64_t L = jit_guest_limit(); stack_top = L - 0x2000000; mmap_next = L / 2; }  // alles unter dem Fenster des JIT-Gastspeichers
 }
 static void jit_start(uint64_t entry, uint64_t sp) {

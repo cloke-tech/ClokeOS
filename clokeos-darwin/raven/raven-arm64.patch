@@ -313,10 +313,10 @@ index 54d58db..cfa9893 100644
  print('patched uncaught_exceptions at', hex(offset))
 diff --git a/native/platform/unicorn_guest.cpp b/native/platform/unicorn_guest.cpp
 new file mode 100644
-index 0000000..52420fd
+index 0000000..115cc06
 --- /dev/null
 +++ b/native/platform/unicorn_guest.cpp
-@@ -0,0 +1,1205 @@
+@@ -0,0 +1,1214 @@
 +// ClokeOS arm64: guest-process control with Unicorn, see mach_guest.h
 +// Raven drives its x86-64 guest with ptrace-like calls (cpu/native_cpu.cpp). On x86_64 hosts the guest is a real process; on arm64
 +// there is no x86 code to run natively, so the guest lives in a Unicorn engine inside this process and the same calls are answered
@@ -417,7 +417,16 @@ index 0000000..52420fd
 +{
 +	static const uint64_t size = [] {
 +		const char *v = std::getenv("RAVEN_JIT");
-+		return v && *v && *v != '0' ? jit_guest_limit() : uint64_t(0);
++		if (!(v && *v && *v != '0'))
++			return uint64_t(0);
++		// Raven's allocator starts at 8 GiB: a window of 16 GiB is the least that leaves it room (a smaller one is what the host gives when
++		// address space is short; then the guest runs on Unicorn as without RAVEN_JIT)
++		const uint64_t limit = jit_guest_limit();
++		if (limit < (uint64_t(1) << 34)) {
++			std::fprintf(stderr, "raven: RAVEN_JIT: the JIT window is only %llu MiB, running on Unicorn\n", (unsigned long long)(limit >> 20));
++			return uint64_t(0);
++		}
++		return limit;
 +	}();
 +	return size;
 +}

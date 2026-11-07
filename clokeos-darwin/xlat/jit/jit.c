@@ -229,6 +229,7 @@ static int guest_range_ok(uint64_t g, uint64_t n) { return n && g + n >= g && g 
 // anonymer Speicher [g, g+n) mit Gastschutz prot; Inhalt Null
 int jit_guest_map(uint64_t g, uint64_t n, int prot) {
 	if (reserve_guest() || !guest_range_ok(g, n)) return -1;
+	if (trace_jit == 3) fprintf(stderr, "jit: map %llx +%llx prot %d\n", (unsigned long long)g, (unsigned long long)n, prot);
 	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
 	// Hostseiten am Rand, in denen schon Nachbarseiten abgebildet sind: neu abgebildete Teile nullen
 	uint64_t h0 = p0 >> 2, h1 = (p1 - 1) >> 2;
@@ -264,6 +265,7 @@ int jit_guest_map_fd(uint64_t g, uint64_t n, int prot, int fd, uint64_t off) {
 }
 void jit_guest_unmap(uint64_t g, uint64_t n) {
 	if (!guest_reserved || !guest_range_ok(g, n)) return;
+	if (trace_jit == 3) fprintf(stderr, "jit: unmap %llx +%llx\n", (unsigned long long)g, (unsigned long long)n);
 	uint64_t p0 = g >> 12, p1 = (g + n + 4095) >> 12;
 	for (uint64_t q = p0; q < p1; q++) gprot[q] = GP_NONE;
 	for (uint64_t h = p0 >> 2; h <= (p1 - 1) >> 2; h++) {
