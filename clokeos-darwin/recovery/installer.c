@@ -1302,6 +1302,62 @@ static int cmd_stick(void) {
   return 0;
 }
 
+/* Datei \EFI\BOOT\<name> (Kernel) auf dem Live-Stick (recovery/usb.sh live) durch src ersetzen: an Ort und Stelle,
+ * Cluster für Cluster, ohne die Datei zu vergrößern. Der Rest bis zur alten Größe wird mit Nullen gefüllt;
+ * ist src größer, passiert nichts. Für die Treiberarbeit: neuer Kernel per scp, dann stick-write-boot, dann
+ * Neustart. Bei einem schlechten Kernel startet U beim Einschalten kernel-up (bleibt unangetastet). */
+static int cmd_stick_write_boot(const char *name, const char *src) {
+  FILE *in = fopen(src, "rb");
+  if (!in) fail("Cannot read %s", src);
+  fseek(in, 0, SEEK_END);
+  long len = ftell(in);
+  fseek(in, 0, SEEK_SET);
+  for (int i = 0; i < 16; i++) {
+    char dname[16], part[24];
+    snprintf(dname, sizeof dname, "disk%d", i);
+    Disk d;
+    if (!probe_disk(dname, &d) || !d.installer) continue;
+    snprintf(part, sizeof part, "%ss1", dname);
+    int fd = open_raw(part, O_RDWR);
+    if (fd < 0) fail("Could not open %s for writing: %s", part, strerror(errno));
+    uint32_t dbs = 0;
+    Fat f;
+    uint8_t e[32];
+    uint64_t eo;
+    if (ioctl(fd, DKIOCGETBLOCKSIZE, &dbs) || !dbs || !fat_init(&f, fd, dbs, 0) || !fat_boot_file(&f, name, &eo, e)) {
+      close(fd);
+      continue;
+    }
+    uint64_t size = e[28] | e[29] << 8 | e[30] << 16 | (uint64_t)e[31] << 24, done = 0;
+    if ((uint64_t)len > size) {
+      close(fd);
+      fail("%s is %lld bytes, the file on the stick only %llu.", src, (long long)len, (unsigned long long)size);
+    }
+    size_t csize = (size_t)f.spc * f.bps;
+    uint8_t *buf = malloc(csize);
+    if (!buf) fail("Out of memory");
+    for (uint32_t c = ent_clus(e); c >= 2 && c < 0x0ffffff8 && done < size; c = fat_next(&f, c)) {
+      memset(buf, 0, csize);
+      size_t n = fread(buf, 1, csize, in);
+      (void)n;
+      if (pwrite(fd, buf, csize, (off_t)clus_off(&f, c)) != (ssize_t)csize) {
+        free(buf);
+        close(fd);
+        fail("Writing to the USB stick failed: %s", strerror(errno));
+      }
+      done += csize;
+    }
+    free(buf);
+    fsync(fd);
+    close(fd);
+    fclose(in);
+    out("DONE %lld of %llu bytes", (long long)len, (unsigned long long)size);
+    return 0;
+  }
+  fail("%s is missing on the USB stick.", name);
+  return 1;
+}
+
 /* Datei \ClokeOS\<name> auf dem Stick mit dem Inhalt von src überschreiben: an Ort und Stelle,
  * Cluster für Cluster, Größe bleibt (recovery/usb.sh legt die Datei mit Leerzeichen gefüllt an).
  * Für die Diagnose (cloakserver-session): sie ist dann am Mac lesbar, auch ohne Foto. */
@@ -1841,6 +1897,7 @@ int main(int argc, char **argv) {
     cmd_bootnext(argv[2]);
   else if (argc == 2 && !strcmp(argv[1], "stick")) return cmd_stick();
   else if (argc == 4 && !strcmp(argv[1], "stick-write")) return cmd_stick_write(argv[2], argv[3]);
+  else if (argc == 4 && !strcmp(argv[1], "stick-write-boot")) return cmd_stick_write_boot(argv[2], argv[3]);
   else {
     fprintf(stderr, "Aufruf: clokeos-installer disks | install <diskN> <url>|stick: | erase <diskN> | "
                     "bootnext recovery|system | stick\n");

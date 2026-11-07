@@ -27,6 +27,7 @@ def handle(conn, addr):
     if not head.startswith("HELLO"):
         return
     name = os.path.join(out, "hello-%s-%d.txt" % (addr[0], time.time()))
+    open(os.path.join(out, "last-%s.txt" % addr[0]), "wb").write(data)  # letzte Meldung, auch die kurzen
     if "full=1" in head:
         open(name, "wb").write(data)
     print(head, "saved=%s" % (name if "full=1" in head else "-"), flush=True)

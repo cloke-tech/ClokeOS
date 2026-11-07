@@ -94,6 +94,7 @@ fi
 # xfce4-terminal, netsurf-gtk3, clokeos-installer, die Shell-Werkzeuge.
 LITE_DROP_SSH='bin/ssh bin/ssh-keygen sbin/sshd libexec/sshd-auth libexec/sshd-session libexec/sftp-server'
 LITE_DROP='
+  usr/libexec/raven share/icons/Adwaita/256x256 share/icons/Adwaita/512x512 Library/ClokeOS/arm64 Library/ClokeOS/MacFrameworks
   bin/i3 bin/i3-* bin/i3bar bin/i3status bin/dmenu bin/dmenu_* bin/puredarwin-sway bin/startxfce4
   bin/xfce4-session bin/xfce4-session-* bin/xfdesktop bin/xfdesktop-settings bin/xfce4-panel
   bin/xfce4-popup-* bin/xfce4-appfinder bin/xfce4-*-settings bin/xfce4-settings-* bin/xfsettingsd
@@ -189,6 +190,12 @@ for f in $(mdir -b -i "$out/esp.img@@0" ::/EFI/BOOT | sed 's|^::/EFI/BOOT/||'); 
   mcopy -n -i "$out/esp.img@@0" "::/EFI/BOOT/$f" "$tmp/boot/$f"
 done
 [ -f "$tmp/boot/BOOTX64.EFI" ] && [ -f "$tmp/boot/kernel" ] || { echo "Loader oder Kernel fehlt in esp.img" >&2; exit 1; }
+# Live-Stick: immer die neuesten Kernel (kext/build.sh), ohne die Wiederherstellung neu zu bauen
+if [ "$kind" = live ]; then
+  for kf in kernel kernel-up; do [ -f "$WORK/out/$kf" ] && cp "$WORK/out/$kf" "$tmp/boot/$kf"; done
+fi
+# Live-Stick: Platz im Kernel für spätere Austausche an Ort und Stelle (clokeos-installer stick-write-boot)
+[ "$kind" = live ] && dd if=/dev/zero bs=1048576 count=16 2>/dev/null >> "$tmp/boot/kernel"
 base=$(tr -d '\r\n' < "$tmp/boot/boot-args.txt" | sed -E 's/ *boot-uuid=[^ ]*//g; s/ *rd=[^ ]*//g')
 printf '%s rd=md0\n' "$base" > "$tmp/boot/boot-args.txt"
 stick_files=()

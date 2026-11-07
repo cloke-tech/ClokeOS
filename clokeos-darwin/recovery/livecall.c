@@ -4,7 +4,7 @@
 // IPv4-Adresse hat, verbindet es sich mit TCP-Port 8222 der Hosts aus /etc/clokeos-livecall.conf (eine
 // Adresse oder ein Name pro Zeile), sonst mit jedem Rechner im eigenen /24. Es sendet "HELLO ip=…" und
 // beim ersten Mal die Hardware (PCI-Geräte aus ioreg) und die Netzwerkschnittstellen. Danach meldet es sich
-// alle 30 Sekunden kurz wieder. Keine Anmeldedaten, nur Hardware-Auskunft; angemeldet wird per SSH-Schlüssel.
+// alle 10 Sekunden kurz wieder (mit den letzten Kernel-Zeilen). Keine Anmeldedaten, nur Hardware-Auskunft; angemeldet wird per SSH-Schlüssel.
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -99,6 +99,9 @@ static void hello(int s, int full) {
   gethostname(host, sizeof host);
   snprintf(line, sizeof line, "HELLO ip=%s if=%s host=%s full=%d\n", myip, ifname, host, full);
   send_all(s, line, strlen(line));
+  /* Jede Meldung trägt die letzten Kernel-Zeilen mit: bleibt der Rechner stehen, steht die Ursache in der
+   * letzten Meldung (live-listen.py hebt sie als last-<ip>.txt auf). */
+  run_to(s, "dmesg-tail", "/bin/dmesg 2>&1 | /bin/sed -E 's/^\\[ *[0-9.]+\\]//' | /bin/uniq | /bin/tail -n 60");
   if (!full) return;
   run_to(s, "uname", "/usr/bin/uname -a 2>&1 || /bin/uname -a 2>&1");
   run_to(s, "ipconfig", "/usr/sbin/ipconfig getsummary " "en0 2>&1 | head -40");
@@ -139,6 +142,6 @@ int main(void) {
     hello(s, full);
     full = 0;
     close(s);
-    sleep(30);
+    sleep(10);
   }
 }

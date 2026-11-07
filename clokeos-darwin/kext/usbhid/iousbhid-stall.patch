@@ -1,0 +1,54 @@
+--- a_hid/IOUSBHIDKeyboard.cpp	2026-11-07 06:52:46
++++ b_hid/IOUSBHIDKeyboard.cpp	2026-11-07 06:53:07
+@@ -146,6 +146,7 @@
+ 
+ void IOUSBHIDKeyboard::pollLoop()
+ {
++    UInt32 errDelay = 10; // ms; wächst bei Fehlern (ClokeOS: gestoppte Pipe nicht endlos neu lesen)
+     while (fRunning) {
+         IOByteCount bytesRead = 8;
+         bzero(fReportMem->getBytesNoCopy(), 8);
+@@ -156,8 +157,15 @@
+             bzero(report, sizeof(report));
+             bcopy(fReportMem->getBytesNoCopy(), report, bytesRead > 8 ? 8 : bytesRead);
+             handleReport(report);
++            errDelay = 10;
+         } else {
+-            IOSleep(10);
++            /* ClokeOS: Eine gestoppte (STALL) Interrupt-Pipe bleibt es, bis jemand sie freigibt; ohne das
++             * lief die Schleife ewig und schrieb ~140 Meldungen pro Sekunde in den Kernel-Log. */
++            if (ret == kIOUSBPipeStalled)
++                fInterruptPipe->ClearPipeStall(true);
++            IOSleep(errDelay);
++            if (errDelay < 2000)
++                errDelay *= 2;
+         }
+     }
+ }
+--- a_hid/IOUSBHIDMouse.cpp	2026-11-07 06:52:46
++++ b_hid/IOUSBHIDMouse.cpp	2026-11-07 06:53:07
+@@ -119,6 +119,7 @@
+ 
+ void IOUSBHIDMouse::pollLoop()
+ {
++    UInt32 errDelay = 10; // ms; wächst bei Fehlern (ClokeOS: gestoppte Pipe nicht endlos neu lesen)
+     while (fRunning) {
+         IOByteCount bytesRead = 8;
+         bzero(fReportMem->getBytesNoCopy(), 8);
+@@ -129,8 +130,15 @@
+             bzero(report, sizeof(report));
+             bcopy(fReportMem->getBytesNoCopy(), report, bytesRead > 8 ? 8 : bytesRead);
+             handleReport(report);
++            errDelay = 10;
+         } else {
+-            IOSleep(10);
++            /* ClokeOS: Eine gestoppte (STALL) Interrupt-Pipe bleibt es, bis jemand sie freigibt; ohne das
++             * lief die Schleife ewig und schrieb ~140 Meldungen pro Sekunde in den Kernel-Log. */
++            if (ret == kIOUSBPipeStalled)
++                fInterruptPipe->ClearPipeStall(true);
++            IOSleep(errDelay);
++            if (errDelay < 2000)
++                errDelay *= 2;
+         }
+     }
+ }

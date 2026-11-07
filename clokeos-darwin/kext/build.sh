@@ -147,6 +147,15 @@ clang "${cflags[@]}" -c "$tmp/hda-info.c" -o "$tmp/hda-info.o"
 k="$out/RavynHDAudio.kext"
 mkdir -p "$k/Contents/MacOS"
 cp "$stock" "$k/Contents/Info.plist"
+# Echte Rechner: jeder HD-Audio-Controller nach Klasse (0x040300) statt der drei Intel-Kennungen der Vorlage
+# (QEMU und Intel sind darin enthalten); der Treiber prüft die Klasse selbst (RavynHDAudio::probe).
+# Gebraucht für AMD (1022:1487). Die drei alten Einträge entfallen, damit der Kernel nicht größer wird.
+for pn in GeminiLake ICH9HDA IntelHDA; do
+  plutil -remove "IOKitPersonalities.RavynHDAudio-$pn" "$k/Contents/Info.plist" 2>/dev/null || true
+done
+plutil -insert IOKitPersonalities.RavynHDAudio-HDAClass -json \
+  "{\"CFBundleIdentifier\":\"$hid\",\"IOClass\":\"RavynHDAudio\",\"IOProviderClass\":\"IOPCIDevice\",\"IOPCIClassMatch\":\"0x04030000&0xffffff00\",\"IOProbeScore\":5000}" \
+  "$k/Contents/Info.plist"
 clang++ -target x86_64-apple-macos11 -bundle -undefined dynamic_lookup -nostdlib -Wl,-no_fixup_chains \
   -L"$sdk/usr/lib" "${hobjs[@]}" "$tmp/hda-info.o" -lkmodc++ -lkmod "$base/libSystem.B.dylib" \
   -o "$k/Contents/MacOS/RavynHDAudio" 2> >(grep -v 'built for newer' >&2)
@@ -156,11 +165,67 @@ fi
 kexts+=("$k")
 echo "Treiber: $k"
 
+# --- PureDarwins PDRealtek8111 und IOUSBHIDDriver mit ClokeOS-Patches -------------------------------
+# PDRealtek8111 (kext/net/pdrealtek8111-rx.patch): größerer Empfangsring, Empfangsteil nach einem Überlauf neu
+# aufsetzen, ASPM aus; auf einem Ryzen-PC stand der Empfang bei Last (etwa 1 MB am Stück) für immer still.
+# IOUSBHIDDriver (kext/usbhid/iousbhid-stall.patch): eine gestoppte Interrupt-Pipe wird freigegeben und mit
+# wachsender Wartezeit neu gelesen; vorher lief die Schleife endlos (~140 Meldungen pro Sekunde im Kernel-Log).
+rebuilt=(RavynHDAudio.kext)
+rebuild_kext() { # Name Unterordner Patch Muster-im-Archiv...
+  local name="$1" sub="$2" patchf="$3"; shift 3
+  local d="$WORK/tmp/$name-src" o objs=() ext
+  rm -rf "$d"; mkdir -p "$d"
+  tar -xzf "$PDSRC_TGZ" -C "$d" --strip-components=1 "$@"
+  patch -s -p1 -d "$d/src/Kernel/Extensions/$sub" < "$patchf"
+  ext="$d/src/Kernel/Extensions/$sub"
+  for c in "$ext"/*.cpp; do
+    o="$tmp/$name-$(basename "$c" .cpp).o"
+    clang++ "${cflags[@]}" -I"$d/src/Kernel/Extensions/IOUSBFamily/include" -I"$d/src/Kernel/Extensions/IOPCIFamily/include" \
+      -I"$d/src/Kernel/Extensions/IONetworkingFamily/include" \
+      -I"$d/src/Kernel/Extensions/IOHIDFamily/IOHIDSystem" -I"$d/src/Kernel/Extensions/IOHIDFamily/include" \
+      -I"$d/src/Kernel/Extensions/IOGraphicsFamily" -I"$d/src/Kernel/Extensions/IOHIDFamily" \
+      -I"$d/src/Kernel/Extensions/IOHIDFamily/IOHIDFamily" -fapple-kext -std=gnu++17 -fno-exceptions -fno-rtti -nostdinc++ -c "$c" -o "$o" 2> >(grep -E "error" >&2)
+    objs+=("$o")
+  done
+  local stock="$base/root/Extensions/$name.kext/Contents/Info.plist"
+  local id ver
+  id=$(plutil -extract CFBundleIdentifier raw "$stock")
+  ver=$(plutil -extract CFBundleVersion raw "$stock")
+  cat > "$tmp/$name-info.c" <<EOF2
+#include <mach/mach_types.h>
+extern kern_return_t _start(kmod_info_t *ki, void *data);
+extern kern_return_t _stop(kmod_info_t *ki, void *data);
+__attribute__((visibility("default"))) KMOD_EXPLICIT_DECL($id, "$ver", _start, _stop)
+__private_extern__ kmod_start_func_t *_realmain = 0;
+__private_extern__ kmod_stop_func_t *_antimain = 0;
+__private_extern__ int _kext_apple_cc = __APPLE_CC__;
+EOF2
+  clang "${cflags[@]}" -c "$tmp/$name-info.c" -o "$tmp/$name-info.o"
+  local kk="$out/$name.kext"
+  mkdir -p "$kk/Contents/MacOS"
+  cp "$stock" "$kk/Contents/Info.plist"
+  clang++ -target x86_64-apple-macos11 -bundle -undefined dynamic_lookup -nostdlib -Wl,-no_fixup_chains \
+    -L"$sdk/usr/lib" "${objs[@]}" "$tmp/$name-info.o" -lkmodc++ -lkmod "$base/libSystem.B.dylib" \
+    -o "$kk/Contents/MacOS/$name" 2> >(grep -v 'built for newer' >&2)
+  if nm -u "$kk/Contents/MacOS/$name" | grep -q chkstk_darwin; then
+    echo "$name ruft ___chkstk_darwin (Stapelrahmen >= 4 KB)" >&2; exit 1
+  fi
+  kexts+=("$kk"); rebuilt+=("$name.kext")
+  echo "Treiber: $kk"
+}
+rebuild_kext PDRealtek8111 PDRealtek8111 "$src/net/pdrealtek8111-rx.patch" '*/src/Kernel/Extensions/PDRealtek8111' \
+  '*/src/Kernel/Extensions/IOPCIFamily/include' '*/src/Kernel/Extensions/IONetworkingFamily/include'
+rebuild_kext IOUSBHIDDriver IOUSBFamily/IOUSBHIDDriver "$src/usbhid/iousbhid-stall.patch" \
+  '*/src/Kernel/Extensions/IOUSBFamily/IOUSBHIDDriver' '*/src/Kernel/Extensions/IOUSBFamily/include' \
+  '*/src/Kernel/Extensions/IOPCIFamily/include' '*/src/Kernel/Extensions/IOHIDFamily' \
+  '*/src/Kernel/Extensions/IOGraphicsFamily' '*/src/Kernel/Extensions/ApplePS2Controller/ApplePS2KeyboardMap.h'
+
 # --- Kernel Collection --------------------------------------------------------------------------
 args=(-kernel "$base/root/Kernels/kernel")
 while read -r line; do
   k=$(printf '%s\n' "$line" | sed -n -E 's/.*-kext "\$KEXTS\/([^"]+)".*/\1/p')
-  [ -n "$k" ] && [ "$k" != RavynHDAudio.kext ] && args+=(-kext "$base/root/Extensions/$k")  # kommt oben neu gebaut
+  skip=0; for r in "${rebuilt[@]}"; do [ "$k" = "$r" ] && skip=1; done
+  [ -n "$k" ] && [ "$skip" = 0 ] && args+=(-kext "$base/root/Extensions/$k")  # die neu gebauten kommen von oben
 done < "$base/pd-rebuild-kc"
 for k in ${kexts[@]+"${kexts[@]}"}; do args+=(-kext "$k"); done
 # Zwei Kernel: kernel mit PureDarwins ACPI-Plattform PDACPIPlatform (uACPI-Interpreter, liest die MADT und startet die
