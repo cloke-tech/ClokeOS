@@ -19,4 +19,8 @@ case "$program" in
   */*) ;;
   *) [ -f "$dir/${program%.exe}.exe" ] && program=$dir/${program%.exe}.exe ;;
 esac
-exec "$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit --desktop=${RAVEN_DESKTOP:-x11} "$program" -- "$@"
+"$dir/raven" --run-process --execution=native --timeout-ms=3600000 --stdio=inherit --desktop=${RAVEN_DESKTOP:-x11} "$program" -- "$@"
+status=$?
+# was something installed? Start Menu shortcuts of the prefix become programs in ~/Applications (the application menu)
+"$dir/raven" --install-menu >/dev/null 2>&1
+exit $status

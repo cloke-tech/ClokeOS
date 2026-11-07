@@ -281,3 +281,22 @@ menu labels have one) it took the fast path whose `printable()` replaces every c
 Additional with `?`, and only an unlimited line used the fallback faces. A 32-bit test program (title with U+2014 and U+2013) showed
 it; the text was intact in the window (`GetWindowTextW` returned it). Text with such characters now takes the fallback faces
 whatever the limit and is shortened with an ellipsis when it is wider than the limit. Checked with the test program (title with em and en dash); the Compil32 title itself was not looked at again.
+
+## Status (2026-11-07): installed Windows programs in the application menu
+
+`raven --install-menu [folder]` (native/menu.h) reads the Start Menu shortcuts the installers left in the prefix
+(`ProgramData/.../Start Menu/Programs` and every user's `AppData/Roaming/.../Programs`), and writes one `Name.app` per program
+into `~/Applications` (or the folder named), which CloakServer lists in the launchpad and rescans every two seconds:
+`Contents/MacOS/launch` (a start script: `cd` to the shortcut's folder, `exec raven '<host path>' <arguments>`),
+`Contents/Info.plist` and `Contents/Resources/icon.png` (the biggest image of the program's first icon group, converted from the
+DIB to PNG here, no library needed; an `.ico` or another file named by the shortcut's icon location is used when given).
+Skipped: shortcuts that are not .exe (documentation, folders), uninstallers, programs that no longer exist. A bundle this tool
+wrote has the key `RavenShortcut` and is removed when its shortcut is gone (an uninstalled program); other bundles are never touched.
+The wrapper `/usr/bin/raven` runs `--install-menu` after every program it ran, so an installer's shortcuts show up in the menu
+when it ends. The plist must use the layout CloakServer writes (key and value on lines of their own), or its reader ignores the keys.
+Checked in the VM: the Inno Setup Compiler appears in the launchpad with its own icon. Not done: the window class of Raven windows
+is `raven.native` for every program, so the global menu bar names every Windows program "raven.native" (a per-program class is
+the next step, and needs the title-bar session's answer, see below); programs with more than one shortcut get the first.
+
+Layout of the prefix: `$RAVEN_PREFIX` (ClokeOS: `~/Library/Raven`) holds `drive_c/` with the NT tree (`Windows`, `Program Files`,
+`Program Files (x86)`, `ProgramData`, `Users/<name>`), `registry.dat` and snapshots; more drives would be `drive_<letter>/`.
