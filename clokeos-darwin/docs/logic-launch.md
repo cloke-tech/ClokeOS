@@ -722,3 +722,8 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   `-[NSBitmapImageRep initWithCGImage:]` (image without colour space) while MAToolKit prepares images. Not rendered, no audio yet.
 * `initWithCGImage:` with a NULL image returns nil; a missing colour space counts as 1 sample. `+[UTType _typeOfCurrentDevice]` returns a "Mac" device type
   (Logic fills `%DEVICE%`-style placeholders with its `localizedDescription`; nil crashed in `CFStringFindAndReplace`). Next stop: `objc_msgSend` in MACore `UISyncManager::GetInternalName` (dispatch_sync).
+* **The project window opens:** after fixing fast enumeration of `NSHashTable` (the GSIMap version precounted `nodeCount` and left garbage in the buffer when weak entries
+  had gone; `macapps/patches/darling-foundation/src/NSConcreteHashTable.m.sed`), Logic shows "Jump.logicx - Tracks" with the tracks, region/track inspector and MIDI regions
+  with notes, plus a second alert (empty list, "Continue"). Auto Layout is still a stub, so sizes and some controls are off. No playback or rendering yet.
+* `crashpc` prints the first four words behind x0 and x22. `macapps/vmlogs.sh` copies via the serial console: if `logicrun.sh`'s command is still running there (wait time ≥ send timeout),
+  the copy does not happen and old logs in `/var/root` are read. Keep the wait under 150 s.

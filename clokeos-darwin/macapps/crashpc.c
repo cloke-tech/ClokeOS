@@ -198,6 +198,9 @@ static void *exc_thread(void *arg) {
       for (int r = 0; r < 29; r++) { Dl_info dq; if (st.__x[r] > 0x100000000ULL && dladdr((void *)(uintptr_t)st.__x[r], &dq) && dq.dli_sname) { out("  x"); hex((uint64_t)r); frame(" ->", st.__x[r]); } }
       out("  sp "); hex(st.__sp); out("  fp "); hex(st.__fp); out("\n");
       for (int i = 0; i < 29; i++) { out("  x"); hex((uint64_t)i); out(" "); hex(st.__x[i]); out("\n"); }
+      { static const int dr[] = { 0, 22 };   /* die ersten vier Wörter hinter x0 und x22 (Empfänger, Schleifenobjekt) */
+        for (unsigned q = 0; q < 2; q++) { uint64_t w; out("  ["); out(dr[q] ? "x22" : "x0"); out("]");
+          for (int k = 0; k < 4; k++) { out(" "); if (rd64(st.__x[dr[q]] + 8 * k, &w)) hex(w); else out("?"); } out("\n"); } }
       { uint64_t v, isa;
         if (getenv("CRASHPC_OBJC")) {   /* Selektor/Empfänger nur auf Wunsch: bei Nicht-Objekten stürzt sonst der Bericht ab */
           if (rd64(st.__x[1], &v)) { out("  sel "); out(sel_getName((SEL)(uintptr_t)st.__x[1])); out("\n"); }
