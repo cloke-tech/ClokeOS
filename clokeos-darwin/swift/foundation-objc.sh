@@ -60,6 +60,10 @@ sub("IndexSet.swift", "__NSIndexSetRangeAtIndex($0, index,", "__NSIndexSetRangeA
 for a in ("__NSDictionaryGetObjects(d, objectVals, objectKeys, numElems)", "__NSDictionaryGetObjects(x, objectVals, objectKeys, numElems)",
           "__NSDictionaryGetObjects(otherDictionary, buffer, buffer2, numElems)"):
     sub("NSDictionary.swift", a, a[:-9] + "UInt(numElems))")
+# leere NSDictionary: mit der Stdlib von Swift 6 hat ein Wörterbuch mit Kapazität 0 keinen Puffer (baseAddress nil), und das 5.3-Overlay
+# entpackte ihn ungeprüft ("Unexpectedly found nil", Logic Pros Session-Player-Datenbank). Leeres Ergebnis vorab liefern.
+sub("NSDictionary.swift", "      result = native\n      return\n    }\n", "      result = native\n      return\n    }\n    if d.count == 0 { result = [:]; return }\n")
+sub("NSDictionary.swift", "      result = native\n      return true\n    }\n", "      result = native\n      return true\n    }\n    if x.count == 0 { result = [:]; return true }\n")
 import re as _re
 p = os.path.join(d, "Publishers+NotificationCenter.swift")
 if os.path.exists(p):   # FoundationEssentials hat ein gleichnamiges NotificationCenter; gemeint ist das ObjC-NSNotificationCenter

@@ -712,3 +712,8 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * `CAShapeLayer` gets stored, KVC-compatible properties (path, fill/stroke colour, line width, caps, dash, stroke start/end); Logic's asset manager sets them with `setValue:forKey:` while building the
   project window, and the exception, caught inside Logic, became the "error 256". Nothing draws them yet.
 * Still error 256: `-[CLgSongDocument readFromURL:ofType:error:]` is never reached; tracing `init` and `initWithContentsOfURL:ofType:withAlternativeIndex:error:` next.
+* Document types are the UTIs from `LSItemContentTypes` (as on macOS since 10.5): `typeForContentsOfURL:` returns `com.apple.logicx.project` instead of "Logic Pro Project", and
+  `documentClassForType:`/`_infoForType:` accept either. Logic checks the type with `type:conformsToType:` against UTIs; with the name it never loaded the project.
+* With that, Logic goes into project loading and hits its Session Player database (`GenInstGenreCharacterDatabase`): bridging an **empty** NSDictionary to `[String: [String: Any]]`
+  crashed in the Swift 5.3 Foundation overlay (`keys.baseAddress!` is nil for capacity 0 with the Swift 6 standard library). `swift/foundation-objc.sh` now returns `[:]` early for empty dictionaries
+  (forced and conditional bridging). Why the genre cache is empty is not looked at yet.
