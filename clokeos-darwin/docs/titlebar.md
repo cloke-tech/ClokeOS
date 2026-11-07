@@ -48,7 +48,7 @@ The NT look ignores it (always a bar).
 * **Windows apps (Raven)**: Raven draws its own Windows frame (`native/desktop/frame.cpp`) and sets `_MOTIF_WM_HINTS` = no
   decorations, so it now gets style-2 edge/corners/shadow, but still a Windows caption with buttons on the right. Making it
   macOS-like needs Raven to draw a Mac-style caption (no icon, no right-hand buttons) and set `_CLOKE_TITLEBAR` = 1 with its caption
-  height — not done here (the Raven port is changed by another session).
+  height — superseded: Raven now hands the frame to CloakServer by default (X window = client area + Windows menu bar).
 
 * **Transparent / unified title bars without full-size content** (flags 2 or 16; Logic Pro's project window: mask 0x110f, transparent):
   CloakServer keeps its title row but paints it in the colour of the app's top pixel row, without separator, title centred; with a
@@ -92,4 +92,6 @@ SIGILL, SIGFPE and SIGABRT, then dies as before. Symbolize on the Mac with the s
 `atos -arch arm64 -o ~/…/out/CloakServer-arm64/CloakServer -l <load address> <addresses…>`.
 Open (reported by the Raven session, 2026-11-07): with `RAVEN_FRAME=wm` the OK click in Inno Setup's language dialog ended the
 session twice on x86_64. Not reproduced on arm64 with a test client doing the same window sequence (dialog transient for a never-mapped
-owner, destroy, map a bigger window, 4 rounds): CloakServer survived. Cause unknown; the crash log should show it next time.
+owner, destroy, map a bigger window, 4 rounds): CloakServer survived. Retested by the Raven session on x86_64 with CloakServer
+b2c0498: two runs without a crash, no crash log; the earlier crashes were on an older image. Raven now uses the window manager's title
+bar by default (`RAVEN_FRAME=raven` = Raven's own frame).
