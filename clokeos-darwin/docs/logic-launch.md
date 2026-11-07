@@ -717,3 +717,6 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * With that, Logic goes into project loading and hits its Session Player database (`GenInstGenreCharacterDatabase`): bridging an **empty** NSDictionary to `[String: [String: Any]]`
   crashed in the Swift 5.3 Foundation overlay (`keys.baseAddress!` is nil for capacity 0 with the Swift 6 standard library). `swift/foundation-objc.sh` now returns `[:]` early for empty dictionaries
   (forced and conditional bridging). Why the genre cache is empty is not looked at yet.
+* `-[NSKeyedUnarchiver versionForClassName:]` returns the class's version (Darling had a `DEBUG_BREAK()` trap there; MACore asks while decoding project data).
+* **`Jump.logicx` is read successfully on ClokeOS:** `-[CLgSongDocument _readLogicXProjectFromURL:error:]` → YES and `readFromURL:ofType:error:` → YES. Logic then builds the project window and crashes in
+  `-[NSBitmapImageRep initWithCGImage:]` (image without colour space) while MAToolKit prepares images. Not rendered, no audio yet.
