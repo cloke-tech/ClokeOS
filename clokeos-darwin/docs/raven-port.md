@@ -254,3 +254,12 @@ that maps through the empty table before the palette is realized, or the palette
 Next step: trace `SelectPalette`, `RealizePalette`, `ResizePalette`, `BitBlt` and `SetDIBits` calls for those four sections with
 `RAVEN_TRACE_X86=1`, but read only the last 3 MB of the trace file (a full 11 MB trace wedges the single-CPU VM's shell).
 The em dash `?` in the title is also still open.
+
+Update (trace of the button images, last 3 MB of an `RAVEN_TRACE_X86=1` run): Delphi copies each 8-bit image like this:
+`GetDIBits(dc, source, 0, h, NULL, info)` (format query), `CreateDIBSection(dc, info)` (the table comes from `info`),
+`PatBlt`, then `SelectPalette`/`RealizePalette` on the *source* context and `BitBlt` source -> new section; the new section is later
+selected with `SelectPalette`/`RealizePalette` and drawn with `StretchBlt` (two calls, one per button). The format query of
+`GetDIBits` did not hand back the colour table of an indexed bitmap; it does now (gdi_api.cpp), which is what Windows does, but the
+buttons stay black, so the table of the source bitmap is itself empty or the blit into the section does not quantize through
+the table. Still open, with the next step: trace the source bitmap (`GetObjectW` shows a 0x54-byte DIBSECTION for it) and print its
+palette in `GetDIBits`.

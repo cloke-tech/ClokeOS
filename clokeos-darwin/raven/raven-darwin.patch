@@ -229,7 +229,7 @@ index 26451b4..2829ba1 100644
  			if (header[0] == surface_magic && sequence && sequence != seen && width && height &&
  				header_size + size_t(width) * height * 4 <= size_t(status.st_size)) {
 diff --git a/native/desktop/gdi_api.cpp b/native/desktop/gdi_api.cpp
-index cdf405b..3e9f1d4 100644
+index cdf405b..d9b7280 100644
 --- a/native/desktop/gdi_api.cpp
 +++ b/native/desktop/gdi_api.cpp
 @@ -497,6 +497,19 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
@@ -302,6 +302,22 @@ index cdf405b..3e9f1d4 100644
  			if (painter.changed())
  				touched(dc);
  			call.ret(1);
+@@ -1610,6 +1644,15 @@ void NativeDesktop::register_gdi_api(ApiRegistry &registry)
+ 				call.store<uint16_t>(call[5] + 14, uint16_t(format));
+ 				call.store<uint32_t>(call[5] + 16, 0);
+ 				call.store<uint32_t>(call[5] + 20, uint32_t(((size_t(bitmap->width) * format + 31) / 32) * 4 * bitmap->height));
++				// An indexed bitmap hands its colour table back with the format (programs build a copy of the bitmap from it).
++				if (format <= 8 && !bitmap->palette.empty() && header_size == 40) {
++					std::vector<uint8_t> table((size_t(1) << format) * 4);
++					for (size_t entry = 0; entry < (size_t(1) << format) && entry < bitmap->palette.size(); ++entry) {
++						const uint32_t color = bitmap->palette[entry];
++						table[entry * 4] = uint8_t(color_blue(color)); table[entry * 4 + 1] = uint8_t(color_green(color)); table[entry * 4 + 2] = uint8_t(color_red(color));
++					}
++					call.write(call[5] + header_size, table);
++				}
+ 				call.ret(1);
+ 				return;
+ 			}
 diff --git a/native/desktop/objects.cpp b/native/desktop/objects.cpp
 index 7713b09..ea6369d 100644
 --- a/native/desktop/objects.cpp
