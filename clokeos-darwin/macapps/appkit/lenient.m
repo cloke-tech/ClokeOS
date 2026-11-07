@@ -93,7 +93,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont, o_imgnamed, o_bundleimg, o_imgfile;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont, o_imgnamed, o_bundleimg, o_imgfile, o_typeurl, o_docclass, o_readurl, o_readlx;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -159,7 +159,7 @@ static void h_hide(id s, SEL c) {
 /* NSError mit "Datei fehlt" (POSIX/Cocoa-Code 2, 4, 260): userInfo und Aufrufkette, damit ein Fehlerdialog einer Ursache zuzuordnen ist */
 static void ck_bt(int skip);
 static id h_nserr(id s, SEL c, NSString *domain, NSInteger code, NSDictionary *info) {
-    if (code == 2 || code == 4 || code == 260) {
+    if (code == 2 || code == 4 || code == 256 || code == 260) {
         fprintf(stderr, "[clokeos-trace] NSError %s %ld %s\n", [domain UTF8String] ?: "", (long)code, [[info description] UTF8String] ?: "");
         ck_bt(2);
     }
@@ -217,7 +217,34 @@ static id h_imgfile(id s, SEL c, id path) {
     if (!r) ck_img_nil("initWithContentsOfFile:", path);
     return r;
 }
+/* Öffnen eines Dokuments: Typ, Klasse, Lesen (Logic Pro: CLgSongDocument) */
+static id h_typeurl(id s, SEL c, NSURL *u, NSError **e) {
+    id r = ((id (*)(id, SEL, id, NSError **))o_typeurl)(s, c, u, e);
+    fprintf(stderr, "[clokeos-trace] typeForContentsOfURL %s -> %s\n", [[u path] UTF8String] ?: "", [[r description] UTF8String] ?: "nil");
+    return r;
+}
+static Class h_docclass(id s, SEL c, NSString *t) {
+    Class r = ((Class (*)(id, SEL, id))o_docclass)(s, c, t);
+    fprintf(stderr, "[clokeos-trace] documentClassForType %s -> %s\n", [t UTF8String] ?: "nil", r ? class_getName(r) : "nil");
+    return r;
+}
+static BOOL h_readurl(id s, SEL c, NSURL *u, NSString *t, NSError **e) {
+    BOOL r = ((BOOL (*)(id, SEL, id, id, NSError **))o_readurl)(s, c, u, t, e);
+    fprintf(stderr, "[clokeos-trace] %s readFromURL %s type %s -> %d %s\n", class_getName(object_getClass(s)), [[u path] UTF8String] ?: "",
+            [t UTF8String] ?: "nil", (int) r, (!r && e && *e) ? [[*e description] UTF8String] : "");
+    return r;
+}
+static BOOL h_readlx(id s, SEL c, NSURL *u, NSError **e) {
+    BOOL r = ((BOOL (*)(id, SEL, id, NSError **))o_readlx)(s, c, u, e);
+    fprintf(stderr, "[clokeos-trace] _readLogicXProjectFromURL %s -> %d %s\n", [[u path] UTF8String] ?: "", (int) r,
+            (!r && e && *e) ? [[*e description] UTF8String] : "");
+    return r;
+}
 + (void)hooks {
+    { Method m = class_getInstanceMethod(NSClassFromString(@"NSDocumentController"), @selector(typeForContentsOfURL:error:)); if (m) o_typeurl = method_setImplementation(m, (IMP)h_typeurl); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"NSDocumentController"), @selector(documentClassForType:)); if (m) o_docclass = method_setImplementation(m, (IMP)h_docclass); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"CLgSongDocument"), @selector(readFromURL:ofType:error:)); if (m) o_readurl = method_setImplementation(m, (IMP)h_readurl); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"CLgSongDocument"), sel_registerName("_readLogicXProjectFromURL:error:")); if (m) o_readlx = method_setImplementation(m, (IMP)h_readlx); }
     { Method m = class_getClassMethod(NSClassFromString(@"NSImage"), @selector(imageNamed:)); if (m) o_imgnamed = method_setImplementation(m, (IMP)h_imgnamed); }
     { Method m = class_getInstanceMethod([NSBundle class], @selector(imageForResource:)); if (m) o_bundleimg = method_setImplementation(m, (IMP)h_bundleimg); }
     { Method m = class_getInstanceMethod(NSClassFromString(@"NSImage"), @selector(initWithContentsOfFile:)); if (m) o_imgfile = method_setImplementation(m, (IMP)h_imgfile); }

@@ -704,3 +704,7 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   "Cannot set nil" exceptions (MAToolKit button images, inspector tab identifiers, …), fatal when raised while drawing (`patches/darling-corefoundation/NSDictionary.m.sed`).
 * `-[NSBitmapImageRep bitmapImageRepByRetaggingWithColorSpace:]` returns the same pixels (was a stub returning nil); `CGRectApplyAffineTransform` computes the bounding box (was a stub returning the input).
 * Now Logic opens `Jump.logicx` without crashing and shows an error: "The operation couldn't be completed. (NSCocoaErrorDomain error 256)" (a generic read error) — next to find out which read fails.
+* `-[NSWorkspace type:conformsToType:]` (equality, plus the `UTTypeConformsTo` lists the app declares, transitively; everything conforms to public.item/data/content) and
+  `isFilePackageAtPath:` (directory with an extension; Cocotron's MacWorkspace had it unimplemented). `CLgSongDocument` picks its read path with `type:conformsToType:`.
+* `-[NSDocumentController makeDocumentWithContentsOfURL:ofType:error:]` uses `-initWithContentsOfURL:ofType:error:` (passes the error back, as on macOS).
+* `CLOKE_TRACE` also logs `typeForContentsOfURL:`, `documentClassForType:`, `-[CLgSongDocument readFromURL:ofType:error:]` and `_readLogicXProjectFromURL:error:` with results.

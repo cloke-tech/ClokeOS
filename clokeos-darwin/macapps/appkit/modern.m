@@ -21,6 +21,8 @@
  *   NSImage imageNamed: findet Bilder aus der Assets.car des Hauptbundles über PNG-Dateien in Resources/Assets.images/ (macapps/carimages.m
  *            schreibt sie auf dem Mac mit Apples AppKit; für andere Bundles macht das -imageForResource:, appkit/nsbundle_images.m)
  *   NSTabViewItem: tabViewItemWithViewController:, viewController/setViewController: (Kennung = der Controller, Ansicht und Titel von ihm)
+ *   NSWorkspace: type:conformsToType: (gleich, oder über die UTTypeConformsTo-Listen, die Info.plist des Programms erklärt, transitiv; dazu
+ *            public.item/public.data/public.content für alles), isFilePackageAtPath: (Ordner mit Endung)
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
@@ -207,6 +209,40 @@ static id tab_with_vc(Class c, SEL s, id vc) {
     return item;
 }
 
+static NSArray *declared_parents(NSString *type) {
+    NSDictionary *info = [[NSBundle mainBundle] infoDictionary];
+    for (NSString *key in @[ @"UTExportedTypeDeclarations", @"UTImportedTypeDeclarations" ])
+        for (NSDictionary *d in info[key])
+            if ([d isKindOfClass: [NSDictionary class]] && [d[@"UTTypeIdentifier"] isEqual: type]) {
+                id c = d[@"UTTypeConformsTo"];
+                return [c isKindOfClass: [NSString class]] ? @[ c ] : ([c isKindOfClass: [NSArray class]] ? c : @[]);
+            }
+    return @[];
+}
+static BOOL ws_conforms(id self, SEL s, NSString *type, NSString *parent) {
+    if (![type isKindOfClass: [NSString class]] || ![parent isKindOfClass: [NSString class]]) return NO;
+    if ([type isEqualToString: parent]) return YES;
+    if ([parent isEqualToString: @"public.item"] || [parent isEqualToString: @"public.data"] || [parent isEqualToString: @"public.content"]) return YES;
+    NSMutableArray *todo = [NSMutableArray arrayWithObject: type];
+    NSMutableSet *seen = [NSMutableSet set];
+    while ([todo count]) {
+        NSString *t = [todo lastObject];
+        [todo removeLastObject];
+        if ([seen containsObject: t]) continue;
+        [seen addObject: t];
+        for (NSString *p in declared_parents(t)) {
+            if ([p isEqualToString: parent]) return YES;
+            [todo addObject: p];
+        }
+    }
+    return NO;
+}
+static BOOL ws_is_package(id self, SEL s, NSString *path) {
+    BOOL dir = NO;
+    if (![[NSFileManager defaultManager] fileExistsAtPath: path isDirectory: &dir] || !dir) return NO;
+    return [[path pathExtension] length] > 0;
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -234,6 +270,13 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
+    class_addMethod(objc_getClass("NSWorkspace"), sel_registerName("type:conformsToType:"), (IMP)ws_conforms, "c@:@@");
+    {   /* Cocotrons MacWorkspace meldet isFilePackageAtPath: als nicht umgesetzt: ersetzen */
+        Class mw = objc_getClass("MacWorkspace");
+        SEL sel = sel_registerName("isFilePackageAtPath:");
+        if (mw && class_getInstanceMethod(mw, sel)) method_setImplementation(class_getInstanceMethod(mw, sel), (IMP)ws_is_package);
+        class_addMethod(objc_getClass("NSWorkspace"), sel, (IMP)ws_is_package, "c@:@");
+    }
     {
         Class tv = objc_getClass("NSTabViewItem");
         class_addMethod(object_getClass(tv), sel_registerName("tabViewItemWithViewController:"), (IMP)tab_with_vc, "@@:@");
