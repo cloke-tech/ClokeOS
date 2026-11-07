@@ -309,5 +309,6 @@ the folder on first use (nt/paths.cpp `user_profile`, from `$USER`, which the wr
 Start Menu of the tree and the current user's. A prefix from before (`drive_c`, `windows`) is renamed to `NT` when it is opened and no
 `/NT` exists. Limits: the registry (also HKLM) is still one per user prefix, so a program installed by one user is in the shared
 `Program Files` but registered only for that user; files Raven copies into `/NT/Windows` belong to the first user. Checked in the VM
-with a hand-made `/NT` (775, `Users` 1777): `dir C:\` lists the tree, `/NT/Users/root` got its folders and symbolic links. Not built
-or run yet: the `setup.c` and `brand.sh` additions (account creation / image build).
+with a hand-made `/NT` (775, `Users` 1777): `dir C:\` lists the tree, `/NT/Users/root` got its folders and symbolic links. The account code was checked in
+parts: CloakServer builds with it (`cloakserver/build.sh`), the `setup.c` block run alone made the folder and links, and the
+`brand.sh` debugfs commands made the same on a scratch ext4 image. Not done: a full image build and a real account creation in the VM.
