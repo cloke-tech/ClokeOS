@@ -32,6 +32,8 @@ typedef struct {
   double shrink, fade, dx, dy;
 } WinStyle;
 WinStyle cs_window_style(Window w);
+/* nach dem Bild eines Fensterrahmens: was CloakServer darüber malt (Ampelknöpfe bei _CLOKE_TITLEBAR = Overlay) */
+void cs_window_overlay(Window frame, cairo_t *cr, double alpha);
 Pixmap cs_wallpaper(void);
 
 /* apps.c: Programme als .app-Bundles wie bei macOS */

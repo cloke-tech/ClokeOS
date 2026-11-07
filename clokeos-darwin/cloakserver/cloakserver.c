@@ -81,7 +81,13 @@ void freeifaddrs(struct ifaddrs *);
 static bool recovery; /* läuft als Wiederherstellung (recovery.c, /etc/clokeos-recovery) */
 /* Oberfläche: ClokeOS (wie macOS) oder NT (Windows-Stil, ab der nächsten Anmeldung); nt_sel ist die Einstellung */
 static bool nt, nt_sel;
-#define TITLE_H   (nt ? 30 : 38)
+#define TITLE_H   (nt ? 30 : 32) /* wie macOS 27 (auf dem Mac nachgemessen, docs/titlebar.md) */
+#define UNI_TH    38           /* Fundus, Search …: Werkzeugleiste in der Titelleiste (Prototyp: .titlebar) */
+/* _CLOKE_TITLEBAR (docs/titlebar.md): wer zeichnet die Fläche oben am Fenster */
+enum { TB_BAR, TB_OVERLAY, TB_OWN };
+#define LIGHT_X0  16 /* Ampelknöpfe wie bei macOS 27: Mitte des ersten 16 pt vom Rand, Abstand 23, Durchmesser 14 */
+#define LIGHT_GAP 23
+#define LIGHT_R   7
 #define NT_START_W 48 /* Breite der Start-Schaltfläche in der NT-Taskleiste */
 #define UNI_CUT   146  /* Breite des Ausschnitts links oben bei Fundus und Search: Ampelknöpfe und Zurück/Vor */   /* wie die Titelleiste im Prototyp (clokeos.html: .titlebar) */
 #define BORDER    1
@@ -163,6 +169,10 @@ struct Client {
   int app;             /* Index in apps oder -1 */
   bool minimized, zoomed, can_delete, can_focus, take_focus, argb;
   bool uni;            /* Fundus, Search: das Programm liegt auch hinter der Titelleiste (Werkzeugleiste = Titelleiste) */
+  int tstyle;          /* TB_*: aus _CLOKE_TITLEBAR; TB_OVERLAY: Programm zeichnet oben selbst, Ampelknöpfe liegen darüber */
+  int tbh, tlx, tflags; /* Höhe der Fläche des Programms, Mitte des ersten Ampelknopfs, Merkmale (1 FullSize … 4 Titel aus) */
+  int thide, toff, tly; /* vom Programm ausgeblendete / abgeschaltete Ampelknöpfe (Bit 0 schließen, 1 Dock, 2 zoomen); Mitte von oben */
+  Window lights;       /* TB_OVERLAY: Fenster über den Ampelknöpfen (Eingabe; ohne Compositor auch das Bild) */
   int zx, zy, zw, zh;  /* Lage vor dem Zoomen */
   int hover, pressed;  /* Ampelknopf: 0 keiner, 1 schließen, 2 ins Dock, 3 zoomen */
   int ignore_unmaps;
@@ -219,7 +229,7 @@ static Atom WM_PROTOCOLS, WM_WINDOW_ROLE, WM_DELETE_WINDOW, WM_TAKE_FOCUS, WM_ST
   NET_WM_WINDOW_TYPE_DND, NET_CLOSE_WINDOW, NET_FRAME_EXTENTS, NET_NUMBER_OF_DESKTOPS, NET_WM_PID,
   NET_CURRENT_DESKTOP, MOTIF_WM_HINTS, XROOTPMAP_ID, ESETROOT_PMAP_ID, GTK_UNIQUE_BUS_NAME,
   GTK_MENUBAR_OBJECT_PATH, UNITY_OBJECT_PATH, GTK_APPLICATION_OBJECT_PATH, GTK_WINDOW_OBJECT_PATH, CLOKE_MENU,
-  CLOKE_MENU_ACTIVATE;
+  CLOKE_MENU_ACTIVATE, CLOKE_TITLEBAR, NET_WM_MOVERESIZE;
 
 /* Menü, das gerade offen ist */
 static MenuItem menu[MENU_MAX];
@@ -596,7 +606,7 @@ static void xsettings_update(void) {
   bool font = access(UI_FONT_FILE, R_OK) == 0;
   /* Net/IconThemeName: ClokeOS-Symbole (Ordner wie in clokeos.html), erbt von hicolor */
   bool icons = access("/share/icons/ClokeOS/index.theme", R_OK) == 0;
-  uint32_t nl = (uint32_t)strlen(name), vl = (uint32_t)strlen(val), count = 1 + menus + font + icons;
+  uint32_t nl = (uint32_t)strlen(name), vl = (uint32_t)strlen(val), count = 2 + menus + font + icons;
   uint16_t nl16 = (uint16_t)nl;
   unsigned char buf[512] = {0}, *p = buf;
   p += 4;                                    /* Byte-Reihenfolge 0 = LSBFirst (x86), 3 frei */
@@ -639,6 +649,19 @@ static void xsettings_update(void) {
     memcpy(p, &xsettings_serial, 4), p += 4;
     memcpy(p, &ivl, 4), p += 4;
     memcpy(p, ival, ivl), p += (ivl + 3) & ~3u;
+  }
+  { /* Gtk/DecorationLayout: Fensterknöpfe in GTK-Kopfleisten links wie bei macOS (Thema: Ampelknöpfe, docs/titlebar.md);
+     * NT-Oberfläche: rechts wie bei Windows */
+    static const char *dname = "Gtk/DecorationLayout";
+    const char *dval = nt ? "menu:minimize,maximize,close" : "close,minimize,maximize:";
+    uint16_t dl = (uint16_t)strlen(dname);
+    uint32_t dvl = (uint32_t)strlen(dval);
+    *p = 1, p += 2;
+    memcpy(p, &dl, 2), p += 2;
+    memcpy(p, dname, dl), p += (dl + 3) & ~3u;
+    memcpy(p, &xsettings_serial, 4), p += 4;
+    memcpy(p, &dvl, 4), p += 4;
+    memcpy(p, dval, dvl), p += (dvl + 3) & ~3u;
   }
   XChangeProperty(dpy, xsettings_win, XSETTINGS_SETTINGS, XSETTINGS_SETTINGS, 8, PropModeReplace, buf, (int)(p - buf));
   xsettings_serial++;
@@ -1147,7 +1170,7 @@ static bool trash_full(void) {
 
 static Client *find_client(Window w) {
   for (Client *c = clients; c; c = c->next)
-    if (c->win == w || c->frame == w || c->grip == w) return c;
+    if (c->win == w || c->frame == w || c->grip == w || (c->lights && c->lights == w)) return c;
   return NULL;
 }
 
@@ -1222,6 +1245,117 @@ static void work_area(int *x0, int *y0, int *x1, int *y1) {
   else *y1 = SH - r;
 }
 
+/* _CLOKE_TITLEBAR (docs/titlebar.md): CARDINAL[6] Stil (TB_*), Höhe der Fläche des Programms, Merkmale, Mitte des ersten
+ * Ampelknopfs von links, ausgeblendete Ampelknöpfe, Mitte der Ampelknöpfe von oben. Gesetzt vom AppKit-X11-Backend (macapps/appkit/titlebar.m), nutzbar für jedes Programm. NT-Oberfläche: immer
+ * eine Titelleiste von CloakServer. */
+/* Ein Fenster, das per _MOTIF_WM_HINTS keinen Rahmen will, zeichnet seine Titelleiste selbst (GTK-Kopfleisten, Raven). Wie bei
+ * macOS bekommt es trotzdem Rand, runde Ecken und Schatten von CloakServer (TB_OWN). Ausnahmen: Vollbild, und GTK mit eigenem
+ * Schattenrand (_GTK_FRAME_EXTENTS ungleich 0, fremdes Thema; das ClokeOS-Thema nimmt ihn weg). */
+static bool own_titlebar_gets_frame(Window w) {
+  Atom type, st[8];
+  int fmt, n;
+  unsigned long cnt, after;
+  unsigned char *data = NULL;
+  bool ok = true;
+  if (XGetWindowProperty(dpy, w, XInternAtom(dpy, "_GTK_FRAME_EXTENTS", False), 0, 4, False, XA_CARDINAL, &type, &fmt, &cnt,
+                         &after, &data) == Success && data && cnt == 4) {
+    long *v = (long *)data;
+    ok = v[0] == 0 && v[1] == 0 && v[2] == 0 && v[3] == 0;
+  }
+  if (data) XFree(data);
+  if (ok && get_atom_prop(w, XInternAtom(dpy, "_NET_WM_STATE", False), st, 8, &n))
+    for (int i = 0; i < n; i++)
+      if (st[i] == XInternAtom(dpy, "_NET_WM_STATE_FULLSCREEN", False)) ok = false;
+  return ok;
+}
+
+static void read_titlebar(Client *c) {
+  c->tstyle = TB_BAR, c->tbh = c->tlx = c->tflags = c->thide = c->toff = c->tly = 0;
+  Atom type;
+  int fmt;
+  unsigned long cnt, after;
+  unsigned char *data = NULL;
+  if (XGetWindowProperty(dpy, c->win, CLOKE_TITLEBAR, 0, 6, False, XA_CARDINAL, &type, &fmt, &cnt, &after, &data) == Success &&
+      data && fmt == 32 && cnt >= 1) {
+    long *v = (long *)data;
+    if (v[0] >= TB_BAR && v[0] <= TB_OWN) c->tstyle = (int)v[0];
+    if (cnt >= 2 && v[1] > 0 && v[1] < 400) c->tbh = (int)v[1];
+    if (cnt >= 3) c->tflags = (int)v[2];
+    if (cnt >= 4 && v[3] > 0 && v[3] < 400) c->tlx = (int)v[3];
+    if (cnt >= 5) c->thide = (int)(v[4] & 7), c->toff = (int)(v[4] >> 3 & 7);
+    if (cnt >= 6 && v[5] > 0 && v[5] < 400) c->tly = (int)v[5];
+  }
+  if (data) XFree(data);
+  if (nt || c->draw) c->tstyle = TB_BAR;
+  if (!c->tbh) c->tbh = 32;
+  if (c->tstyle == TB_OVERLAY && c->thide == 7) c->tstyle = TB_OWN; /* alle Ampelknöpfe ausgeblendet */
+  if (c->tstyle != TB_OVERLAY) c->thide = 0;
+  if (c->tstyle == TB_OWN) c->toff = 0;
+}
+
+/* Ampelknöpfe in Rahmenkoordinaten; bei TB_OVERLAY senkrecht mittig in der Fläche, die das Programm oben zeichnet */
+static void light_centers(Client *c, double *cx, double *cy) {
+  int x0 = c->tstyle == TB_OVERLAY && c->tlx ? c->tlx : LIGHT_X0;
+  for (int i = 0; i < 3; i++) cx[i] = x0 + i * LIGHT_GAP;
+  if (c->tstyle == TB_OVERLAY) *cy = c->tly ? c->tly : c->tbh / 2.0;
+  else *cy = c->bw + c->th / 2.0;
+}
+
+/* Fläche des Fensters über den Ampelknöpfen (TB_OVERLAY), in Rahmenkoordinaten */
+static void lights_rect(Client *c, int *x, int *y, int *w, int *h) {
+  double cx[3], cy;
+  light_centers(c, cx, &cy);
+  *x = (int)cx[0] - 10, *y = (int)cy - 10, *w = (int)(cx[2] - cx[0]) + 20, *h = 20;
+}
+
+static void paint_lights(cairo_t *cr, Client *c);
+
+static void paint_lights_win(cairo_t *cr, int w, int h, void *arg) {
+  (void)w; (void)h;
+  Client *c = arg;
+  int x, y, lw, lh;
+  lights_rect(c, &x, &y, &lw, &lh);
+  cairo_translate(cr, -x, -y);
+  paint_lights(cr, c);
+}
+
+/* TB_OVERLAY: ein Kindfenster des Rahmens über dem Programm. Mit Compositor nur für die Eingabe (das Bild malt
+ * cs_window_overlay geglättet über das Fenster), sonst ein auf die drei Kreise zugeschnittenes Fenster. */
+static void lights_update(Client *c) {
+  if (c->tstyle != TB_OVERLAY) {
+    if (c->lights) XDestroyWindow(dpy, c->lights);
+    c->lights = None;
+    return;
+  }
+  int x, y, w, h;
+  lights_rect(c, &x, &y, &w, &h);
+  if (!c->lights) {
+    XSetWindowAttributes a = {0};
+    a.cursor = cur_arrow;
+    a.event_mask = ButtonPressMask | ButtonReleaseMask | PointerMotionMask | LeaveWindowMask | ExposureMask;
+    if (comp_on) {
+      c->lights = XCreateWindow(dpy, c->frame, x, y, w, h, 0, 0, InputOnly, CopyFromParent, CWCursor | CWEventMask, &a);
+    } else {
+      c->lights = XCreateWindow(dpy, c->frame, x, y, w, h, 0, CopyFromParent, InputOutput, CopyFromParent,
+                                CWCursor | CWEventMask, &a);
+      XRectangle r[64];
+      int n = 0;
+      double cx[3], cy;
+      light_centers(c, cx, &cy);
+      for (int i = 0; i < 3; i++)
+        for (int dy = -LIGHT_R + 1; dy < LIGHT_R - 1 && n < 64; dy++) {
+          double yy = dy + .5, hw = sqrt((LIGHT_R - .5) * (LIGHT_R - .5) - yy * yy);
+          r[n++] = (XRectangle){(short)lround(cx[i] - x - hw), (short)(cy - y + dy), (unsigned short)lround(2 * hw), 1};
+        }
+      XShapeCombineRectangles(dpy, c->lights, ShapeBounding, 0, 0, r, n, ShapeSet, Unsorted);
+    }
+    XMapRaised(dpy, c->lights);
+  } else {
+    XMoveResizeWindow(dpy, c->lights, x, y, w, h);
+    XRaiseWindow(dpy, c->lights);
+  }
+}
+
 static void apply_geometry(Client *c) {
   int fw = c->w + 2 * c->bw, fh = c->h + c->th + 2 * c->bw;
   XMoveResizeWindow(dpy, c->frame, c->x - c->bw, c->y - c->th - c->bw, fw, fh);
@@ -1237,7 +1371,8 @@ static void apply_geometry(Client *c) {
     XMoveResizeWindow(dpy, c->win, c->bw, c->th + c->bw, c->w, c->h);
   }
   if (c->grip) XMoveWindow(dpy, c->grip, fw - 16, fh - 16);
-  if (c->th) shape_round(c->frame, fw, fh, RADIUS, false);
+  if (c->bw) shape_round(c->frame, fw, fh, RADIUS, false);
+  lights_update(c);
   send_configure(c);
   long ext[4] = {c->bw, c->bw, c->uni ? c->bw : c->th + c->bw, c->bw};
   if (!c->draw) XChangeProperty(dpy, c->win, NET_FRAME_EXTENTS, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)ext, 4);
@@ -1321,8 +1456,12 @@ static Client *manage(Window w, bool already_mapped, bool own) {
   c->y = wa.y;
   c->w = wa.width;
   c->h = wa.height;
-  c->th = wants_no_decoration(w) ? 0 : TITLE_H;
-  c->bw = c->th ? BORDER : 0;
+  /* Titelleiste von CloakServer nur ohne eigene Fläche oben (_CLOKE_TITLEBAR) und ohne _MOTIF_WM_HINTS "keine Rahmen";
+   * einen Rand mit runden Ecken und Schatten bekommt auch ein Fenster, das seine Titelleiste selbst zeichnet und es sagt */
+  read_titlebar(c);
+  if (c->tstyle == TB_BAR && wants_no_decoration(w) && own_titlebar_gets_frame(w)) c->tstyle = TB_OWN;
+  c->th = wants_no_decoration(w) || c->tstyle != TB_BAR ? 0 : TITLE_H;
+  c->bw = c->th || c->tstyle != TB_BAR ? BORDER : 0;
   c->can_focus = true;
   c->minw = 120;
   c->minh = 40;
@@ -1335,6 +1474,7 @@ static Client *manage(Window w, bool already_mapped, bool own) {
   }
   c->app = app_for_window(w, c->cls);
   c->uni = has_uni(c);
+  if (c->uni) c->th = UNI_TH;
   if (c->uni && c->h > c->th + 60) c->h -= c->th; /* c->h zählt ab Unterkante der Titelleiste */
   update_title(c);
 
@@ -1389,7 +1529,7 @@ static Client *manage(Window w, bool already_mapped, bool own) {
   if (already_mapped) c->ignore_unmaps++;
   XReparentWindow(dpy, w, c->frame, c->bw, c->uni ? c->bw : c->th + c->bw);
   XSelectInput(dpy, w, PropertyChangeMask);
-  if (c->th && (sh.flags & PMinSize ? !(sh.flags & PMaxSize) || sh.max_width != sh.min_width : true)) {
+  if (c->bw && (sh.flags & PMinSize ? !(sh.flags & PMaxSize) || sh.max_width != sh.min_width : true)) {
     XSetWindowAttributes ga = {.cursor = cur_resize};
     c->grip = XCreateWindow(dpy, c->frame, fw - 16, fh - 16, 16, 16, 0, 0, InputOnly, CopyFromParent, CWCursor, &ga);
     XSelectInput(dpy, c->grip, ButtonPressMask | ButtonReleaseMask | PointerMotionMask);
@@ -1559,7 +1699,7 @@ static void restore_client(Client *c) {
 }
 
 static void zoom_client(Client *c) {
-  if (!c || !c->th) return;
+  if (!c || !c->bw) return;
   if (c->zoomed) {
     c->x = c->zx; c->y = c->zy; c->w = c->zw; c->h = c->zh;
     c->zoomed = false;
@@ -1580,11 +1720,6 @@ static void zoom_client(Client *c) {
 /* ---------------------------------------------------------------------------------------- */
 /* Rahmen                                                                                     */
 
-static void light_centers(Client *c, double *cx, double *cy) {
-  for (int i = 0; i < 3; i++) cx[i] = c->bw + 12 + 6 + i * 20;
-  *cy = c->bw + c->th / 2.0;
-}
-
 /* NT: Minimieren, Maximieren, Schließen rechts, je 46 Pixel breit; i = 1 schließen, 2 ins Dock, 3 zoomen */
 static int nt_btn_x(Client *c, int i, int w) { return w - c->bw - 46 * (i == 1 ? 1 : i == 3 ? 2 : 3); }
 
@@ -1599,7 +1734,7 @@ static int light_at(Client *c, int x, int y) {
   double cx[3], cy;
   light_centers(c, cx, &cy);
   for (int i = 0; i < 3; i++)
-    if (fabs(x - cx[i]) <= 8 && fabs(y - cy) <= 9) return i + 1;
+    if (!((c->thide | c->toff) & (1 << i)) && fabs(x - cx[i]) <= LIGHT_R + 2 && fabs(y - cy) <= LIGHT_R + 2) return i + 1;
   return 0;
 }
 
@@ -1693,6 +1828,40 @@ static void paint_frame_nt(cairo_t *cr, int w, int h, Client *c, bool active) {
   if (!c->uni && room > 24) text(cr, tx, cy, title, 12, false, active ? T->fg : T->fg2, room, 0);
 }
 
+/* Ampelknöpfe (Schließen, Ins Dock, Zoomen) in Rahmenkoordinaten; mit Symbolen, solange der Zeiger darüber ist */
+static void paint_lights(cairo_t *cr, Client *c) {
+  bool active = c == focused;
+  double cx[3], cy;
+  light_centers(c, cx, &cy);
+  const RGBA lc[3] = {L_CLOSE, L_MIN, L_ZOOM};
+  bool show = active || c->hover;
+  for (int i = 0; i < 3; i++) {
+    if (c->thide & (1 << i)) continue; /* vom Programm ausgeblendet (standardWindowButton: … setHidden:) */
+    cairo_new_path(cr);
+    cairo_arc(cr, cx[i], cy, LIGHT_R - .25, 0, 2 * M_PI);
+    bool off = c->toff & (1 << i); /* abgeschaltet (z. B. Fenster nicht zoombar): grau wie bei macOS */
+    set(cr, show && !off ? lc[i] : T->light_off);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, .12);
+    cairo_set_line_width(cr, .5);
+    cairo_stroke(cr);
+    if (c->hover && !off) { /* Symbole: × − + */
+      cairo_set_source_rgba(cr, 0, 0, 0, .55);
+      cairo_set_line_width(cr, 1.2);
+      cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+      double s = 3;
+      if (i == 0) {
+        cairo_move_to(cr, cx[i] - s, cy - s); cairo_line_to(cr, cx[i] + s, cy + s);
+        cairo_move_to(cr, cx[i] + s, cy - s); cairo_line_to(cr, cx[i] - s, cy + s);
+      } else {
+        cairo_move_to(cr, cx[i] - s - .4, cy); cairo_line_to(cr, cx[i] + s + .4, cy);
+        if (i == 2) { cairo_move_to(cr, cx[i], cy - s - .4); cairo_line_to(cr, cx[i], cy + s + .4); }
+      }
+      cairo_stroke(cr);
+    }
+  }
+}
+
 static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
   Client *c = arg;
   bool active = c == focused;
@@ -1708,7 +1877,7 @@ static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
   cairo_fill(cr);
   /* Linie unter der Titelleiste; bei Fundus und Search fehlt sie: Titelleiste und Werkzeugleiste des
    * Programms bilden eine Fläche wie beim Finder und bei Safari */
-  if (!has_uni(c)) {
+  if (c->th && !has_uni(c)) {
     set(cr, T->line);
     cairo_rectangle(cr, c->bw, c->bw + c->th - 1, w - 2 * c->bw, 1);
     cairo_fill(cr);
@@ -1723,33 +1892,7 @@ static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
   cairo_fill(cr);
   cairo_restore(cr);
 
-  double cx[3], cy;
-  light_centers(c, cx, &cy);
-  const RGBA lc[3] = {L_CLOSE, L_MIN, L_ZOOM};
-  bool show = active || c->hover;
-  for (int i = 0; i < 3; i++) {
-    cairo_new_path(cr);
-    cairo_arc(cr, cx[i], cy, 6, 0, 2 * M_PI);
-    set(cr, show ? lc[i] : T->light_off);
-    cairo_fill_preserve(cr);
-    cairo_set_source_rgba(cr, 0, 0, 0, .12);
-    cairo_set_line_width(cr, .5);
-    cairo_stroke(cr);
-    if (c->hover) { /* Symbole: × − + */
-      cairo_set_source_rgba(cr, 0, 0, 0, .55);
-      cairo_set_line_width(cr, 1.2);
-      cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
-      double s = 2.6;
-      if (i == 0) {
-        cairo_move_to(cr, cx[i] - s, cy - s); cairo_line_to(cr, cx[i] + s, cy + s);
-        cairo_move_to(cr, cx[i] + s, cy - s); cairo_line_to(cr, cx[i] - s, cy + s);
-      } else {
-        cairo_move_to(cr, cx[i] - s - .4, cy); cairo_line_to(cr, cx[i] + s + .4, cy);
-        if (i == 2) { cairo_move_to(cr, cx[i], cy - s - .4); cairo_line_to(cr, cx[i], cy + s + .4); }
-      }
-      cairo_stroke(cr);
-    }
-  }
+  if (c->th) paint_lights(cr, c);
   int side = 84;
   if (has_nav(c)) {
     double nx, ny, nw, nh;
@@ -1781,12 +1924,56 @@ static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
     if (dash && dash != short_title) *dash = 0;
     title = short_title;
   }
-  if (!c->uni && w - 2 * side > 24) text(cr, w / 2.0, cy, title, 13, true, active ? T->fg : T->fg2, w - 2 * side, 1);
+  /* Titel fett, 13 pt; wie bei macOS 27 links neben den Ampelknöpfen (Fenster mit Zurück/Vor: mittig) */
+  double cy = c->bw + c->th / 2.0, tx = LIGHT_X0 + 2 * LIGHT_GAP + LIGHT_R + 16;
+  if (c->th && !c->uni && !(c->tflags & 4)) {
+    if (has_nav(c)) {
+      if (w - 2 * side > 24) text(cr, w / 2.0, cy, title, 13, true, active ? T->fg : T->fg2, w - 2 * side, 1);
+    } else if (w - tx - 16 > 24) {
+      text(cr, tx, cy, title, 13, true, active ? T->fg : T->fg2, w - tx - 16, 0);
+    }
+  }
 }
 
 static void draw_frame(Client *c) {
-  if (!c || !c->th) return;
+  if (!c || !c->bw) return;
   paint_window(c->frame, c->w + 2 * c->bw, c->h + c->th + 2 * c->bw, paint_frame, c);
+  if (c->lights) { /* Ampelknöpfe über dem Programm neu */
+    int x, y, w, h;
+    lights_rect(c, &x, &y, &w, &h);
+    if (comp_on) comp_dirty(c->x - c->bw + x - 2, c->y - c->th - c->bw + y - 2, w + 4, h + 4);
+    else paint_window(c->lights, w, h, paint_lights_win, c);
+  }
+}
+
+/* Compositor (comp.c): nach dem Bild eines Rahmens; malt bei TB_OVERLAY die Ampelknöpfe geglättet über das Programm */
+void cs_window_overlay(Window frame, cairo_t *cr, double alpha) {
+  for (Client *c = clients; c; c = c->next)
+    if (c->frame == frame) {
+      if (!c->lights) return;
+      cairo_push_group(cr);
+      paint_lights(cr, c);
+      cairo_pop_group_to_source(cr);
+      cairo_paint_with_alpha(cr, alpha);
+      return;
+    }
+}
+
+/* Das Programm hat _CLOKE_TITLEBAR geändert: Titelleiste neu einteilen, die Oberkante des Rahmens bleibt stehen */
+static void titlebar_changed(Client *c) {
+  int ts = c->tstyle, tbh = c->tbh, tlx = c->tlx, tf = c->tflags, hide = c->thide, off = c->toff, tly = c->tly;
+  read_titlebar(c);
+  if (c->uni) return;
+  if (ts == c->tstyle && tbh == c->tbh && tlx == c->tlx && tly == c->tly) {
+    if (tf != c->tflags || hide != c->thide || off != c->toff) draw_frame(c);
+    return;
+  }
+  int top = c->y - c->th - c->bw;
+  c->th = wants_no_decoration(c->win) || c->tstyle != TB_BAR ? 0 : TITLE_H;
+  c->bw = c->th || c->tstyle != TB_BAR ? BORDER : 0;
+  c->y = top + c->th + c->bw;
+  apply_geometry(c);
+  draw_frame(c);
 }
 
 /* ---------------------------------------------------------------------------------------- */
@@ -5071,6 +5258,12 @@ static void on_button_press(XButtonEvent *e) {
   if (e->window == c->grip) {
     drag = c;
     drag_mode = 2;
+  } else if (c->lights && e->window == c->lights) {
+    int x, y, w, h;
+    lights_rect(c, &x, &y, &w, &h);
+    int l = light_at(c, e->x + x, e->y + y);
+    if (l) c->pressed = l;
+    return;
   } else {
     int l = light_at(c, e->x, e->y);
     if (l) {
@@ -5125,7 +5318,9 @@ static void on_button_release(XButtonEvent *e) {
   }
   Client *c = find_client(e->window);
   if (c && c->pressed) {
-    int l = light_at(c, e->x, e->y);
+    int ox = 0, oy = 0, w, h;
+    if (c->lights && e->window == c->lights) lights_rect(c, &ox, &oy, &w, &h);
+    int l = light_at(c, e->x + ox, e->y + oy);
     int p = c->pressed;
     c->pressed = 0;
     if (l == p) {
@@ -5193,8 +5388,15 @@ static void on_motion(XMotionEvent *e) {
     return;
   }
   Client *c = find_client(e->window);
+  if (c && c->lights && e->window == c->lights) { /* wie bei macOS: Symbole über der ganzen Gruppe */
+    if (!c->hover) {
+      c->hover = 1;
+      draw_frame(c);
+    }
+    return;
+  }
   if (c && e->window == c->frame) {
-    int h = nt ? light_at(c, e->x, e->y) : (e->y < c->th && e->x < 80);
+    int h = nt ? light_at(c, e->x, e->y) : (e->y < c->th && e->x < LIGHT_X0 + 2 * LIGHT_GAP + LIGHT_R + 4);
     if (h != c->hover) {
       c->hover = h;
       draw_frame(c);
@@ -5217,7 +5419,7 @@ static void on_leave(XCrossingEvent *e) {
     draw_sub();
   }
   Client *c = find_client(e->window);
-  if (c && e->window == c->frame && c->hover) {
+  if (c && (e->window == c->frame || (c->lights && e->window == c->lights)) && c->hover) {
     c->hover = 0;
     draw_frame(c);
   }
@@ -5236,7 +5438,7 @@ static void on_expose(XExposeEvent *e) {
   else {
     Client *c = find_client(e->window);
     if (!c) return;
-    if (e->window == c->frame) draw_frame(c);
+    if (e->window == c->frame || (c->lights && e->window == c->lights)) draw_frame(c);
     else if (c->draw && e->window == c->win) draw_own(c);
   }
 }
@@ -5264,6 +5466,30 @@ static void on_client_message(XClientMessageEvent *e) {
   if (e->message_type == NET_ACTIVE_WINDOW) restore_client(c);
   else if (e->message_type == NET_CLOSE_WINDOW) close_client(c);
   else if (e->message_type == WM_CHANGE_STATE && e->data.l[0] == IconicState) minimize_client(c);
+  else if (e->message_type == NET_WM_MOVERESIZE) {
+    /* EWMH: Programme ohne Titelleiste von CloakServer (GTK-Kopfleisten, Mac-Fenster mit eigener Fläche oben) verschieben
+     * das Fenster so; 8 = verschieben, 4 = Größe unten rechts, 11 = abbrechen */
+    long dir = e->data.l[2];
+    if (dir == 11) {
+      if (drag == c) {
+        XUngrabPointer(dpy, CurrentTime);
+        drag = NULL;
+      }
+      return;
+    }
+    if (dir != 8 && dir != 4) return;
+    if (c->zoomed && dir == 8) c->zoomed = false;
+    drag = c;
+    drag_mode = dir == 8 ? 1 : 2;
+    drag_px = (int)e->data.l[0];
+    drag_py = (int)e->data.l[1];
+    drag_x = c->x, drag_y = c->y, drag_w = c->w, drag_h = c->h;
+    raise_client(c);
+    focus_client(c);
+    if (XGrabPointer(dpy, c->frame, False, ButtonReleaseMask | PointerMotionMask, GrabModeAsync, GrabModeAsync, None,
+                     drag_mode == 2 ? cur_resize : cur_move, CurrentTime) != GrabSuccess)
+      drag = NULL;
+  }
 }
 
 static void on_key(XKeyEvent *e) {
@@ -5452,6 +5678,8 @@ static void setup_atoms(void) {
   NET_NUMBER_OF_DESKTOPS = atom("_NET_NUMBER_OF_DESKTOPS");
   NET_CURRENT_DESKTOP = atom("_NET_CURRENT_DESKTOP");
   MOTIF_WM_HINTS = atom("_MOTIF_WM_HINTS");
+  CLOKE_TITLEBAR = atom("_CLOKE_TITLEBAR");
+  NET_WM_MOVERESIZE = atom("_NET_WM_MOVERESIZE");
   XROOTPMAP_ID = atom("_XROOTPMAP_ID");
   ESETROOT_PMAP_ID = atom("ESETROOT_PMAP_ID");
   GTK_UNIQUE_BUS_NAME = atom("_GTK_UNIQUE_BUS_NAME");
@@ -5466,7 +5694,7 @@ static void setup_atoms(void) {
 static void setup_ewmh(void) {
   Atom supported[] = {NET_SUPPORTED, NET_WM_NAME, NET_ACTIVE_WINDOW, NET_CLIENT_LIST, NET_WORKAREA,
                       NET_SUPPORTING_WM_CHECK, NET_WM_WINDOW_TYPE, NET_CLOSE_WINDOW, NET_FRAME_EXTENTS,
-                      NET_NUMBER_OF_DESKTOPS, NET_CURRENT_DESKTOP};
+                      NET_NUMBER_OF_DESKTOPS, NET_CURRENT_DESKTOP, NET_WM_MOVERESIZE};
   XChangeProperty(dpy, root, NET_SUPPORTED, XA_ATOM, 32, PropModeReplace, (unsigned char *)supported,
                   sizeof supported / sizeof supported[0]);
   checkwin = XCreateSimpleWindow(dpy, root, -10, -10, 1, 1, 0, 0, 0);
@@ -5546,7 +5774,7 @@ WinStyle cs_window_style(Window w) {
   if (w && w == tipwin) return (WinStyle){WK_GLASS, 12, 10, 4, .2};
   for (Client *c = clients; c; c = c->next)
     if (c->frame == w) {
-      if (c->th) {
+      if (c->bw) {
         bool a = c == focused;
         st = (WinStyle){WK_FRAME, RADIUS, a ? 30 : 18, a ? 16 : 8, a ? (dark ? .55 : .36) : (dark ? .4 : .22)};
       }
@@ -5729,6 +5957,7 @@ int main(int argc, char **argv) {
             update_title(c);
             draw_frame(c);
           }
+          if (c && ev.xproperty.window == c->win && ev.xproperty.atom == CLOKE_TITLEBAR) titlebar_changed(c);
           if (c && ev.xproperty.window == c->win) gm_property(c, ev.xproperty.atom);
           break;
         }

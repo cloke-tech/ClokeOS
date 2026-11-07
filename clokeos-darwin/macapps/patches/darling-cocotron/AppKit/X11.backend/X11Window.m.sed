@@ -26,3 +26,7 @@ s/^(        XRestackWindows\(_display, w, 1\);)$/\1\n        XFlush(_display);/
 n
 s/^    \[self ensureMapped\];$/    if (!_mapped)\n        return;/
 }
+# ClokeOS: Titelleiste wie bei macOS (macapps/appkit/titlebar.m): das Fenster meldet CloakServer vor dem Zeigen über _CLOKE_TITLEBAR,
+# ob es die Fläche oben selbst zeichnet (FullSizeContentView, Werkzeugleiste in der Titelleiste, NSAlert).
+s|^    \[self setWindowIcon\];$|    [self setWindowIcon];\
+    { extern void ClokeTitlebarPublishX(id, Display *, Window); ClokeTitlebarPublishX(delegate, _display, _window); }|

@@ -532,6 +532,7 @@ void comp_repaint(void) {
     }
     cairo_set_source_surface(cr, s, 0, 0);
     cairo_paint_with_alpha(cr, a);
+    cs_window_overlay(w->id, cr, a); /* Ampelknöpfe über Programmen, die oben selbst zeichnen */
     cairo_restore(cr);
   }
   cairo_destroy(cr);
