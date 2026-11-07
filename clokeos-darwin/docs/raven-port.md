@@ -197,3 +197,12 @@ not `RAVEN_TRACE_API`, and `RAVEN_TRACE_FILE=/tmp/tr` writes one file per proces
 Result: Inno Setup 6.7.4 installs under Raven (`/VERYSILENT /CURRENTUSER`): files, Start menu links, uninstaller (checked in the VM). Still open: elevation (all users) and the
 windows of the non-silent wizard.
 build.sh rebuilds the controls components when `raven-shell.dll` lacks `SHGetImageList`.
+
+## Status (2026-11-07): the Inno wizard is visible
+
+The "no window" of the non-silent Inno Setup was a stale `/usr/bin/raven` in the test image (without `--desktop=x11`): children
+without a display drop every frame (`RAVEN_TRACE_PRESENT=1` prints one line per frame with `display=0|1`). With the wrapper
+from the repo the language dialog and the wizard (license page) show on the CloakServer desktop. Visible glitches left: the
+radio buttons of the license page sit on a black strip with black text (TNewCheckListBox background), and the page header is
+clipped. Clicking OK on the language dialog works. Rule for tests: copy `overlay-desktop/usr/bin/raven` into a VM that was
+not rebuilt, or the GUI parts do not show.

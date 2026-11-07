@@ -241,6 +241,23 @@ index 7713b09..ea6369d 100644
  		text_engine=std::make_unique<TextRenderer>(std::filesystem::is_directory(bundled) ? bundled.string() : RAVEN_FONT_DIRECTORY);
  	}
  	return *text_engine;
+diff --git a/native/desktop/windows.cpp b/native/desktop/windows.cpp
+index 0616ece..7be193b 100644
+--- a/native/desktop/windows.cpp
++++ b/native/desktop/windows.cpp
+@@ -190,6 +190,12 @@ void NativeWindows::present(uint64_t handle, bool force)
+ 	handle=objects.window_root(handle);
+ 	if (!handle) throw uint32_t(1400);
+ 	dirty_roots.erase(handle);
++	if (std::getenv("RAVEN_TRACE_PRESENT")) {
++		const auto *traced=std::as_const(objects).window(handle);
++		std::fprintf(stderr,"present %llx force=%d display=%d",(unsigned long long)handle,force?1:0,presentation.present?1:0);
++		if (traced) std::fprintf(stderr," outer=%d,%d,%d,%d painted=%d updates=%d",int(traced->outer.left),int(traced->outer.top),int(traced->outer.right),int(traced->outer.bottom),traced->painted?1:0,traced->update.empty()?0:1);
++		std::fprintf(stderr,"\n");
++	}
+ 	// Without a display the frame has nowhere to go and is dropped; the window lives on as on a screen that is switched off.
+ 	if (!presentation.present) return;
+ 	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
 diff --git a/native/main.cpp b/native/main.cpp
 index 7fab6e2..7a64689 100644
 --- a/native/main.cpp
