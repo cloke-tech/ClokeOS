@@ -220,3 +220,13 @@ position alone looked right for the header only by accident; it was wrong, as th
 Diagnostics added: `RAVEN_TRACE_FILL=1` prints every FillRect (dc, rect, origin, colour, whether a pixel changed) and every
 `DrawThemeParentBackground` shift. Test notes: the dialog opens at a different place each run, so press Return
 (`vmctl.py xkey Return`) instead of clicking OK; the desktop session logs out to the greeter after about 40 minutes without input.
+
+## Status (2026-11-07): the Inno Setup wizard installs from first page to last
+
+Clicked through in the VM: language, license, folder, Start menu folder, tasks (check boxes), summary, install with progress bar,
+finish page. One bug showed at the very end of the install ("Could not load ISCmplr.dll: BCryptExportKey result invalid"): the
+exported ECDSA/ECDH public blob had magic `ECS0`+1 added to its lowest byte instead of the digit in its fourth byte (`ECS1`).
+Fixed in `ec_magic` (bcrypt_api.cpp); a 32-bit test (open ECDSA_P256, import and export the generator point) now returns the
+imported blob unchanged. Still open: installs for all users (elevation); the greeter came up after Finish (launching the
+installed Compil32.exe) — not checked whether that was the idle logout or a session crash; the folder page's icon was blank
+(`SHGetImageList` hands out empty image lists).
