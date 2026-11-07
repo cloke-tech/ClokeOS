@@ -783,3 +783,14 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   slightly less mids; waveforms do not match sample by sample (free-running synth phases). Which track/plug-in causes the extra low end is open (next: solo per track
   on both systems; the Mac per-track bounces Jump-T1/T2 exist).
 * Dialog gaps: Start/End fields draw black, the destination list has no labels (view-based NSTableView), OK/Cancel are cut off (no Auto Layout).
+
+### Round 46: per-track comparison (not reached yet)
+
+* Solo bounces did not isolate tracks: on ClokeOS the `S` key solos the selected *region* (yellow bar) and the bounce still contains the whole mix; on the Mac,
+  solo clicks sent to Logic in the background did not reliably take effect. All "per-track" files on both systems have the full-mix spectrum.
+* Side result: the full-mix bounces on ClokeOS are **not reproducible in the low end** (62 Hz band 13.8–21.3 dB above 1 kHz across 8 bounces of the same
+  project), while the Mac's three bounces agree to 0.1 dB (20.2 dB). So the "+12 dB at 62 Hz" from round 45 is mostly this scatter: something in the low end is
+  nondeterministic on ClokeOS (candidates: a plug-in reading uninitialised memory, denormal/FTZ handling, random seeds; untested).
+* File > Export > All Tracks as Audio Files runs on ClokeOS ("Exporting all Tracks", NSOpenPanel for the folder), writes the first track and then crashes in
+  `MD::DisposeFileList` (called from `MD::FileRecordDisable`, garbage FileIO pointer). The export options view (`ExportRegionAsAudioFileView`) is not drawn, so the
+  files are named "Untitled".
