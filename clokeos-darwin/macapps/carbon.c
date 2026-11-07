@@ -100,6 +100,7 @@ int32_t UCKeyTranslate(const void *layout, uint16_t code, uint16_t action, uint3
  * bei InsXTime-Aufgaben ohne Drift relativ zur vorigen Frist. Der Rückruf läuft auf dem Faden der Aufgabe und darf PrimeTime/RmvTime rufen. */
 #include <pthread.h>
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 #pragma pack(push, 2)
 typedef struct TMTask { void *qLink; short qType; void (*tmAddr)(struct TMTask *); long tmCount, tmWakeUp, tmReserved; } TMTask;
@@ -151,9 +152,13 @@ static short tm_install(TMTask *t, int extended) {
   pthread_mutex_unlock(&tm_lk);
   return 0;
 }
-short InsTime(TMTask *t) { return tm_install(t, 0); }
-short InsXTime(TMTask *t) { return tm_install(t, 1); }
+short InsTime(TMTask *t) { if (getenv("CLOKE_TM_TRACE")) fprintf(stderr, "[TimeMgr] InsTime %p\n", (void *)t); return tm_install(t, 0); }
+short InsXTime(TMTask *t) { if (getenv("CLOKE_TM_TRACE")) fprintf(stderr, "[TimeMgr] InsXTime %p\n", (void *)t); return tm_install(t, 1); }
+/* CLOKE_TM_TRACE=1: die ersten 40 PrimeTime-Aufrufe je Prozess (Aufgabe, count, tmWakeUp vorher) auf stderr */
+static int tm_trace_n = -1;
 short PrimeTime(TMTask *t, long count) {
+  if (tm_trace_n < 0) tm_trace_n = getenv("CLOKE_TM_TRACE") ? 0 : 1 << 30;
+  if (tm_trace_n < 40) { tm_trace_n++; fprintf(stderr, "[TimeMgr] PrimeTime %p count %ld qType %#x wakeUp %ld t=%llu\n", (void *)t, count, (unsigned)(unsigned short)t->qType, t->tmWakeUp, (unsigned long long)tm_abs2ns(mach_absolute_time()) / 1000); }
   pthread_mutex_lock(&tm_lk);
   tm_entry *e = tm_find(t);
   if (!e) { pthread_mutex_unlock(&tm_lk); return -50; }

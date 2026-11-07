@@ -767,3 +767,19 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   10 s windows) but fine detail does not. Spectrum: ClokeOS +5…7 dB at 62 Hz, −5…10 dB from 250 Hz up. So one instrument or effect behaves differently on ClokeOS
   (not yet found; candidates: plug-ins that fail to load or run differently, e.g. Space Designer without IR, Drum Kit / Sampler fallbacks).
 * Not done: listening comparison per track (solo each track on both systems), offline bounce on ClokeOS (File > Bounce), installing the sound library, x86_64.
+
+### Round 45: offline bounce on ClokeOS (File > Bounce > Project or Section)
+
+* The real-time recording (round 44) does **not** play the song straight: after ~20 s Logic's song position jumps and the song restarts (heard by the user, confirmed
+  by envelope alignment). Logic primes its sequencer Time Manager task every 7 ms (`PrimeTime(t, -7000)`); in the VM the callbacks arrive every 10–56 ms
+  (`CLOKE_TM_TRACE=1`). Likely cause of the position jumps; not fixed (timer precision under the VM / PureDarwin scheduler).
+* **Offline bounce works** and is the way to render on ClokeOS: global menu File > Bounce > Project or Section (Command shortcuts do not reach Logic through X11 yet;
+  the menu works the second time it is opened after start), tick the first destination, Return. Two Cocotron fixes were needed:
+  `NSParagraphStyle.m.sed` (copied/decoded paragraph styles keep a mutable tab-stop array; the dialog threw "attempting to mutate an immutable object") and
+  `NSSavePanel.subproj/NSSavePanel.m.sed` (Save builds folder + `nameFieldStringValue` + extension; before, without a selected row the path was empty).
+  `CLOKE_SAVEPANEL_DIR=<folder>` answers save panels without UI. Logic shows its "Bouncing" progress window and writes `/var/root/Jump.aif`
+  (AIFF, 24-bit, 44.1 kHz, **136.6 s = the project's 2:16**, the same length as the bounce on the Mac).
+* Compared with the Mac bounce: level envelope correlation **0.755 over the whole song** (real time: 0.09), no restart. Remaining difference: ClokeOS +12 dB at 62 Hz,
+  slightly less mids; waveforms do not match sample by sample (free-running synth phases). Which track/plug-in causes the extra low end is open (next: solo per track
+  on both systems; the Mac per-track bounces Jump-T1/T2 exist).
+* Dialog gaps: Start/End fields draw black, the destination list has no labels (view-based NSTableView), OK/Cancel are cut off (no Auto Layout).
