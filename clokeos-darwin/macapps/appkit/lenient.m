@@ -9,6 +9,8 @@
 #import <objc/message.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <dlfcn.h>
+#include <string.h>
 
 @interface CKLenientSink : NSObject
 @end
@@ -29,9 +31,52 @@ static id ck_sink_imp(id self, SEL _cmd) { return nil; }
 }
 @end
 
+/* Eine Klasse mit eigenem forwardInvocation: leitet selbst weiter (Logic Pros MAButtonCell, MATextFieldCell, MASliderCell … reichen
+ * resourceBundleID, assetSetPath usw. an ihr Asset-Objekt weiter). Die Laufzeit fragt forwardingTargetForSelector: aber vorher; gäbe die
+ * Senke dort ein Ziel, käme die eigene Weiterleitung nie an die Reihe (so fehlten Logics Knopfbilder). Daher: kennt die Klasse den
+ * Selektor über methodSignatureForSelector:, bleibt die Weiterleitung ihr überlassen. */
+static BOOL CKOwnForwarding(id receiver, SEL sel, BOOL isClass) {
+    static IMP base;
+    if (!base) base = class_getMethodImplementation([NSObject class], @selector(forwardInvocation:));
+    Class c = object_getClass(receiver);
+    IMP fwd = class_getMethodImplementation(c, @selector(forwardInvocation:));
+    if (fwd == base) return NO;
+    /* nur Weiterleitung des Programms selbst; Darlings Platzhalterklassen (NSGridRow, Gestenerkenner …) leiten "nicht umgesetzt" weiter */
+    Dl_info di;
+    if (!dladdr((void *) fwd, &di) || !di.dli_fname || strncmp(di.dli_fname, "/Library/ClokeOS/", 17) == 0 ||
+        strncmp(di.dli_fname, "/usr/lib/", 9) == 0 || strncmp(di.dli_fname, "/System/", 8) == 0)
+        return NO;
+    /* methodSignatureForSelector: solcher Klassen fragt selbst weiter (Elternobjekt, Asset-Objekt …) und kann dabei wieder hier landen:
+     * verschachtelt gilt die Senke */
+    static __thread int depth;
+    if (depth > 0) return NO;
+    depth++;
+    BOOL known = NO;
+    @try { known = [receiver methodSignatureForSelector: sel] != nil; }
+    @catch (id e) { known = NO; }
+    depth--;
+    return known;
+}
+
 static id CKSinkFor(id receiver, SEL sel, BOOL isClass) {
     if (!getenv("CLOKE_LENIENT"))
         return nil;
+    if (CKOwnForwarding(receiver, sel, isClass)) {
+        /* Kreislauf erkennen: dieselbe Nachricht an dasselbe Objekt kommt tiefer im Stapel wieder hierher (die eigene Weiterleitung
+         * führt zurück, weil eine AppKit-Methode fehlt) -> ab dem dritten Mal die Senke, statt bis zum Stapelüberlauf */
+        static __thread struct { id r; SEL s; uintptr_t sp; int n; } loop;
+        uintptr_t sp = (uintptr_t) __builtin_frame_address(0);
+        if (loop.r == receiver && loop.s == sel && sp < loop.sp) loop.n++;
+        else { loop.r = receiver; loop.s = sel; loop.sp = sp; loop.n = 0; }
+        if (loop.n < 3)
+            return nil;
+        static NSMutableSet *loops;
+        @synchronized([CKLenientSink class]) {
+            if (!loops) loops = [NSMutableSet new];
+            NSString *k = [NSString stringWithFormat: @"%s %s", class_getName(object_getClass(receiver)), sel_getName(sel)];
+            if (![loops containsObject: k]) { [loops addObject: k]; fprintf(stderr, "[clokeos-lenient] Weiterleitung im Kreis: -[%s]\n", [k UTF8String]); }
+        }
+    }
     static NSMutableSet *seen;
     static id sink;
     @synchronized([CKLenientSink class]) {
@@ -191,6 +236,13 @@ static void ck_dumpview(id v, int depth) {
         fprintf(stderr, "[viewdump] %*s  button %s title=\"%s\" image=%.0fx%.0f tmpl=%d pos=%ld bordered=%d\n", depth * 2, "",
                 class_getName(object_getClass(bc)), [[bc title] UTF8String] ?: "", im ? [im size].width : -1, im ? [im size].height : -1,
                 im ? (int)[im isTemplate] : -1, (long)[bc imagePosition], (int)[bc isBordered]);
+        if ([bc respondsToSelector: sel_registerName("offImages")]) {   /* Zellen mit Zustandsbildern aus Asset-Sätzen */
+            id (*m)(id, SEL) = (id (*)(id, SEL)) objc_msgSend;
+            id off = m(bc, sel_registerName("offImages")), rb = nil, path = nil;
+            @try { rb = m(bc, sel_registerName("resourceBundleID")); path = m(bc, sel_registerName("assetSetPath")); } @catch (id e) {}
+            fprintf(stderr, "[viewdump] %*s    assets bundle=%s path=%s offImages=%lu\n", depth * 2, "", [[rb description] UTF8String] ?: "nil",
+                    [[path description] UTF8String] ?: "nil", (unsigned long)([off respondsToSelector: @selector(count)] ? [off count] : 0));
+        }
         for (id rep in [im representations])
             fprintf(stderr, "[viewdump] %*s    rep %s %s\n", depth * 2, "", class_getName(object_getClass(rep)),
                     [[[rep description] substringToIndex: MIN((NSUInteger)120, [[rep description] length])] UTF8String] ?: "");

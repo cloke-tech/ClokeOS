@@ -12,7 +12,8 @@
  *   NSColor: colorNamed:, colorNamed:bundle: aus Assets.colors.plist neben der Assets.car des Bundles (macapps/carcolors.py erzeugt sie auf
  *            dem Mac mit Apples assetutil); Namen wie bei Apple, dazu "Colors/A/B" für "A.B" (so fragt Logic Pros MAAssetManager)
  *   NSFont: copyName, boundingRect (KTFont-Methoden, die CoreTexts CTFont*-Funktionen aufrufen; CTFontCreateWithName liefert NSFonts)
- *   NSCell: _contents (privat; Wert bzw. Knopftitel, bei Bildzellen nil)
+ *   NSCell: _contents (privat; Wert bzw. Knopftitel, bei Bildzellen nil), calcDrawInfo: (leer wie bei Apple)
+ *   NSButtonCell: _imageRectWithRect: (privat; Bild mittig, notfalls verkleinert), _buttonType (privat; aus Hervorhebung/Zustand)
  *   NSCell: _textAttributes (private Apple-Methode, gibt ein veränderbares Wörterbuch mit Schrift, Farbe und Absatzstil; Logic Pros MAToolKit-
  *            Zellen rufen sie über super auf und ändern das Ergebnis)
  *   NSFontDescriptor: fontDescriptorWithDesign: gibt den Deskriptor unverändert zurück (keine abgerundeten/Monospace-Varianten der Systemschrift)
@@ -388,6 +389,31 @@ static id cell_contents(NSCell *self, SEL s) {
     return [self objectValue];
 }
 
+/* -[NSCell calcDrawInfo:] (dokumentiert, tut bei Apple in NSCell nichts; Logic Pros MAMixerPannerCell ruft super) */
+static void cell_calc_draw_info(id self, SEL s, NSRect r) {}
+
+/* -[NSButtonCell _imageRectWithRect:] (privat; Logic Pros MAButtonCell legt damit das Bildrechteck fest, ohne sie war es leer): das Bild in
+ * seiner Größe, bei Bedarf verhältnisgleich verkleinert, mittig im Rechteck */
+static NSRect bc_image_rect(NSButtonCell *self, SEL s, NSRect r) {
+    NSImage *img = [self image];
+    if (img == nil) return NSZeroRect;
+    NSSize sz = [img size];
+    if (sz.width <= 0 || sz.height <= 0) return NSZeroRect;
+    CGFloat f = MIN(1.0, MIN(r.size.width / sz.width, r.size.height / sz.height));
+    if (f < 0) f = 0;
+    sz.width *= f; sz.height *= f;
+    return NSMakeRect(floor(NSMidX(r) - sz.width / 2), floor(NSMidY(r) - sz.height / 2), sz.width, sz.height);
+}
+/* -[NSButtonCell _buttonType] (privat): Knopfart aus Hervorhebung und Zustandsanzeige, wie setButtonType: sie setzt */
+static NSInteger bc_button_type(NSButtonCell *self, SEL s) {
+    NSInteger shows = [self showsStateBy], hl = [self highlightsBy];
+    if (shows & NSContentsCellMask) return (hl & NSContentsCellMask) ? NSToggleButton : NSOnOffButton;
+    if (shows & (NSChangeBackgroundCellMask | NSChangeGrayCellMask)) return NSPushOnPushOffButton;
+    if (hl & NSPushInCellMask) return NSMomentaryPushInButton;
+    if (hl & NSContentsCellMask) return NSMomentaryChangeButton;
+    return NSMomentaryLightButton;
+}
+
 __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSArray class], @selector(setValue:forKey:), (IMP)arr_setvalue, "v@:@@");
     Class im = object_getClass([NSImage class]);
@@ -416,6 +442,9 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
     class_addMethod([NSCell class], sel_registerName("_contents"), (IMP)cell_contents, "@@:");
+    class_addMethod([NSButtonCell class], sel_registerName("_imageRectWithRect:"), (IMP)bc_image_rect, "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}");
+    class_addMethod([NSButtonCell class], sel_registerName("_buttonType"), (IMP)bc_button_type, "q@:");
+    class_addMethod([NSCell class], sel_registerName("calcDrawInfo:"), (IMP)cell_calc_draw_info, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
     if (objc_getClass("UTType"))
         class_addMethod(object_getClass(objc_getClass("UTType")), sel_registerName("_typeOfCurrentDevice"), (IMP)device_type, "@@:");

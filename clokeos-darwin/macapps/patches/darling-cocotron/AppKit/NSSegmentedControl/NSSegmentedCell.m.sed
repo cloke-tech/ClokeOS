@@ -1,3 +1,6 @@
 # ClokeOS: setSelectedSegment:-1 (oder außerhalb) wählt wie bei Apple nichts aus, statt mit einem ungültigen Index in die Segmentliste zu greifen
 # (NSRangeException in Logic Pros Transportleiste).
 /^- \(void\) setSelectedSegment: \(NSInteger\) segment \{$/,/^\}$/s/^    \[\[_segments objectAtIndex: segment\] setSelected: YES\];$/    if (segment >= 0 \&\& segment < (NSInteger) [_segments count])\n        [[_segments objectAtIndex: segment] setSelected: YES];\n    else\n        _selectedSegment = -1;/
+# ClokeOS: _labelRectForSegment:inFrame:withView: (privat bei Apple; Logic Pros MASegmentedCell überschreibt es und ruft super): das
+# Rechteck der Beschriftung im Segment, waagerecht 4 Punkte eingerückt, senkrecht in der Mitte auf Schrifthöhe
+s/^- \(NSSize\) cellSize \{$/- (NSRect) _labelRectForSegment: (NSInteger) segment inFrame: (NSRect) frame withView: (NSView *) view {\n    NSFont *f = [self font] ? [self font] : [NSFont systemFontOfSize: [NSFont systemFontSize]];\n    CGFloat h = MIN(frame.size.height, ceil([f ascender] - [f descender]) + 2);\n    return NSMakeRect(frame.origin.x + 4, frame.origin.y + floor((frame.size.height - h) \/ 2), MAX(0, frame.size.width - 8), h);\n}\n\n- (NSSize) cellSize {/

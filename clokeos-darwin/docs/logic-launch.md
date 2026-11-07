@@ -944,3 +944,21 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * Seen once: Logic at full CPU with no events reaching it for minutes (no `sendEvent` in the log) while the main thread was not
   sampled; in the next run the main thread idled in the event loop. Not reproduced, cause unknown (may relate to item 6).
 
+### Round 54: Logic's buttons draw (control bar like the Mac)
+
+* **Lenient mode broke the app's own forwarding:** with `CLOKE_LENIENT` the sink answered `forwardingTargetForSelector:`, which the runtime
+  asks *before* `forwardInvocation:`. Classes with their own forwarding (Logic's `MAButtonCell`, `MATextFieldCell`, `MASliderCell`,
+  `MAButton` … forward `resourceBundleID`, `assetSetPath` to their asset helper) never got the call. Now the sink steps aside when the
+  app's class (not a Darling placeholder) has its own `forwardInvocation:` and a signature for the selector; if that forwarding comes
+  back to the same object with the same selector deeper in the stack (a loop because an AppKit method is missing), the sink takes over
+  and logs `[clokeos-lenient] Weiterleitung im Kreis: …`.
+* Missing AppKit methods found that way: `-[NSButtonCell _imageRectWithRect:]` (private; **every button image was drawn into an empty
+  rect**), `_buttonType`, `-[NSCell calcDrawInfo:]`, `-[NSSegmentedCell _labelRectForSegment:inFrame:withView:]`; NSAccessibility
+  properties as stored values on NSAccessibilityElement/NSView/NSCell/NSWindow/NSMenu (`appkit/accessibility.m`; Darling's
+  NSAccessibilityElement was a stub and Logic's accessibility helpers forwarded in a circle until the stack overflowed).
+* **Result:** the control bar shows Logic's view buttons, transport (stop, play, record, capture, cycle), LCD, count-in, tuner, solo
+  and the right-hand buttons, laid out like on the Mac; the editor's back button shows. Still missing: M/S/I and the sliders/knobs
+  in the track headers, instrument icons, pop-up values in the inspector.
+* Traces: `CLOKE_BUTTON_TRACE=1` also logs `-[NSControl drawRect:]` of button controls and `drawInRect:…respectFlipped:` calls
+  (image size, rect, operation, CTM, clip).
+
