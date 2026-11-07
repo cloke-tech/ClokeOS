@@ -247,7 +247,9 @@ framework CoreGraphics A 64 1070.22 "$obj/cg" "$(fwlib Onyx2D)" "$cf" "$fnd" "${
 
 # --- CoreText ----------------------------------------------------------------------------------
 echo "Baue CoreText"
-sources CoreText CoreText_sources > "$obj/ct.list"
+# CTLine.m/CTRun.m sind nur Platzhalter (NULL-Ergebnisse); appkit/ctline.m setzt beide um
+sources CoreText CoreText_sources | grep -vE '(^|/)CT(Line|Run)\.m$' > "$obj/ct.list"
+echo "$M/appkit/ctline.m" >> "$obj/ct.list"
 compile_all "$obj/ct" "$src/CoreText" "$obj/ct.list" -I"$src/CoreText"
 framework CoreText A 1 1 "$obj/ct" "$(fwlib CoreGraphics)" "$(fwlib Onyx2D)" "$cf" "$fnd" "${sys[@]}" \
   "$pd/lib/libfreetype.6.20.6.dylib"

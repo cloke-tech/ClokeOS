@@ -15,6 +15,9 @@
  *   NSCell: _textAttributes (private Apple-Methode, gibt ein veränderbares Wörterbuch mit Schrift, Farbe und Absatzstil; Logic Pros MAToolKit-
  *            Zellen rufen sie über super auf und ändern das Ergebnis)
  *   NSFontDescriptor: fontDescriptorWithDesign: gibt den Deskriptor unverändert zurück (keine abgerundeten/Monospace-Varianten der Systemschrift)
+ *   NSGraphicsContext: CGContext (neuer Name von graphicsPort; ohne ihn zeichnete Logic Pro in einen NULL-Kontext)
+ *   NSWindow/NSScreen: backingScaleFactor 1.0 (kein HiDPI); CALayer contentsScale (1.0, Setzen wird ignoriert); NSDate now;
+ *   NSImage imageWithSize:flipped:drawingHandler: (zeichnet sofort in ein Bild der Größe), imageWithSymbolConfiguration: (das Bild selbst)
  *   NSArray (Darling): setValue:forKey: setzt den Wert wie bei Apple bei jedem Element (Cocotrons NSObjectController-Auswahl schreibt
  *            so in die gewählten Objekte; Logic Pro: Bindung selection.keySignature)
  *   NSImage: imageWithSystemSymbolName:accessibilityDescription:, imageWithSymbolName:…: SF Symbols gibt es hier nicht; statt nil (Logic
@@ -28,6 +31,7 @@
 #import <AppKit/NSFont.h>
 #import <AppKit/NSColor.h>
 #import <objc/runtime.h>
+#import <objc/message.h>
 #include <string.h>
 
 /* Gewicht wie NSFontWeight (-1 … 1); ab Medium (0.23) fett, mehr Stufen hat Cocotrons Schriftwahl nicht */
@@ -151,6 +155,22 @@ static id cell_textattrs(NSCell *self, SEL s) {
 
 static id fd_design(id self, SEL s, id design) { return self; }
 
+static void *gc_cgcontext(id self, SEL s) { return ((void *(*)(id, SEL)) objc_msgSend)(self, sel_registerName("graphicsPort")); }
+
+static CGFloat one_scale(id self, SEL s) { return 1.0; }
+static void ignore_scale(id self, SEL s, CGFloat v) {}
+static id date_now(Class c, SEL s) { return [NSDate date]; }
+static id img_self(id self, SEL s, id cfg) { return self; }
+static id img_with_handler(Class c, SEL s, NSSize size, BOOL flipped, BOOL (^handler)(NSRect)) {
+    NSImage *img = [[[NSImage alloc] initWithSize: size] autorelease];
+    if (handler && size.width > 0 && size.height > 0 && size.width <= 4096 && size.height <= 4096) {
+        [img lockFocus];
+        handler(NSMakeRect(0, 0, size.width, size.height));
+        [img unlockFocus];
+    }
+    return img;
+}
+
 static void arr_setvalue(NSArray *self, SEL s, id value, NSString *key) {
     for (id obj in self)
         [obj setValue: value forKey: key];
@@ -177,6 +197,14 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(cm, sel_registerName("colorNamed:"), (IMP)c_named_main, "@@:@");
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
+    class_addMethod(objc_getClass("NSGraphicsContext"), sel_registerName("CGContext"), (IMP)gc_cgcontext, "^v@:");
+    class_addMethod(objc_getClass("NSWindow"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
+    class_addMethod(objc_getClass("NSScreen"), sel_registerName("backingScaleFactor"), (IMP)one_scale, "d@:");
+    class_addMethod(objc_getClass("CALayer"), sel_registerName("contentsScale"), (IMP)one_scale, "d@:");
+    class_addMethod(objc_getClass("CALayer"), sel_registerName("setContentsScale:"), (IMP)ignore_scale, "v@:d");
+    class_addMethod(object_getClass([NSDate class]), sel_registerName("now"), (IMP)date_now, "@@:");
+    class_addMethod([NSImage class], sel_registerName("imageWithSymbolConfiguration:"), (IMP)img_self, "@@:@");
+    class_addMethod(object_getClass([NSImage class]), sel_registerName("imageWithSize:flipped:drawingHandler:"), (IMP)img_with_handler, "@@:{CGSize=dd}c@?");
     class_addMethod(objc_getClass("NSFontDescriptor"), sel_registerName("fontDescriptorWithDesign:"), (IMP)fd_design, "@@:@");
     class_addMethod([NSFont class], sel_registerName("boundingRect"), (IMP)font_bounds, "{CGRect={CGPoint=dd}{CGSize=dd}}@:");
 }

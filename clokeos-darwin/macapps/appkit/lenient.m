@@ -12,7 +12,14 @@
 @interface CKLenientSink : NSObject
 @end
 
+/* Antwort für jede fehlende Methode: 0 in x0/x1 und in d0…d3 (auf arm64 kommen CGFloat-Ergebnisse und kleine Gleitkomma-Strukturen
+ * wie NSSize/NSRect in d0…d3 zurück; nur x0 zu nullen ließ dort Zufallswerte stehen, z. B. bei -backingScaleFactor) */
+#if defined(__arm64__)
+extern id ck_sink_imp(id self, SEL _cmd);
+__asm__(".text\n.p2align 2\n_ck_sink_imp:\n  mov x0, #0\n  mov x1, #0\n  movi d0, #0\n  movi d1, #0\n  movi d2, #0\n  movi d3, #0\n  ret\n");
+#else
 static id ck_sink_imp(id self, SEL _cmd) { return nil; }
+#endif
 
 @implementation CKLenientSink
 + (BOOL)resolveInstanceMethod:(SEL)sel {
@@ -86,7 +93,7 @@ static IMP ck_hook(Class c, SEL sel, IMP imp) {
     Method m = c ? class_getInstanceMethod(c, sel) : NULL;
     return m ? method_setImplementation(m, imp) : NULL;
 }
-static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont;
+static IMP o_nib, o_front, o_key, o_order, o_cwin, o_show, o_appev, o_winev, o_action, o_stop, o_stopc, o_mdown, o_tracking, o_hide, o_nserr, o_alerterr, o_colsec, o_asset, o_nsfont, o_mafont, o_imgnamed, o_bundleimg, o_imgfile;
 static const char *ck_title(id w) { const char *t = [[w title] UTF8String]; return t ? t : ""; }
 static id h_nib(id s, SEL c, NSString *p) {
     fprintf(stderr, "[clokeos-trace] nib %s\n", [[p lastPathComponent] UTF8String]);
@@ -186,7 +193,34 @@ static id h_mafont(id s, SEL c, NSString *name, CGFloat size) {
     if (r == nil) fprintf(stderr, "[clokeos-trace] MAAssetManager font %s %.1f -> nil\n", [name UTF8String] ?: "(nil)", size);
     return r;
 }
+/* Bilder, die nicht gefunden werden (Name bzw. Pfad), je einmal */
+static void ck_img_nil(const char *what, id name) {
+    static NSMutableSet *seen;
+    if (!seen) seen = [NSMutableSet new];
+    NSString *k = [NSString stringWithFormat: @"%s %@", what, name];
+    if ([seen containsObject: k]) return;
+    [seen addObject: k];
+    fprintf(stderr, "[clokeos-trace] Bild fehlt: %s\n", [k UTF8String]);
+}
+static id h_imgnamed(id s, SEL c, id name) {
+    id r = ((id (*)(id, SEL, id))o_imgnamed)(s, c, name);
+    if (!r) ck_img_nil("imageNamed:", name);
+    return r;
+}
+static id h_bundleimg(id s, SEL c, id name) {
+    id r = ((id (*)(id, SEL, id))o_bundleimg)(s, c, name);
+    if (!r) ck_img_nil("imageForResource:", [NSString stringWithFormat: @"%@ (%@)", name, [[s bundlePath] lastPathComponent]]);
+    return r;
+}
+static id h_imgfile(id s, SEL c, id path) {
+    id r = ((id (*)(id, SEL, id))o_imgfile)(s, c, path);
+    if (!r) ck_img_nil("initWithContentsOfFile:", path);
+    return r;
+}
 + (void)hooks {
+    { Method m = class_getClassMethod(NSClassFromString(@"NSImage"), @selector(imageNamed:)); if (m) o_imgnamed = method_setImplementation(m, (IMP)h_imgnamed); }
+    { Method m = class_getInstanceMethod([NSBundle class], @selector(imageForResource:)); if (m) o_bundleimg = method_setImplementation(m, (IMP)h_bundleimg); }
+    { Method m = class_getInstanceMethod(NSClassFromString(@"NSImage"), @selector(initWithContentsOfFile:)); if (m) o_imgfile = method_setImplementation(m, (IMP)h_imgfile); }
     { Method m = class_getClassMethod([NSFont class], @selector(fontWithName:size:)); if (m) o_nsfont = method_setImplementation(m, (IMP)h_nsfont); }
     { Class mc = NSClassFromString(@"MAAssetManager"); Method m = class_getClassMethod(mc, @selector(fontWithName:size:));
       if (!m) m = class_getInstanceMethod(mc, @selector(fontWithName:size:)); if (m) o_mafont = method_setImplementation(m, (IMP)h_mafont); }

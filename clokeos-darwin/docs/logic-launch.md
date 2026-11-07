@@ -682,3 +682,15 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
 * `O2BitmapContextCreate` returns NULL for impossible sizes (sides over 32768 or over 1 GiB, also with caller-supplied memory), and `O2BitmapContextCreateImage(NULL)` is NULL: MALiveLoopsUI asked for a
   4713012 × 6633128 bitmap (views without layout — constraints are a Cocotron stub), callocated it lazily and copied for minutes. `CRASHPC_SAMPLE_REGS=1` prints x0–x3 of each sampled thread (that is how the 16 TB copy showed up).
 * **Now: Logic orders the project window front** (`-[NSDocumentController openUntitledDocumentAndDisplay:error:]` → `makeKeyAndOrderFront:`) and draws its views; it then crashes inside a MAToolKit draw function (`CFArrayGetCount(NULL)`).
+
+### Round 42: drawing the project window
+
+* `macapps/appkit/ctline.m` replaces Cocotron's CTLine.m/CTRun.m (all stubs returning NULL): a line keeps its attributed string, splits it into runs at attribute boundaries, glyphs and advances from the run's font
+  (no ligatures, kerning, bidi or font fallback); typographic/image bounds, string index/offset, truncation (returns the line unchanged), `CTLineDraw` through AppKit when the context is the current one.
+  MAToolKit's segmented scrubber crashed on `CFArrayGetCount(CTLineGetGlyphRuns(NULL))`.
+* `-[NSGraphicsContext CGContext]` (modern name of `graphicsPort`; Logic drew into NULL), `backingScaleFactor` = 1 on NSWindow/NSScreen, `CALayer contentsScale`, `+[NSDate now]`,
+  `+[NSImage imageWithSize:flipped:drawingHandler:]`, `-[NSImage imageWithSymbolConfiguration:]` (`modern.m`).
+  The missing `backingScaleFactor` was the cause of the huge MALiveLoopsUI bitmaps: the lenient sink only zeroed `x0`, so a CGFloat result was whatever was left in `d0`.
+  **The lenient sink is now an assembly stub that also zeroes `d0`–`d3`** (CGFloat and small float-struct results such as NSSize/NSRect).
+* Oversized bitmap contexts now become 1 × 1 contexts instead of NULL (Logic draws into the result unchecked).
+* Next stop: `-[MAButtonCell _updateBufferedStateImages]` puts nil images into a dictionary during drawing (uncaught there). `CLOKE_TRACE` now lists images not found (`imageNamed:`, `-[NSBundle imageForResource:]`, `initWithContentsOfFile:`).
