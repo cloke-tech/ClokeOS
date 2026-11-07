@@ -6,6 +6,10 @@
 #                                          System aus dem Internet lädt (per LAN-Kabel)
 #   recovery/usb.sh offline <ordner>       usb-offline.img: bringt das System mit, aus <ordner> mit
 #                                          clokeos-<arch>.txt und den .xz-Abbildern (recovery/release.sh)
+#   recovery/usb.sh live <pubkey> <host>…  usb-live.img: wie online, aber mit SSH (nur Schlüssel, der
+#                                          öffentliche Schlüssel aus <pubkey> für root) und clokeos-livecall,
+#                                          das sich bei <host> (Adresse oder Name, Port 8222) meldet; für
+#                                          die Treiberarbeit an einem fremden Rechner (recovery/live-listen.py)
 #
 # Der Stick hat eine FAT32-Partition mit Loader, Kernel und Boot-Argumenten; die Wiederherstellung
 # lädt der Loader (loader/xnu-loader.patch, clokeos_load_ramdisk) als RAM-Disk in den Arbeitsspeicher,
@@ -31,8 +35,11 @@ need "$DEBUGFS" "$E2FSCK" "$TUNE2FS" "$RESIZE2FS" "$MKE2FS" python3 mcopy mforma
 export MTOOLS_SKIP_CHECK=1
 kind="${1:-}"
 payload="${2:-}"
+livekey=""; livehosts=()
 case "$kind" in
   online) ;;
+  live) livekey="$payload"; shift 2 || true; livehosts=("$@")
+        [ -f "$livekey" ] || { echo "Öffentlicher SSH-Schlüssel fehlt: ${livekey:-<datei>}" >&2; exit 1; } ;;
   offline) [ -f "$payload/clokeos-$CLOKE_ARCH.txt" ] || { echo "Keine Beschreibung clokeos-$CLOKE_ARCH.txt in ${payload:-<ordner>}" >&2; exit 1; } ;;
   *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2 ;;
 esac
@@ -85,8 +92,8 @@ fi
 # Wine-Skripte), andere Fenstermanager und Xfce-Sitzung, X-Demos, Animationen der Warte-Zeiger.
 # Was die Wiederherstellung startet, bleibt: Xorg, xinit, xrdb, xkbcomp, dbus, CloakServer,
 # xfce4-terminal, netsurf-gtk3, clokeos-installer, die Shell-Werkzeuge.
+LITE_DROP_SSH='bin/ssh bin/ssh-keygen sbin/sshd libexec/sshd-auth libexec/sshd-session libexec/sftp-server'
 LITE_DROP='
-  bin/ssh bin/ssh-keygen sbin/sshd libexec/sshd-auth libexec/sshd-session libexec/sftp-server
   bin/i3 bin/i3-* bin/i3bar bin/i3status bin/dmenu bin/dmenu_* bin/puredarwin-sway bin/startxfce4
   bin/xfce4-session bin/xfce4-session-* bin/xfdesktop bin/xfdesktop-settings bin/xfce4-panel
   bin/xfce4-popup-* bin/xfce4-appfinder bin/xfce4-*-settings bin/xfce4-settings-* bin/xfsettingsd
@@ -113,13 +120,54 @@ if true; then
   (
     cd "$lroot"
     for p in $LITE_DROP; do rm -rf -- $p; done
+    [ "$kind" = live ] || for p in $LITE_DROP_SSH; do rm -rf -- $p; done
     for f in usr/bin/*; do
       case "$LITE_KEEP_USR_BIN" in *" ${f#usr/bin/} "*) ;; *) rm -rf -- "$f" ;; esac
     done
   )
-  echo off > "$lroot/etc/clokeos-remote-login" # ohne sshd: clokeos-sshd schläft
+  if [ "$kind" = live ]; then
+    # SSH nur mit Schlüssel, root; StrictModes aus, weil die hier angelegten Dateien nicht root gehören
+    echo on > "$lroot/etc/clokeos-remote-login"
+    mkdir -p "$lroot/var/root/.ssh"
+    cp "$livekey" "$lroot/var/root/.ssh/authorized_keys"
+    chmod 700 "$lroot/var/root/.ssh"; chmod 600 "$lroot/var/root/.ssh/authorized_keys"
+    sed -i '' -e '/^PasswordAuthentication/d' -e '/^PermitRootLogin/d' -e '/^KbdInteractiveAuthentication/d' \
+      -e '/^StrictModes/d' "$lroot/etc/ssh/sshd_config"
+    printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\nStrictModes no\n' \
+      >> "$lroot/etc/ssh/sshd_config"
+    clang -O2 -target x86_64-apple-macos11.0 "$HERE/recovery/livecall.c" -o "$lroot/usr/libexec/clokeos-livecall"
+    printf '%s\n' "${livehosts[@]}" > "$lroot/etc/clokeos-livecall.conf"
+    cat > "$lroot/System/Library/LaunchDaemons/com.clokeos.livecall.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.clokeos.livecall</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/libexec/clokeos-livecall</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardErrorPath</key>
+	<string>/var/log/livecall.log</string>
+</dict>
+</plist>
+PLIST
+  else
+    echo off > "$lroot/etc/clokeos-remote-login" # ohne sshd: clokeos-sshd schläft
+  fi
   xattr -rc "$lroot" 2>/dev/null || true
   DEBUGFS="$DEBUGFS" python3 -I "$HERE/recovery/imagetool.py" owners "$out/recovery.ext4" "$lroot" "$tmp/lite-owners.cmds"
+  if [ "$kind" = live ]; then # neue Dateien gehören root (launchd mag keine Plists anderer Besitzer)
+    for f in /var/root/.ssh /var/root/.ssh/authorized_keys /usr/libexec/clokeos-livecall /etc/clokeos-livecall.conf \
+             /System/Library/LaunchDaemons/com.clokeos.livecall.plist; do
+      printf 'set_inode_field %s uid 0\nset_inode_field %s gid 0\n' "$f" "$f"
+    done >> "$tmp/lite-owners.cmds"
+  fi
   lused=$(du -sm "$lroot" | cut -f1)
   lfiles=$(find "$lroot" | wc -l | tr -d ' ')
   lmb=$(( ((lused + 24) * 11 / 10 + 7) / 8 * 8 ))
@@ -173,6 +221,6 @@ python3 -I "$HERE/recovery/imagetool.py" gpt "$img" "$esp" - "ClokeOS Installer"
 if [ "$kind" = offline ]; then
   echo "USB-Stick offline: $img ($(( $(stat -f %z "$img") / 1048576 )) MB; RAM-Disk $(( $(stat -f %z "$root") / 1048576 )) MB mit den Abbildern, schlanke $(( $(stat -f %z "$lite") / 1048576 )) MB, Abbilder auch auf dem Stick)"
 else
-  echo "USB-Stick online: $img ($(( $(stat -f %z "$img") / 1048576 )) MB; schlanke RAM-Disk $(( $(stat -f %z "$lite") / 1048576 )) MB)"
+  echo "USB-Stick $kind: $img ($(( $(stat -f %z "$img") / 1048576 )) MB; schlanke RAM-Disk $(( $(stat -f %z "$lite") / 1048576 )) MB)"
 fi
 rm -rf "$tmp"
