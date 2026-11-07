@@ -398,10 +398,10 @@ index b2a095e..f587226 100644
  	std::optional<DesktopRect> bounds{};
  	// Application clipping is independent of BeginPaint's update region.
 diff --git a/native/desktop/presentation.h b/native/desktop/presentation.h
-index afe291e..2bdb674 100644
+index afe291e..10798ae 100644
 --- a/native/desktop/presentation.h
 +++ b/native/desktop/presentation.h
-@@ -89,6 +89,10 @@ struct DesktopPresentation {
+@@ -89,6 +89,14 @@ struct DesktopPresentation {
  	// Keeps a top-level window above the top-level window that owns it, as Windows keeps an owned dialog; 0 for no owner. Given before the
  	// window's first frame.
  	std::function<void(uint64_t handle,uint64_t owner)> transient_for;
@@ -409,6 +409,10 @@ index afe291e..2bdb674 100644
 +	// frame the host window leaves out: the frame of a window with a caption is cut off from its pixels and its coordinates, so the host window
 +	// shows the client area and the menu bar. The fifth value is the window's style, for the buttons of the title bar. The window system calls this once; no provider, or zeros, keep the whole frame.
 +	std::function<void(std::function<std::array<int32_t,5>(uint64_t)>)> frame_insets;
++	// ClokeOS: the menu of a window with a caption shows in the global menu bar. The backend asks for its text (lines "<depth>\t<kind>\t<number>
++	// \t<flags>\t<label>\t<key>", kind m submenu, i item, s separator, flags d disabled, c checked, r radio) and sends the chosen number back as a
++	// WM_COMMAND event of the window. The text is empty without a menu.
++	std::function<void(std::function<std::string(uint64_t)>)> menu_text;
  };
  
  }
@@ -469,10 +473,51 @@ index 089a377..6ccab2b 100644
  		}
  		call.ret(s_ok);
 diff --git a/native/desktop/windows.cpp b/native/desktop/windows.cpp
-index 0616ece..fee7223 100644
+index 0616ece..a4211ba 100644
 --- a/native/desktop/windows.cpp
 +++ b/native/desktop/windows.cpp
-@@ -76,6 +76,14 @@ void NativeWindows::set_call(std::function<NativeResult(uint64_t,std::span<const
+@@ -73,9 +73,62 @@ void NativeWindows::set_call(std::function<NativeResult(uint64_t,std::span<const
+ 	invoke=std::move(caller);
+ }
+ 
++// The menu of a window as the lines CloakServer's global menu bar reads: "<depth>\t<kind>\t<number>\t<flags>\t<label>\t<key>".
++std::string NativeWindows::global_menu_text(const DesktopWindow &window) const
++{
++	std::string out;
++	const auto *top=std::as_const(objects).menu(window.menu);
++	if (!top || top->items.empty())
++		return out;
++	const std::function<void(const DesktopMenu &,int,int)> walk=[&](const DesktopMenu &menu,int depth,int guard) {
++		if (guard > 8)
++			return;
++		for (const auto &item : menu.items) {
++			const bool separator=item.type & 0x800U;
++			const auto *sub=item.submenu ? std::as_const(objects).menu(item.submenu) : nullptr;
++			std::u16string label,key;
++			if (!separator) {
++				// "&" marks a mnemonic, a tab starts the accelerator text.
++				std::u16string text;
++				for (size_t index=0;index<item.text.size();++index) {
++					if (item.text[index]==u'&' && index+1<item.text.size()) ++index;
++					text.push_back(item.text[index]);
++				}
++				const auto tab=text.find(u'\t');
++				label=text.substr(0,tab);
++				if (tab!=text.npos) key=text.substr(tab+1);
++			}
++			std::string flags;
++			if (item.state & 3U) flags+='d';
++			if (item.state & 8U) flags+='c';
++			if (item.type & 0x200U) flags+='r';
++			out+=std::to_string(depth)+'\t'+(separator ? 's' : sub ? 'm' : 'i')+'\t'+std::to_string(sub ? 0U : item.id)+'\t'+flags+'\t'+encode_utf8(label,true)+'\t'+encode_utf8(key,true)+'\n';
++			if (sub)
++				walk(*sub,depth+1,guard+1);
++		}
++	};
++	walk(*top,0,0);
++	return out;
++}
++
  void NativeWindows::set_presentation(DesktopPresentation backend)
  {
  	presentation=std::move(backend);
@@ -482,12 +527,19 @@ index 0616ece..fee7223 100644
 +			const auto *window=std::as_const(objects).window(handle);
 +			if (!window || (window->style & 0xc00000U)!=0xc00000U || window->glass || window->own_frame) return {0,0,0,0,0};
 +			const auto layout=frame_layout(*window);
-+			return {layout.border,layout.border+layout.caption_height,layout.border,layout.border,int32_t(window->style)};
++			// The menu of the window shows in the global menu bar, so its bar leaves the window.
++			const int32_t menu=!global_menu_text(*window).empty() ? layout.menu_height : 0;
++			return {layout.border,layout.border+layout.caption_height+menu,layout.border,layout.border,int32_t(window->style)};
++		});
++	if (presentation.menu_text)
++		presentation.menu_text([this](uint64_t handle) -> std::string {
++			const auto *window=std::as_const(objects).window(handle);
++			return window ? global_menu_text(*window) : std::string();
 +		});
  	refresh_screen();
  	if (presentation.poll) {
  		auto poll=presentation.poll;
-@@ -190,6 +198,12 @@ void NativeWindows::present(uint64_t handle, bool force)
+@@ -190,6 +243,12 @@ void NativeWindows::present(uint64_t handle, bool force)
  	handle=objects.window_root(handle);
  	if (!handle) throw uint32_t(1400);
  	dirty_roots.erase(handle);
@@ -500,8 +552,20 @@ index 0616ece..fee7223 100644
  	// Without a display the frame has nowhere to go and is dropped; the window lives on as on a screen that is switched off.
  	if (!presentation.present) return;
  	// A window without area shows nothing, as on Windows. Office sizes the shadows of its dialogs and menus only through
+diff --git a/native/desktop/windows.h b/native/desktop/windows.h
+index a03e360..719a66c 100644
+--- a/native/desktop/windows.h
++++ b/native/desktop/windows.h
+@@ -328,6 +328,7 @@ private:
+ 		DesktopRect caption, menu_bar, close, maximize, minimize, icon;
+ 	};
+ 	FrameLayout frame_layout(const DesktopWindow &window) const;
++	std::string global_menu_text(const DesktopWindow &window) const;
+ 	std::vector<DesktopRect> menu_bar_items(const DesktopWindow &window);
+ 	void paint_nonclient(uint64_t window);
+ 	void paint_modern_frame(uint64_t handle,const DesktopWindow &window,const FrameLayout &layout,paint::Canvas &canvas,bool is_active,int32_t width,
 diff --git a/native/desktop/xcb.cpp b/native/desktop/xcb.cpp
-index 684ba7e..4bcdbd5 100644
+index 684ba7e..00bb921 100644
 --- a/native/desktop/xcb.cpp
 +++ b/native/desktop/xcb.cpp
 @@ -41,10 +41,10 @@ template <typename T> struct Reply {
@@ -509,15 +573,15 @@ index 684ba7e..4bcdbd5 100644
  constexpr const char *atom_names[]={"WM_PROTOCOLS","WM_DELETE_WINDOW","WM_NAME","WM_CLASS","_NET_WM_NAME","UTF8_STRING","STRING","TEXT",
  	"CLIPBOARD","TARGETS","text/plain;charset=utf-8","text/plain","RAVEN_SELECTION","INCR","_NET_WM_STATE","_NET_WM_STATE_MAXIMIZED_VERT",
 -	"_NET_WM_STATE_MAXIMIZED_HORZ","_NET_WM_MOVERESIZE","_MOTIF_WM_HINTS","_NET_WM_WINDOW_TYPE","_NET_WM_WINDOW_TYPE_POPUP_MENU","ATOM","WM_CHANGE_STATE","WM_STATE"};
-+	"_NET_WM_STATE_MAXIMIZED_HORZ","_NET_WM_MOVERESIZE","_MOTIF_WM_HINTS","_NET_WM_WINDOW_TYPE","_NET_WM_WINDOW_TYPE_POPUP_MENU","ATOM","WM_CHANGE_STATE","WM_STATE","_CLOKE_TITLEBAR"};
++	"_NET_WM_STATE_MAXIMIZED_HORZ","_NET_WM_MOVERESIZE","_MOTIF_WM_HINTS","_NET_WM_WINDOW_TYPE","_NET_WM_WINDOW_TYPE_POPUP_MENU","ATOM","WM_CHANGE_STATE","WM_STATE","_CLOKE_TITLEBAR","_CLOKE_MENU","_CLOKE_MENU_ACTIVATE"};
  enum Atom { wm_protocols, wm_delete_window, wm_name, wm_class, net_wm_name, utf8_string, string_type, text_type, clipboard, targets,
  	text_utf8, text_plain, raven_selection, incr, net_wm_state, maximized_vert, maximized_horz, net_wm_moveresize, motif_hints,
 -	window_type, window_type_popup, atom_type, wm_change_state, wm_state, atom_count };
-+	window_type, window_type_popup, atom_type, wm_change_state, wm_state, cloke_titlebar, atom_count };
++	window_type, window_type_popup, atom_type, wm_change_state, wm_state, cloke_titlebar, cloke_menu, cloke_menu_activate, atom_count };
  
  }
  
-@@ -58,6 +58,10 @@ struct XcbPresentation::State {
+@@ -58,6 +58,11 @@ struct XcbPresentation::State {
  		uint64_t parent=0;
  		bool closed=false, close_posted=false, resized=false, maximized=false, mapped=false, iconic=false;
  		uint32_t width=0,height=0,pending_width=0,pending_height=0;
@@ -525,14 +589,16 @@ index 684ba7e..4bcdbd5 100644
 +		std::array<int32_t,4> inset{0,0,0,0};
 +		// The style bits and size the title bar properties were last set for.
 +		uint32_t hint_style=0,hint_width=0,hint_height=0;
++		std::string menu_sent;
  		std::string title;
  		// The frame the window shows, kept to repaint what the server exposes and to send only what changed.
  		std::vector<uint8_t> shown;
-@@ -73,6 +77,46 @@ struct XcbPresentation::State {
+@@ -73,6 +78,56 @@ struct XcbPresentation::State {
  	};
  	std::map<uint64_t,Hosted> hosted;
  	std::map<uint64_t,uint64_t> transient_owners;
 +	std::function<std::array<int32_t,5>(uint64_t)> insets_provider;
++	std::function<std::string(uint64_t)> menu_provider;
 +	uint32_t last_style=0;
 +	// The window manager frames windows that have a caption (CloakServer's title bar); RAVEN_FRAME=raven keeps the old way, where the program's
 +	// frame is drawn by Raven and the window manager adds none.
@@ -568,6 +634,15 @@ index 684ba7e..4bcdbd5 100644
 +			xcb_delete_property(connection,window.id,XCB_ATOM_WM_NORMAL_HINTS);
 +		}
 +	}
++	// The window's menu for the global menu bar (_CLOKE_MENU), sent when it changed.
++	void update_menu(uint64_t handle,Window &window) {
++		if (!menu_provider || window.inset==std::array<int32_t,4>{0,0,0,0}) return;
++		const auto text=menu_provider(handle);
++		if (text==window.menu_sent) return;
++		window.menu_sent=text;
++		if (text.empty()) xcb_delete_property(connection,window.id,atoms[cloke_menu]);
++		else property(window.id,atoms[cloke_menu],XCB_ATOM_STRING,8,uint32_t(text.size()),text.data());
++	}
 +	std::array<int32_t,4> inset_of(uint64_t handle) const {
 +		const auto found=windows.find(handle);
 +		return found!=windows.end() ? found->second->inset : std::array<int32_t,4>{0,0,0,0};
@@ -575,7 +650,7 @@ index 684ba7e..4bcdbd5 100644
  	xcb_connection_t *connection=nullptr;
  	xcb_screen_t *screen=nullptr;
  	xcb_gcontext_t gc=0;
-@@ -161,7 +205,8 @@ struct XcbPresentation::State {
+@@ -161,7 +216,8 @@ struct XcbPresentation::State {
  
  	void pointer_event(DesktopEventKind kind,uint32_t button=0,uint32_t pressed=0) {
  		if (!pointer_window && kind==DesktopEventKind::pointer_motion) return;
@@ -585,7 +660,7 @@ index 684ba7e..4bcdbd5 100644
  	}
  
  	void property(xcb_window_t window,xcb_atom_t name,xcb_atom_t type,uint8_t format,uint32_t count,const void *data) {
-@@ -390,8 +435,11 @@ struct XcbPresentation::State {
+@@ -390,8 +446,11 @@ struct XcbPresentation::State {
  		xcb_create_window(connection,XCB_COPY_FROM_PARENT,id,screen->root,int16_t(x),int16_t(y),uint16_t(width),uint16_t(height),0,
  			XCB_WINDOW_CLASS_INPUT_OUTPUT,XCB_COPY_FROM_PARENT,
  			XCB_CW_BACK_PIXMAP|XCB_CW_BORDER_PIXEL|XCB_CW_BIT_GRAVITY|XCB_CW_OVERRIDE_REDIRECT|XCB_CW_EVENT_MASK|XCB_CW_CURSOR,values);
@@ -599,7 +674,7 @@ index 684ba7e..4bcdbd5 100644
  		if (popup) property(id,atoms[window_type],atoms[atom_type],32,1,&atoms[window_type_popup]);
  		return id;
  	}
-@@ -444,7 +492,7 @@ struct XcbPresentation::State {
+@@ -444,7 +503,7 @@ struct XcbPresentation::State {
  		const auto owner=windows.find(parent);
  		if (owner==windows.end() || !owner->second->id) throw std::runtime_error("X11 popup has no presented parent window");
  		Reply place(xcb_translate_coordinates_reply(connection,xcb_translate_coordinates(connection,owner->second->id,screen->root,
@@ -608,7 +683,7 @@ index 684ba7e..4bcdbd5 100644
  		if (!place) throw std::runtime_error("cannot place X11 popup");
  		const std::array<int32_t,4> area{place->dst_x,place->dst_y,place->dst_x+int32_t(width),place->dst_y+int32_t(height)};
  		if (found==windows.end()) {
-@@ -534,12 +582,17 @@ struct XcbPresentation::State {
+@@ -534,12 +593,18 @@ struct XcbPresentation::State {
  		if (found==windows.end()) {
  			auto window=std::make_unique<Window>();
  			window->width=width; window->height=height;
@@ -627,10 +702,11 @@ index 684ba7e..4bcdbd5 100644
 +				property(window->id,atoms[motif_hints],atoms[motif_hints],32,5,hints);
 +			}
 +			apply_hints(*window,last_style,host_width,host_height);
++			update_menu(handle,*window);
  			set_title(*window,title);
  			set_maximized(*window,window->maximized,false);
  			apply_transient(handle,*window);
-@@ -562,13 +615,29 @@ struct XcbPresentation::State {
+@@ -562,13 +627,30 @@ struct XcbPresentation::State {
  		if (window.maximized && window.pending_width && window.pending_height &&
  			(window.pending_width!=width || window.pending_height!=height)) return;
  		if (window.pending_width==width && window.pending_height==height) window.resized=false;
@@ -650,6 +726,7 @@ index 684ba7e..4bcdbd5 100644
  		window.width=width; window.height=height;
 -		attach_frame(window,width,height,pixels);
 +		apply_hints(window,last_style,host_width,host_height);
++		update_menu(handle,window);
 +		if (inset_changed) window.shown_width=0;
 +		if (inset==std::array<int32_t,4>{0,0,0,0}) {
 +			attach_frame(window,width,height,pixels);
@@ -663,7 +740,7 @@ index 684ba7e..4bcdbd5 100644
  		xcb_flush(connection);
  		if (xcb_connection_has_error(connection)) throw std::runtime_error("X11 connection failed during presentation");
  	}
-@@ -691,8 +760,9 @@ struct XcbPresentation::State {
+@@ -691,8 +773,9 @@ struct XcbPresentation::State {
  			const auto &event=*reinterpret_cast<const xcb_configure_notify_event_t *>(generic);
  			auto *window=window_of(event.window);
  			if (!window || window->is_popup || event.window!=event.event) return;
@@ -675,7 +752,17 @@ index 684ba7e..4bcdbd5 100644
  			return;
  		}
  		case XCB_MAP_NOTIFY: case XCB_UNMAP_NOTIFY: {
-@@ -754,7 +824,7 @@ struct XcbPresentation::State {
+@@ -724,6 +807,9 @@ struct XcbPresentation::State {
+ 			const auto &event=*reinterpret_cast<const xcb_client_message_event_t *>(generic);
+ 			if (event.type==atoms[wm_protocols] && event.data.data32[0]==atoms[wm_delete_window])
+ 				if (auto *window=window_of(event.window)) window->closed=true;
++			// The choice of an entry of the window's menu in the global menu bar: WM_COMMAND with its number.
++			if (event.type==atoms[cloke_menu_activate])
++				if (const auto handle=handle_of(event.window)) queue({handle,0x111,uint64_t(event.data.data32[0] & 0xffff),0});
+ 			return;
+ 		}
+ 		case XCB_FOCUS_IN: case XCB_FOCUS_OUT: {
+@@ -754,7 +840,7 @@ struct XcbPresentation::State {
  			root_x=event.root_x; root_y=event.root_y;
  			const auto *window=window_of(event.event);
  			// Under a popup grab the pointer outside the program's windows is reported to the popup; it is over no window then.
@@ -684,7 +771,7 @@ index 684ba7e..4bcdbd5 100644
  			pointer_window=handle_of(event.event);
  			pointer_x=event.event_x; pointer_y=event.event_y;
  			pointer_event(DesktopEventKind::pointer_motion);
-@@ -854,6 +924,7 @@ struct XcbPresentation::State {
+@@ -854,6 +940,7 @@ struct XcbPresentation::State {
  		const xcb_window_t parent=found!=windows.end() && found->second->id ? found->second->id : screen->root;
  		shown=shown && parent!=screen->root;
  		width=std::clamp(width,1U,8192U); height=std::clamp(height,1U,8192U);
@@ -692,7 +779,7 @@ index 684ba7e..4bcdbd5 100644
  		auto &entry=hosted[window];
  		if (!entry.id) {
  			entry.id=xcb_generate_id(connection);
-@@ -893,7 +964,8 @@ struct XcbPresentation::State {
+@@ -893,7 +980,8 @@ struct XcbPresentation::State {
  		release_constraint();
  		const auto found=windows.find(handle);
  		if (rectangle && found!=windows.end() && !found->second->is_popup && found->second->id) {
@@ -702,16 +789,17 @@ index 684ba7e..4bcdbd5 100644
  			// A rectangle of a point or two holds the pointer still: raw motion keeps being reported.
  			const bool locked=value[2]-value[0]<=2 && value[3]-value[1]<=2;
  			confinement=xcb_generate_id(connection);
-@@ -1021,6 +1093,7 @@ DesktopPresentation XcbPresentation::callbacks()
+@@ -1021,6 +1109,8 @@ DesktopPresentation XcbPresentation::callbacks()
  	result.platform=HostPlatform::xcb;
  	result.minimize=[this](uint64_t handle) { state->minimize(handle); };
  	result.transient_for=[this](uint64_t handle,uint64_t owner) { state->transient_for(handle,owner); };
 +	result.frame_insets=[this](std::function<std::array<int32_t,5>(uint64_t)> provider) { state->insets_provider=std::move(provider); };
++	result.menu_text=[this](std::function<std::string(uint64_t)> provider) { state->menu_provider=std::move(provider); };
  	return result;
  }
  
 diff --git a/native/main.cpp b/native/main.cpp
-index 7fab6e2..d22fc4a 100644
+index 7fab6e2..69df7c0 100644
 --- a/native/main.cpp
 +++ b/native/main.cpp
 @@ -39,6 +39,7 @@
@@ -734,7 +822,7 @@ index 7fab6e2..d22fc4a 100644
  	if (std::getenv("RAVEN_BACKTRACE")) {
  		std::set_terminate(show_backtrace);
  		std::signal(SIGSEGV, show_fault);
-@@ -148,14 +154,24 @@ int main(int argc, char **argv)
+@@ -148,14 +154,29 @@ int main(int argc, char **argv)
  			return 2;
  		// A file is fully buffered once opened; diagnostics are read while the process runs, a line at a time.
  		std::setvbuf(stderr, nullptr, _IOLBF, 0);
@@ -751,6 +839,11 @@ index 7fab6e2..d22fc4a 100644
  		return 0;
  	}
 +	// ClokeOS: the Start Menu shortcuts of the prefix become application bundles in ~/Applications (or the folder named).
++	if (mode == "--add-app" && argc > 2) {
++		std::filesystem::path applications = argc > 3 ? std::filesystem::path(argv[3]) : std::filesystem::path(std::getenv("HOME") ? std::getenv("HOME") : ".") / "Applications";
++		std::cout << (raven::menu::add_app(raven::NativePrefix::from_environment(), argv[2], applications) ? "app added\n" : "no app added\n");
++		return 0;
++	}
 +	if (mode == "--install-menu") {
 +		std::filesystem::path applications = argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path(std::getenv("HOME") ? std::getenv("HOME") : ".") / "Applications";
 +		const auto count = raven::menu::install(raven::NativePrefix::from_environment(), applications);
@@ -760,7 +853,7 @@ index 7fab6e2..d22fc4a 100644
  	// Snapshots of the prefix: taken by hand, listed, and restored, the newest unless one is named.
  	if (mode == "--snapshot-prefix" || mode == "--restore-prefix" || mode == "--list-snapshots") {
  		const auto prefix = raven::NativePrefix::from_environment().root();
-@@ -301,14 +317,14 @@ int main(int argc, char **argv)
+@@ -301,14 +322,14 @@ int main(int argc, char **argv)
  			}
  			if (run_modules || run_process) {
  #ifdef RAVEN_NATIVE_CPU
@@ -777,7 +870,7 @@ index 7fab6e2..d22fc4a 100644
  						for (const auto &[from, folder] : {std::pair{runtime, "system32"}, std::pair{runtime / "x86", "syswow64"}})
  							for (const char *program : {"cmd.exe", "msiexec.exe", "regsvr32.exe", "control.exe", "dism.exe", "fondue.exe", "regedit.exe", "mscoree.dll", "riched20.dll",
  									"msftedit.dll", "l_intl.nls", "find.exe", "findstr.exe", "more.com", "sort.exe", "where.exe", "xcopy.exe", "attrib.exe",
-@@ -318,7 +334,7 @@ int main(int argc, char **argv)
+@@ -318,7 +339,7 @@ int main(int argc, char **argv)
  								// The 64-bit Registry Editor lives in the Windows folder itself.
  								const bool windows_folder = std::string_view(program) == "regedit.exe" && std::string_view(folder) == "system32";
  								const auto source_file = from / program,
@@ -786,7 +879,7 @@ index 7fab6e2..d22fc4a 100644
  								if (!std::filesystem::exists(source_file, error))
  									continue;
  								if (std::filesystem::exists(target, error) && std::filesystem::file_size(target, error) == std::filesystem::file_size(source_file, error) &&
-@@ -336,9 +352,9 @@ int main(int argc, char **argv)
+@@ -336,9 +357,9 @@ int main(int argc, char **argv)
  								const auto file = from / server;
  								if (std::filesystem::exists(file, error))
  									stamp += file.string() + " " + std::to_string(std::filesystem::file_size(file, error)) + " " +
@@ -798,7 +891,7 @@ index 7fab6e2..d22fc4a 100644
  						std::string recorded;
  						if (std::ifstream input(marker); input)
  							recorded.assign(std::istreambuf_iterator<char>(input), {});
-@@ -347,7 +363,7 @@ int main(int argc, char **argv)
+@@ -347,7 +368,7 @@ int main(int argc, char **argv)
  							// The prefix counts as registered only when every registration succeeded; a failed one is tried again next time.
  							bool registered = true;
  							for (const char *folder : {"system32", "syswow64"}) {
@@ -807,7 +900,7 @@ index 7fab6e2..d22fc4a 100644
  								if (!std::filesystem::exists(program))
  									continue;
  								for (const char *server : servers) {
-@@ -357,7 +373,7 @@ int main(int argc, char **argv)
+@@ -357,7 +378,7 @@ int main(int argc, char **argv)
  										// Setup is quiet: only a failure says anything, on standard error.
  										if (const int quiet = ::open("/dev/null", O_WRONLY | O_CLOEXEC); quiet >= 0)
  											::dup2(quiet, 1);
@@ -816,7 +909,7 @@ index 7fab6e2..d22fc4a 100644
  										::execl(self.c_str(), self.c_str(), "--run-process", "--execution=native", "--timeout-ms=60000", path.c_str(), "--", "/s",
  											server, static_cast<char *>(nullptr));
  										::_exit(127);
-@@ -376,6 +392,15 @@ int main(int argc, char **argv)
+@@ -376,6 +397,15 @@ int main(int argc, char **argv)
  					// like an installer and that no other program started. The ten newest of these snapshots are kept.
  					const bool started_alone = !command_line_text && handle_channel_fd < 0;
  					const auto program_name = std::filesystem::path(argv[first_file]).filename().string();
@@ -832,7 +925,7 @@ index 7fab6e2..d22fc4a 100644
  					if (started_alone && !std::getenv("RAVEN_PREFIX_SETUP") && !std::getenv("RAVEN_NO_SNAPSHOT") && raven::installer_like(entry->image, program_name)) {
  						try {
  							raven::take_snapshot(prefix.root(), "install-" + std::filesystem::path(program_name).stem().string());
-@@ -385,7 +410,7 @@ int main(int argc, char **argv)
+@@ -385,7 +415,7 @@ int main(int argc, char **argv)
  						}
  					}
  					// The libraries installed for every program, in the system directory of the program's width.
@@ -841,7 +934,7 @@ index 7fab6e2..d22fc4a 100644
  					// The program's own manifest names the side-by-side assemblies its libraries come from; it is read from the file, as the
  					// first libraries are found before the process exists.
  					{
-@@ -396,7 +421,7 @@ int main(int argc, char **argv)
+@@ -396,7 +426,7 @@ int main(int argc, char **argv)
  								manifest.assign(reinterpret_cast<const char *>(bytes.data()), bytes.size());
  								break;
  							}
@@ -850,7 +943,7 @@ index 7fab6e2..d22fc4a 100644
  							std::filesystem::absolute(argv[first_file]).parent_path());
  					}
  					// A library of the other width is passed over, as the Windows loader goes on searching past it.
-@@ -428,7 +453,7 @@ int main(int argc, char **argv)
+@@ -428,7 +458,7 @@ int main(int argc, char **argv)
  					// known once the program's launch is (below), before its libraries are loaded.
  					std::vector<std::filesystem::path> later_folders;
  					// The components for 32-bit programs are the same libraries built for 32 bits, in a directory beside the runtime.
@@ -859,7 +952,7 @@ index 7fab6e2..d22fc4a 100644
  					const auto source = [&](std::string_view name) -> std::optional<raven::ModuleBytes> {
  #ifdef RAVEN_OPENGL
  						if (entry->image.is_64 && raven::OpenGLBridge::enabled() && name == "opengl32.dll") return std::nullopt;
-@@ -451,7 +476,7 @@ int main(int argc, char **argv)
+@@ -451,7 +481,7 @@ int main(int argc, char **argv)
  						// A 64-bit program built against msvcrt.dll gets the C runtime component as that library too: a runtime of its own, as
  						// msvcrt is beside ucrtbase on Windows.
  						if (!selected && name=="msvcrt.dll" && entry->image.is_64) {
@@ -868,7 +961,7 @@ index 7fab6e2..d22fc4a 100644
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
  						}
-@@ -461,13 +486,13 @@ int main(int argc, char **argv)
+@@ -461,13 +491,13 @@ int main(int argc, char **argv)
  								return read_module(component.c_str());
  						if (!selected && name=="ucrtbase.dll") {
  							// A 32-bit program gets the 32-bit build of the component.
@@ -884,7 +977,7 @@ index 7fab6e2..d22fc4a 100644
  								(name=="dwrite.dll" ? "raven-dwrite.dll" : name=="d2d1.dll" ? "raven-d2d1.dll" : "raven-uianimation.dll");
  							if (std::filesystem::exists(component))
  								return read_module(component.c_str());
-@@ -484,7 +509,7 @@ int main(int argc, char **argv)
+@@ -484,7 +514,7 @@ int main(int argc, char **argv)
  										places.emplace_back(std::string(part));
  									rest = colon == rest.npos ? std::string_view() : rest.substr(colon + 1);
  								}
@@ -893,7 +986,7 @@ index 7fab6e2..d22fc4a 100644
  							for (const auto &place : places)
  								if (std::filesystem::exists(place / name))
  									return read_module((place / name).c_str());
-@@ -516,7 +541,7 @@ int main(int argc, char **argv)
+@@ -516,7 +546,7 @@ int main(int argc, char **argv)
  					};
  					// The guest heap component ships beside the runtime when the build provisioned it.
  					if (entry->image.is_64 && !modules.all().contains("raven-rtl.dll")) {
@@ -902,7 +995,7 @@ index 7fab6e2..d22fc4a 100644
  						if (std::filesystem::exists(component))
  							modules.add("raven-rtl.dll", read_file(component.c_str()));
  					}
-@@ -752,7 +777,7 @@ int main(int argc, char **argv)
+@@ -752,7 +782,7 @@ int main(int argc, char **argv)
  		if (run_entry) {
  #ifdef RAVEN_NATIVE_CPU
  			raven::LoadedImage loaded(image, image.image_base);
@@ -913,10 +1006,10 @@ index 7fab6e2..d22fc4a 100644
  			throw std::runtime_error("native execution requires an x86-64 Linux host");
 diff --git a/native/menu.h b/native/menu.h
 new file mode 100644
-index 0000000..1e73eb6
+index 0000000..70226bb
 --- /dev/null
 +++ b/native/menu.h
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,446 @@
 +// ClokeOS: installed Windows programs in the application menu.
 +// `raven --install-menu [Applications folder]` reads the shortcuts (.lnk) the installers left in the Start Menu folders of the prefix
 +// and writes one Name.app bundle per program: a start script, an Info.plist and the program's icon as PNG. CloakServer lists bundles
@@ -1308,6 +1401,58 @@ index 0000000..1e73eb6
 +		if (!wanted.count(entry.path().stem().string())) fs::remove_all(entry.path(), ec);
 +	}
 +	return written;
++}
++
++
++// `raven --add-app <program.exe> [Applications folder]`: a program started without a shortcut (a double click on its file) gets an app bundle too,
++// so that it shows in the Dock while it runs. Installers, the tools Raven ships and programs that already have a bundle are left out.
++inline bool add_app(const NativePrefix &prefix, const fs::path &program, const fs::path &applications)
++{
++	std::error_code ec;
++	const std::string stem = program.stem().string();
++	const std::string lowered = lower(stem);
++	if (stem.empty() || lowered.find("setup") != std::string::npos || lowered.find("install") != std::string::npos || lowered.find("unins") != std::string::npos ||
++		lower(program.extension().string()) != ".exe" || !fs::exists(program, ec))
++		return false;
++	if (program.string().rfind("/usr/libexec/raven/", 0) == 0)
++		return false;
++	std::string clean;
++	for (const char c : stem) if (c != '/' && c != ':' && c != '\\' && c != '"') clean += c;
++	const fs::path bundle = applications / (clean + ".app");
++	if (clean.empty() || fs::exists(bundle, ec))
++		return false;
++	fs::create_directories(bundle / "Contents/MacOS", ec);
++	fs::create_directories(bundle / "Contents/Resources", ec);
++	const auto png = best_icon(read_file(program), false);
++	if (!png.empty())
++		std::ofstream(bundle / "Contents/Resources/icon.png", std::ios::binary).write(reinterpret_cast<const char *>(png.data()), std::streamsize(png.size()));
++	std::string window_class = stem;
++	for (auto &c : window_class) if (c == ' ' || c == '\t') c = '_';
++	std::string identifier = "org.raven.";
++	for (const char c : lower(clean)) identifier += std::isalnum((unsigned char)c) ? c : '-';
++	std::ofstream plist(bundle / "Contents/Info.plist");
++	const auto item = [&](const char *key, const std::string &value) { plist << "\t<key>" << key << "</key>\n\t<string>" << xml_escape(value) << "</string>\n"; };
++	plist << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
++		<< "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n";
++	item("CFBundleName", clean);
++	item("CFBundleDisplayName", clean);
++	item("CFBundleIdentifier", identifier);
++	item("CFBundleExecutable", "launch");
++	if (!png.empty()) item("CFBundleIconFile", "icon");
++	item("CFBundlePackageType", "APPL");
++	item("CLWindowClasses", window_class);
++	item("RavenProgram", program.string());
++	plist << "</dict>\n</plist>\n";
++	plist.close();
++	const fs::path script = bundle / "Contents/MacOS/launch";
++	{
++		std::ofstream out(script);
++		out << "#!/bin/sh\n# written by `raven --add-app` for a program that was started without a shortcut\n";
++		out << "cd " << sh_quote(program.parent_path().string()) << " 2>/dev/null\nexec raven " << sh_quote(program.string()) << "\n";
++	}
++	::chmod(script.c_str(), 0755);
++	(void)prefix;
++	return true;
 +}
 +
 +}

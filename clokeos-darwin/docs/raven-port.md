@@ -344,3 +344,19 @@ empty. Cause of the earlier crash not found; if it comes back, `RAVEN_FRAME=rave
 Buttons: Raven sets `_CLOKE_TITLEBAR` from the window style (no WS_SYSMENU greys the close light, no WS_MINIMIZEBOX the minimize light, no
 WS_MAXIMIZEBOX the zoom light) and gives a window without WS_THICKFRAME equal minimum and maximum size hints (no resizing, no zoom). Checked
 with the Inno Setup language dialog: only the close light is active. Not done: tool windows (a small bar), minimize reporting; the zoom/unzoom test program vanished in two of five tries before (no error), not seen since.
+
+### The menu in the global menu bar, and programs in the Dock (2026-11-07)
+
+**Menu bar.** A window with a caption and a menu (Notepad++, the Inno Setup Compiler ...) puts its menu into the property `_CLOKE_MENU` (xcb.cpp,
+`update_menu`, text from `NativeWindows::global_menu_text`: one line per entry, `depth\tkind\tnumber\tflags\tlabel\tkey`, `&` removed, the tab
+text becomes the key, grayed/disabled `d`, checked `c`, radio `r`). CloakServer shows it in the top bar; the choice comes back as the client message
+`_CLOKE_MENU_ACTIVATE` and Raven posts WM_COMMAND with the entry's number to the window. The menu bar inside the window is cropped away (the top
+cut-off grows by the menu's height). Checked with a test program (File: New, Open..., line, Exit; Edit: checked Wrap, grayed Undo, accelerator
+text): the bar shows "menu32 File Edit Window", the entries with their keys, and a click on Open... gave WM_COMMAND 2. Limits: WM_INITMENUPOPUP is
+never sent, so programs that update their menu only then show stale states; the text is rebuilt with every frame and sent when it changed.
+
+**Dock.** Programs with a bundle (from a shortcut, `--install-menu`) show in the Dock while they run (the window class ties window and bundle).
+A program started without a shortcut (double click on the .exe) gets a bundle first: the wrapper runs `raven --add-app <program.exe>`, which writes
+`~/Applications/<name>.app` (icon from the .exe, `CLWindowClasses`, key `RavenProgram`, not removed by `--install-menu`). Installers (names with
+setup, install, unins), the tools Raven ships and programs that already have a bundle are left out. Checked: the test programs show with their letter
+tile (no icon in the .exe) and the running dot. They also stay in the application menu (delete the .app to remove one).
