@@ -843,3 +843,17 @@ Opening `Jump.logicx` now gets into the main window (transport bar, `CLgTranspor
   MASearchKit (`dispatch_sync` on a NULL queue; ClokeOS's Core Data has no store). Not needed: the folder scan is enough.
 * Note: Darling's Foundation maps `NSDirectoryEnumerationSkipsSubdirectoryDescendants` to `kCFURLEnumeratorDescendRecursively` and CF descends when the flag
   is *not* set; both inverted, so Foundation callers work, direct CF callers get the opposite. Left as is.
+
+### Round 50: tracks 3–8
+
+* **Second export in one session crashed** (double `free` in `MDFile::CheckDisposeFiles`, this time from `MD::Prime`): the function has five callers, none uses
+  a return value. `libclogictrace` now makes the whole function return at once (`ret` at MAAudioEngine +0x711058, checked against `sub sp, sp, #0x80`)
+  instead of removing only the call in `NewFile`. Unreferenced file records stay until Logic quits. Several exports per session work since.
+* `CLOKE_LOGIC_STRBT=<text>`: call chain when Logic fetches a localized string containing the text (`CFBundleCopyLocalizedString`), to find where an alert
+  such as "Disk is too slow. (Bounce)" comes from. That alert appeared once on the bass track and did not come back after the crash fix.
+* Remote control: Logic drops arrow keys sent faster than ~1 s apart (selection then lands on the wrong track); clicks on track headers or regions do not
+  select. Export files are named after the track, which is the only reliable check. The VM display sometimes stops updating while Logic keeps working.
+* **Comparison with the Mac:** track 3 "Fingerstyle Bass" (Sampler, Session Player bass) **identical** (envelope and waveform r = 1.000, every band within
+  0.4 dB). Tracks 4, 5, 7, 8 (guitars: Session Player guitar `CbGuitarStrummer`, Sampler "Vintage Strat", Pedalboard) are **silent** on ClokeOS although
+  the instrument and its sample load (`Vintage Strat.exs` opened, `Vintage Strat_consolidated.caf` opened 32 times). Open: whether the strummer produces no
+  notes or Pedalboard silences the signal. Track 6 "Bright Synth Strings" not exported yet.

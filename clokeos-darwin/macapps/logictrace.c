@@ -75,13 +75,26 @@ static void pct_bt(const char *p) {
     void *f[16]; int n = backtrace(f, 16);
     for (int i = 1; i < n; i++) { Dl_info di; if (dladdr(f[i], &di) && di.dli_fname) fprintf(stderr, "[clogic]   %%-bt %s +0x%lx %s\n", strrchr(di.dli_fname, '/') + 1, (unsigned long)((char *)f[i] - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : ""); }
 }
+/* CLOKE_LOGIC_STRBT=<Teilstring>: Aufrufkette, wenn Logic einen lokalisierten Text mit diesem Teilstring holt
+ * (z. B. "too slow" für die Meldung "Disk is too slow. (Bounce)") */
+#include <CoreFoundation/CoreFoundation.h>
+static CFStringRef my_CFBundleCopyLocalizedString(CFBundleRef b, CFStringRef key, CFStringRef value, CFStringRef table) {
+    static const char *w = (const char *)1; if (w == (const char *)1) w = getenv("CLOKE_LOGIC_STRBT");
+    char k[256];
+    if (w && key && CFStringGetCString(key, k, sizeof k, kCFStringEncodingUTF8) && strstr(k, w)) {
+        fprintf(stderr, "[clogic] Text \"%s\"\n", k);
+        void *f[24]; int n = backtrace(f, 24);
+        for (int i = 1; i < n; i++) { Dl_info di; if (dladdr(f[i], &di) && di.dli_fname) fprintf(stderr, "[clogic]   str-bt %s +0x%lx %s\n", strrchr(di.dli_fname, '/') + 1, (unsigned long)((char *)f[i] - (char *)di.dli_fbase), di.dli_sname ? di.dli_sname : ""); }
+    }
+    return CFBundleCopyLocalizedString(b, key, value, table);
+}
 static DIR *my_opendir(const char *p) { DIR *d = opendir(p); path_log("opendir", p, d ? 0 : -1); if (!d) pct_bt(p); return d; }
 static FILE *my_fopen(const char *p, const char *m) { FILE *f = fopen(p, m); path_log("fopen", p, f ? 0 : -1); return f; }
 
 __attribute__((used, section("__DATA,__interpose"))) static struct { void *n, *o; } interposers[] = {
     { (void *)my_open, (void *)open }, { (void *)my_stat, (void *)stat }, { (void *)my_lstat, (void *)lstat },
     { (void *)my_access, (void *)access }, { (void *)my_getattrlist, (void *)getattrlist },
-    { (void *)my_opendir, (void *)opendir }, { (void *)my_fopen, (void *)fopen },
+    { (void *)my_opendir, (void *)opendir }, { (void *)my_CFBundleCopyLocalizedString, (void *)CFBundleCopyLocalizedString }, { (void *)my_fopen, (void *)fopen },
     { (void *)my_set, (void *)SetSetupAppFactoryCB },
     { (void *)my_setup, (void *)setupAppFactorySharedInstance },
     { (void *)my_MDCoreAudioNewDriver, (void *)MDCoreAudioNewDriver },
@@ -135,15 +148,17 @@ static void patch_newfile_dispose(void) {
     if (v && *v == '0') return;
     const char *base = mae_base();
     if (!base) return;
-    uint32_t *ins = (uint32_t *)(base + 0x6ee2f4);
-    uint32_t want = 0x94000000u | (uint32_t)(((0x711058 - 0x6ee2f4) / 4) & 0x3ffffff);
-    if (*ins != want) { fprintf(stderr, "[clogic] NewFile-Patch: unerwarteter Befehl %#x, nicht gepatcht\n", *ins); return; }
+    /* Ganze Funktion MDFile::CheckDisposeFiles (+0x711058) kehrt sofort zurück: sie wird aus NewFile, MD::Prime und drei weiteren
+     * Stellen gerufen (keine nutzt einen Rückgabewert) und gibt dort Dateien frei, die Logic noch benutzt (doppeltes free beim
+     * zweiten Export einer Sitzung). Prüfung: erster Befehl "sub sp, sp, #0x80". */
+    uint32_t *ins = (uint32_t *)(base + 0x711058);
+    if (*ins != 0xd10203ffu) { fprintf(stderr, "[clogic] CheckDisposeFiles: unerwarteter Befehl %#x, nicht gepatcht\n", *ins); return; }
     long pg = (long)ins & ~0x3fffL;
-    if (mprotect((void *)pg, 0x4000, PROT_READ | PROT_WRITE)) { perror("[clogic] mprotect NewFile"); return; }
-    *ins = 0xd503201f;   /* nop */
+    if (mprotect((void *)pg, 0x4000, PROT_READ | PROT_WRITE)) { perror("[clogic] mprotect CheckDisposeFiles"); return; }
+    *ins = 0xd65f03c0;   /* ret */
     mprotect((void *)pg, 0x4000, PROT_READ | PROT_EXEC);
     sys_icache_invalidate(ins, 4);
-    fprintf(stderr, "[clogic] MD::NewFile: CheckDisposeFiles abgeschaltet\n");
+    fprintf(stderr, "[clogic] MDFile::CheckDisposeFiles abgeschaltet\n");
 }
 static void hook_mdca_vtable(void) {
     if (!getenv("CLOKE_LOGIC_MDCA_TRACE")) return;
