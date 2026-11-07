@@ -1828,6 +1828,19 @@ static void paint_frame_nt(cairo_t *cr, int w, int h, Client *c, bool active) {
   if (!c->uni && room > 24) text(cr, tx, cy, title, 12, false, active ? T->fg : T->fg2, room, 0);
 }
 
+/* Farbe der obersten Pixelzeile des Programmfensters (Mitte links), für transparente Titelleisten */
+static bool app_top_color(Client *c, RGBA *out) {
+  if (c->w < 40 || c->h < 4 || c->minimized) return false;
+  XWindowAttributes wa;
+  if (!XGetWindowAttributes(dpy, c->win, &wa) || wa.map_state != IsViewable) return false;
+  XImage *im = XGetImage(dpy, c->win, 24, 1, 1, 1, AllPlanes, ZPixmap);
+  if (!im) return false;
+  unsigned long p = XGetPixel(im, 0, 0);
+  XDestroyImage(im);
+  *out = (RGBA){(p >> 16 & 255) / 255., (p >> 8 & 255) / 255., (p & 255) / 255., 1};
+  return (p & 0xffffff) != 0; /* noch nichts gezeichnet (schwarz): normaler Grund */
+}
+
 /* Ampelknöpfe (Schließen, Ins Dock, Zoomen) in Rahmenkoordinaten; mit Symbolen, solange der Zeiger darüber ist */
 static void paint_lights(cairo_t *cr, Client *c) {
   bool active = c == focused;
@@ -1875,9 +1888,24 @@ static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
   set(cr, T->win);
   rrect(cr, c->bw, c->bw, w - 2 * c->bw, h - 2 * c->bw, RADIUS - 1);
   cairo_fill(cr);
+  /* Transparente oder "unified" Titelleiste (_CLOKE_TITLEBAR Merkmale 2/16, z. B. Logic Pro): Titelzeile in der Farbe der
+   * Oberkante des Programms und ohne Linie, Titelzeile und Werkzeugleiste sind eine Fläche wie bei macOS */
+  bool blend = c->th && (c->tflags & (2 | 16));
+  if (blend) {
+    RGBA top;
+    if (app_top_color(c, &top)) {
+      set(cr, top);
+      cairo_save(cr);
+      rrect(cr, c->bw, c->bw, w - 2 * c->bw, h - 2 * c->bw, RADIUS - 1);
+      cairo_clip(cr);
+      cairo_rectangle(cr, c->bw, c->bw, w - 2 * c->bw, c->th);
+      cairo_fill(cr);
+      cairo_restore(cr);
+    }
+  }
   /* Linie unter der Titelleiste; bei Fundus und Search fehlt sie: Titelleiste und Werkzeugleiste des
    * Programms bilden eine Fläche wie beim Finder und bei Safari */
-  if (c->th && !has_uni(c)) {
+  if (c->th && !has_uni(c) && !blend) {
     set(cr, T->line);
     cairo_rectangle(cr, c->bw, c->bw + c->th - 1, w - 2 * c->bw, 1);
     cairo_fill(cr);
@@ -1927,7 +1955,7 @@ static void paint_frame(cairo_t *cr, int w, int h, void *arg) {
   /* Titel fett, 13 pt; wie bei macOS 27 links neben den Ampelknöpfen (Fenster mit Zurück/Vor: mittig) */
   double cy = c->bw + c->th / 2.0, tx = LIGHT_X0 + 2 * LIGHT_GAP + LIGHT_R + 16;
   if (c->th && !c->uni && !(c->tflags & 4)) {
-    if (has_nav(c)) {
+    if (has_nav(c) || blend || (c->tflags & 8)) { /* mit Werkzeugleiste darunter mittig, wie bei macOS */
       if (w - 2 * side > 24) text(cr, w / 2.0, cy, title, 13, true, active ? T->fg : T->fg2, w - 2 * side, 1);
     } else if (w - tx - 16 > 24) {
       text(cr, tx, cy, title, 13, true, active ? T->fg : T->fg2, w - tx - 16, 0);
@@ -3419,6 +3447,20 @@ static const char *mb_label(int i) {
   return "";
 }
 
+/* Hat das Programm selbst ein Menü "Window"/"Fenster" (Logic Pro, GTK, Raven)? Dann kein zweites von CloakServer.
+ * Kürzel-Zeichen (_ bei GTK, & bei Windows) zählen nicht. */
+static bool app_has_window_menu(void) {
+  for (int k = 0; k < ngm_top; k++) {
+    char t[64];
+    int n = 0;
+    for (const char *p = gm[gm_top[k]].label; *p && n < 63; p++)
+      if (*p != '_' && *p != '&') t[n++] = *p;
+    t[n] = 0;
+    if (!strcasecmp(t, "Window") || !strcasecmp(t, "Fenster")) return true;
+  }
+  return false;
+}
+
 /* Links: Logo, Programmname, dann die Menüs des Programms (globale Menüleiste) oder "Ablage",
  * und "Fenster" (vor einem "Hilfe" am Ende, wie bei macOS). Rechts: Netzwerk bis Uhr. */
 static void layout_menubar(void) {
@@ -3438,12 +3480,12 @@ static void layout_menubar(void) {
   order[n++] = MB_APP;
   if (ngm_top) {
     const char *last = gm[gm_top[ngm_top - 1]].label;
-    bool help = !strcasecmp(last, "Help") || !strcasecmp(last, "Hilfe");
+    bool help = !strcasecmp(last, "Help") || !strcasecmp(last, "Hilfe"), own = !app_has_window_menu();
     for (int k = 0; k < ngm_top; k++) {
-      if (help && k == ngm_top - 1) order[n++] = MB_WINDOW;
+      if (own && help && k == ngm_top - 1) order[n++] = MB_WINDOW;
       order[n++] = MB_DYN + k;
     }
-    if (!help) order[n++] = MB_WINDOW;
+    if (own && !help) order[n++] = MB_WINDOW;
   } else {
     order[n++] = MB_FILE;
     order[n++] = MB_WINDOW;

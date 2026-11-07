@@ -10,7 +10,7 @@
  *   [0] Stil   0 = CloakServer zeichnet eine Titelleiste, 1 = das Programm zeichnet die Fläche selbst (CloakServer legt nur die
  *              Ampelknöpfe darüber), 2 = das Programm zeichnet Titelleiste und Fensterknöpfe selbst
  *   [1] Höhe der Fläche, die das Programm oben zeichnet (Ampelknöpfe senkrecht in deren Mitte); 0 = 32 wie bei macOS 27
- *   [2] Merkmale: 1 FullSizeContentView, 2 transparent, 4 Titel ausgeblendet, 8 Werkzeugleiste sichtbar
+ *   [2] Merkmale: 1 FullSizeContentView, 2 transparent, 4 Titel ausgeblendet, 8 Werkzeugleiste sichtbar, 16 unified (styleMask)
  *   [3] Mitte des ersten Ampelknopfs von links; 0 = 16 wie bei macOS 27
  *   [4] ausgeblendete Ampelknöpfe: Bit 0 Schließen, 1 Ins Dock, 2 Zoomen (standardWindowButton: … setHidden:); Bits 3–5 dieselben
  *       grau und ohne Wirkung, weil styleMask Closable, Miniaturizable oder Resizable fehlt (wie bei macOS)
@@ -28,6 +28,7 @@
 #import "X11Window.h"
 #include <X11/Xatom.h>
 #include <stdlib.h>
+#include <dlfcn.h>
 
 #define CK_FULLSIZE 0x8000 /* NSWindowStyleMaskFullSizeContentView */
 #define CK_TITLED 1
@@ -119,13 +120,15 @@ void ClokeTitlebarPublishX(NSWindow *w, Display *dpy, Window xw) {
     NSInteger style = ck_get(w, kToolbarStyle); /* 0 automatic, 1 expanded, 2 preference, 3 unified, 4 unifiedCompact */
     int tbh = ck_toolbar_h(w);
     long v[6] = {0, 0, 0, 0, 0, 0};
-    v[2] = (full ? 1 : 0) | (transparent ? 2 : 0) | (hidden ? 4 : 0) | (tbh ? 8 : 0);
+    /* 16: NSUnifiedTitleAndToolbarWindowMask, Titelzeile und Werkzeugleiste eine Fläche ohne Trennlinie */
+    v[2] = (full ? 1 : 0) | (transparent ? 2 : 0) | (hidden ? 4 : 0) | (tbh ? 8 : 0) | ([w styleMask] & 0x1000 ? 16 : 0);
     /* Das Programm zeichnet die Fläche oben selbst: Inhalt bis an die Oberkante, oder eine Werkzeugleiste in der Titelleiste
-     * (unified, oder ausgeblendeter Titel). Mit "expanded" oder automatisch und sichtbarem Titel steht die Werkzeugleiste unter
-     * einer Titelleiste wie bei macOS. */
+     * (unified, oder ausgeblendeter Titel); Ampelknöpfe dann wie bei unified ab x = 26. Sonst steht die Werkzeugleiste unter einer
+     * Titelzeile ("expanded"): so zeigt macOS 27 Logic Pros Projektfenster (auf dem Mac verglichen, docs/titlebar.md). */
     if (full || (tbh && (hidden || style == 3 || style == 4))) {
         v[0] = 1;
         v[1] = tbh ? tbh : CK_DEFAULT_H;
+        if (tbh) v[3] = 26;
     }
     NSUInteger m = [w styleMask];
     if (!(m & NSClosableWindowMask)) v[4] |= 8;
@@ -142,10 +145,17 @@ void ClokeTitlebarPublishX(NSWindow *w, Display *dpy, Window xw) {
         if (r.origin.y != 9) v[5] = (long)((v[1] ? v[1] : CK_DEFAULT_H) - NSMidY(r) + 0.5);
     }
     if (ck_is_alert(w)) v[0] = 2;
+    NSInteger was = ck_get(w, kPublished);
     objc_setAssociatedObject(w, kPublished, [NSNumber numberWithInteger: v[0] == 1 ? v[1] : 0], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     Atom a = XInternAtom(dpy, "_CLOKE_TITLEBAR", False);
     XChangeProperty(dpy, xw, a, XA_CARDINAL, 32, PropModeReplace, (unsigned char *)v, 6);
     XFlush(dpy);
+    /* Werkzeugleiste neu anordnen, wenn sich ihr linker Rand (Platz für die Ampelknöpfe) ändert */
+    NSView *tv = tbh && [[w toolbar] respondsToSelector: @selector(_view)] ? [[w toolbar] performSelector: @selector(_view)] : nil;
+    if (tv && (was > 0) != (v[0] == 1) && [tv respondsToSelector: @selector(layoutViews)]) {
+        [tv performSelector: @selector(layoutViews)];
+        [tv setNeedsDisplay: YES];
+    }
     if (getenv("CLOKE_TRACE"))
         fprintf(stderr, "[clokeos-titlebar] %s mask=0x%lx tb=%d transparent=%d hidden=%d style=%ld -> %ld/%ld x=%ld hide=%ld y=%ld\n",
                 [[w title] UTF8String] ?: "", (unsigned long)[w styleMask], tbh, transparent, hidden, (long)style, v[0], v[1], v[3],
@@ -207,6 +217,19 @@ static void ck_sendEvent(NSWindow *self, SEL _cmd, NSEvent *ev) {
     ((void (*)(id, SEL, NSEvent *))orig_sendEvent)(self, _cmd, ev);
 }
 
+/* NSToolbarView (patches/…/NSToolbarView.m.sed): linker Rand der Werkzeugleiste; in der Titelleiste Platz für die Ampelknöpfe
+ * wie bei macOS 27 unified (erstes Element bei etwa x = 86) */
+static CGFloat ck_toolbar_margin(NSView *v) {
+    NSWindow *w = [v window];
+    return w && ck_get(w, kPublished) > 0 ? 86 : 5;
+}
+
+static IMP orig_tbSize;
+static void ck_tbSize(id self, SEL _cmd, CGFloat old) {
+    ((void (*)(id, SEL, CGFloat))orig_tbSize)(self, _cmd, old);
+    ClokeTitlebarPublish(self);
+}
+
 /* vorhandene Methode umleiten: erst die alte, dann neu veröffentlichen */
 static IMP orig_setStyleMask, orig_setToolbar, orig_tbSetVisible, orig_alertInit;
 static id ck_alertInit(id self, SEL _cmd) {
@@ -252,6 +275,10 @@ __attribute__((constructor)) static void ck_titlebar_init(void) {
     orig_setStyleMask = hook(W, @selector(setStyleMask:), (IMP)ck_setStyleMask);
     orig_sendEvent = hook(W, @selector(sendEvent:), (IMP)ck_sendEvent);
     hook(W, @selector(standardWindowButton:), (IMP)ck_standardWindowButton);
+    orig_tbSize = hook(W, sel_registerName("_toolbarSizeDidChangeFromOldHeight:"), (IMP)ck_tbSize);
+    /* nur mit AppKit aus patches/…/NSToolbarView.m.sed vorhanden */
+    CGFloat (**margin)(NSView *) = dlsym(RTLD_DEFAULT, "ClokeToolbarLeftMargin");
+    if (margin) *margin = ck_toolbar_margin;
     Class V = objc_getClass("NSView");
     Method mv = V ? class_getInstanceMethod(V, @selector(mouseDownCanMoveWindow)) : NULL;
     if (mv) method_setImplementation(mv, (IMP)ck_canMove);
