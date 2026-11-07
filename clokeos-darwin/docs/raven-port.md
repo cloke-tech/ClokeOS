@@ -376,4 +376,6 @@ On arm64 there is no x86 code to run natively, so the guest's x86-64 code is emu
 - arm64 versions of the coroutine switch (`context_darwin`), `__rdtsc`/`pause` and the CPU feature report (`IsProcessorFeaturePresent`); the 4 KiB host page check is skipped (the guest has its own pages).
 - The runtime PE files (`raven-rtl.dll`, `ucrtbase.dll`, ...) are architecture independent and are built once with mingw; the arm64 `raven` binary sits next to them.
 
-Status: native macOS arm64 `raven` runs a 64-bit console program (`hallo64.exe`: output and exit code). Not yet: 32-bit guests (`modify_ldt` / compatibility mode), GDI windows, build for the PureDarwin arm64 target.
+32-bit guests run in compatibility mode inside the same 64-bit engine: the first entry goes through a stub page (`mov ss, [..]; jmp far [..]` with a small GDT whose segments are DPL 0 because the engine runs at CPL 0), because writing CS/SS with `uc_reg_write` does not update the engine's mode flags (a 16-bit stack pointer and 64-bit decoding result). `GETREGS` reports the Linux selectors 0x23/0x2b; FS gets the TEB through `FS_BASE`; `modify_ldt` is a no-op. 32-bit programs find `ucrtbase32.dll` next to `raven`.
+
+Status: native macOS arm64 `raven` runs 64-bit and 32-bit console programs (`hallo64.exe`, `hallo32.exe`: output and exit code; `cmd`, `where`, `tasklist`, `reg`, `hostname`, `whoami`). Not yet checked: GDI windows, Notepad++ / Inno wizard, build for the PureDarwin arm64 target.

@@ -215,7 +215,7 @@
  }
 --- /dev/null
 +++ b/native/platform/unicorn_guest.cpp
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,808 @@
 +// ClokeOS arm64: guest-process control with Unicorn, see mach_guest.h
 +// Raven drives its x86-64 guest with ptrace-like calls (cpu/native_cpu.cpp). On x86_64 hosts the guest is a real process; on arm64
 +// there is no x86 code to run natively, so the guest lives in a Unicorn engine inside this process and the same calls are answered
@@ -374,6 +374,11 @@
 +	// The size of a pending timeout and the stop reason a hook recorded
 +	uint64_t stop_rip = 0;
 +	std::atomic<bool> closing{false};
++	// 32-bit guests run in compatibility mode: the first entry goes through a far jump in the stub page (it loads CS from the GDT the way
++	// the processor does, which writing the register does not), after that the engine stays in that mode.
++	bool compat = false, compat_pending = false;
++	uint64_t stub = 0;
++	uint16_t fs_shadow = 0;
 +
 +	uint64_t rip() const
 +	{
@@ -514,7 +519,22 @@
 +	emu->code = protection ? 2 : 1;
 +	emu->address = address;
 +	if (std::getenv("RAVEN_TRACE_STOPS"))
-+		std::fprintf(stderr, "raven: guest memory fault type=%d address=%llx rip=%llx\n", int(type), (unsigned long long)address, (unsigned long long)emu->rip());
++	{
++		uc_mem_region *list = nullptr;
++		uint32_t count = 0;
++		if (uc_mem_regions(uc, &list, &count) == UC_ERR_OK) {
++			for (uint32_t index = 0; index < count; ++index)
++				if (list[index].begin < 0x100000000ULL)
++					std::fprintf(stderr, "  region %llx-%llx perms %u\n", (unsigned long long)list[index].begin, (unsigned long long)list[index].end, list[index].perms);
++			uc_free(list);
++		}
++		uint64_t rsp = 0, ss = 0, cs = 0;
++		uc_reg_read(uc, UC_X86_REG_RSP, &rsp);
++		uc_reg_read(uc, UC_X86_REG_SS, &ss);
++		uc_reg_read(uc, UC_X86_REG_CS, &cs);
++		std::fprintf(stderr, "raven: guest memory fault type=%d address=%llx rip=%llx rsp=%llx cs=%llx ss=%llx\n", int(type), (unsigned long long)address,
++			(unsigned long long)emu->rip(), (unsigned long long)rsp, (unsigned long long)cs, (unsigned long long)ss);
++	}
 +	uc_emu_stop(uc);
 +	return false;
 +}
@@ -560,6 +580,19 @@
 +	const uint8_t code[] = {0xcc, 0x0f, 0x05, 0xcc, 0x0f, 0x0b};
 +	std::memcpy(block->base, code, sizeof code);
 +	e.map(gate, 0x1000, PROT_READ | PROT_EXEC, static_cast<uint8_t *>(block->base), block);
++	{
++		// the stub page: GDT with the 32-bit code (0x23), data (0x2b) and 64-bit code (0x33) segments of Linux; at +0x100 the far jump
++		const uint64_t entries[] = {0, 0, 0, 0, 0x00CF9B000000FFFFULL, 0x00CF93000000FFFFULL, 0x00AFFB000000FFFFULL, 0x00AFF3000000FFFFULL};
++		const uint8_t jump[] = {0x8e, 0x15, 0x1a, 0, 0, 0,   // mov ss, [rip + 0x1a]: the selector at +0x120 (loading it sets the 32-bit stack flag)
++			0xff, 0x2d, 0x04, 0, 0, 0};   // jmp far [rip + 4]: m16:32 at +0x110
++		const uint16_t stack_selector = 0x28;
++		std::memcpy(static_cast<uint8_t *>(block->base) + 0x800, entries, sizeof entries);
++		std::memcpy(static_cast<uint8_t *>(block->base) + 0x100, jump, sizeof jump);
++		std::memcpy(static_cast<uint8_t *>(block->base) + 0x120, &stack_selector, 2);
++		e.stub = gate + 0x100;
++		uc_x86_mmr table{0, gate + 0x800, sizeof entries - 1, 0};
++		uc_reg_write(e.uc, UC_X86_REG_GDTR, &table);
++	}
 +	// SSE needs CR0.EM clear and CR4.OSFXSR and OSXMMEXCPT set, as an operating system leaves them; Unicorn starts with them off
 +	uint64_t control = 0;
 +	uc_reg_read(e.uc, UC_X86_REG_CR0, &control);
@@ -632,6 +665,9 @@
 +	const auto remaining = std::chrono::duration_cast<std::chrono::microseconds>(deadline - now).count();
 +	e.happened = false;
 +	const uint64_t start = e.rip();
++	if (e.compat_pending && start == e.stub)
++		e.compat = true;   // the far jump is the first instruction that runs
++	e.compat_pending = false;
 +	const uc_err result = uc_emu_start(e.uc, start, ~uint64_t(0), uint64_t(remaining), e.step ? 1 : 0);
 +	e.step = false;
 +	e.stopped = true;
@@ -739,13 +775,22 @@
 +		}
 +		uint64_t value = 0;
 +		uc_reg_read(e.uc, UC_X86_REG_RIP, &value); r.rip = value;
++		if (e.compat_pending) {
++			uint32_t target = 0;
++			uc_mem_read(e.uc, e.stub + 0x10, &target, 4);   // the jump's target
++			r.rip = target;
++		}
 +		uc_reg_read(e.uc, UC_X86_REG_RSP, &value); r.rsp = value;
 +		uc_reg_read(e.uc, UC_X86_REG_EFLAGS, &value); r.eflags = value;
 +		uc_reg_read(e.uc, UC_X86_REG_CS, &value); r.cs = value;
 +		uc_reg_read(e.uc, UC_X86_REG_SS, &value); r.ss = value;
 +		uc_reg_read(e.uc, UC_X86_REG_DS, &value); r.ds = value;
 +		uc_reg_read(e.uc, UC_X86_REG_ES, &value); r.es = value;
-+		uc_reg_read(e.uc, UC_X86_REG_FS, &value); r.fs = value;
++		if (e.compat || e.compat_pending) {
++			r.cs = 0x23;   // the selectors of Linux's x86 user mode; the engine's own are the DPL 0 pair
++			r.ss = r.ds = r.es = 0x2b;
++		}
++		uc_reg_read(e.uc, UC_X86_REG_FS, &value); r.fs = e.compat ? e.fs_shadow : value;
 +		uc_reg_read(e.uc, UC_X86_REG_GS, &value); r.gs = value;
 +		uc_reg_read(e.uc, UC_X86_REG_FS_BASE, &value); r.fs_base = value;
 +		uc_reg_read(e.uc, UC_X86_REG_GS_BASE, &value); r.gs_base = value;
@@ -759,7 +804,30 @@
 +			uint64_t value = fields[index];
 +			uc_reg_write(e.uc, register_ids[index], &value);
 +		}
-+		uint64_t value = r.rip; uc_reg_write(e.uc, UC_X86_REG_RIP, &value);
++		uint64_t value = r.rip;
++		if (std::getenv("RAVEN_TRACE_REGS"))
++			std::fprintf(stderr, "raven: SETREGS cs=%llx rip=%llx rsp=%llx fs=%llx fs_base=%llx compat=%d\n", (unsigned long long)r.cs, (unsigned long long)r.rip,
++				(unsigned long long)r.rsp, (unsigned long long)r.fs, (unsigned long long)r.fs_base, int(e.compat));
++		if (r.cs == 0x23 && !e.compat) {
++			// into compatibility mode through the stub's far jump
++			const uint8_t pointer[6] = {uint8_t(r.rip), uint8_t(r.rip >> 8), uint8_t(r.rip >> 16), uint8_t(r.rip >> 24), 0x20, 0};   // DPL 0 like the engine's CPL; reported as 0x23
++			uc_mem_write(e.uc, e.stub + 0x10, pointer, sizeof pointer);
++			value = e.stub;
++			e.compat_pending = true;
++		} else if (r.cs != 0x23 && e.compat) {
++			throw std::runtime_error("native guest cannot leave compatibility mode");
++		} else {
++			e.compat_pending = false;
++		}
++		uc_reg_write(e.uc, UC_X86_REG_RIP, &value);
++		if (r.cs == 0x23) {
++			uint64_t selector = 0x28;
++			uc_reg_write(e.uc, UC_X86_REG_SS, &selector);
++			uc_reg_write(e.uc, UC_X86_REG_DS, &selector);
++			uc_reg_write(e.uc, UC_X86_REG_ES, &selector);
++			uc_reg_write(e.uc, UC_X86_REG_FS, &selector);   // the LDT selector would not load; the base below is what counts
++			e.fs_shadow = uint16_t(r.fs);
++		}
 +		value = r.rsp; uc_reg_write(e.uc, UC_X86_REG_RSP, &value);
 +		value = r.eflags; uc_reg_write(e.uc, UC_X86_REG_EFLAGS, &value);
 +		value = r.fs_base; uc_reg_write(e.uc, UC_X86_REG_FS_BASE, &value);
@@ -944,7 +1012,7 @@
 +		return uint64_t(std::atoi(marker + 4));
 +	}
 +	case SYS_modify_ldt:
-+		throw std::runtime_error("native modify_ldt: 32-bit guests are not available with Unicorn yet");
++		return 0;   // the TEB descriptor: SETREGS sets FS base directly
 +	case SYS_prctl:
 +	case SYS_seccomp:
 +	case SYS_close:
