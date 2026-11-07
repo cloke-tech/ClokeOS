@@ -263,3 +263,13 @@ selected with `SelectPalette`/`RealizePalette` and drawn with `StretchBlt` (two 
 buttons stay black, so the table of the source bitmap is itself empty or the blit into the section does not quantize through
 the table. Still open, with the next step: trace the source bitmap (`GetObjectW` shows a 0x54-byte DIBSECTION for it) and print its
 palette in `GetDIBits`.
+
+### The Compil32 image buttons draw now (2026-11-07)
+
+Cause found with `RAVEN_TRACE_FAIL=1` (prints `getdibits table ...`): Delphi asks `GetDIBits(dc, bitmap, 0, h, NULL, info)` with
+`biBitCount` already 8 and a *32-bit* source bitmap, and builds the colour table of its new 8-bit section from the answer. The
+call returned at once, leaving the table zero (black). Without a buffer `GetDIBits` now fills the colour table of an indexed
+format: the bitmap's own colours when it has that depth, else the grey ramp (as Windows' default answer for such a request).
+PayPal "Donate" and "Subscribe" show in the Welcome dialog. The earlier changes of this section (`SelectPalette` keeps the palette,
+`RealizePalette` copies it into a selected indexed section, the colour table in the format query) stay: they are what Windows does.
+Still open: the `?` for the em dashes in the Compil32 title.
