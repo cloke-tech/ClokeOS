@@ -1262,3 +1262,7 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
 * So Logic's C++ region renderer (`ArrangeContentsSectionView drawRect:`) decides not to draw the names at all; the condition
   (header height, a measured font value, a stubbed function's result) is open. Next: disassemble the region drawing around the
   `CTLineCreateWithAttributedString` call sites in `Logic.framework`.
+* Plain `NSString` drawing is traced too now (`AppKit-S` lines under `CLOKE_CT_TRACE`): no region names there either. It shows the
+  LCD labels BAR, BEAT and TEMPO being drawn, but they are not visible (KEEP is); likely placed outside their area. The six
+  `CTLineCreateWithAttributedString` call sites in `Logic.framework` are in unnamed C++ functions (0x95fe60, 0xe4f268, 0xe4f3b0,
+  0x115cd50, 0x115d090).

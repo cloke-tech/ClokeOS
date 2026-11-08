@@ -14,3 +14,10 @@ s/^    \[_textStorage setAttributedString: astring\];$/    [_textStorage setAttr
         if (clk_n++ < 400)\
             fprintf(stderr, "[clokeos-ct] AppKit \\"%.60s\\"\\n", [[astring string] UTF8String] ?: "");\
     }/
+# … auch für NSString (drawString:withAttributes:… und Größenmessung; "AppKit-S" = einfache Zeichenkette)
+s/^    \[_textStorage endEditing\];$/    [_textStorage endEditing];\
+    if (getenv("CLOKE_CT_TRACE")) {\
+        static int clk_n;\
+        if (clk_n++ < 400)\
+            fprintf(stderr, "[clokeos-ct] AppKit-S \\"%.60s\\"\\n", [[_textStorage string] UTF8String] ?: "");\
+    }/
