@@ -12,3 +12,16 @@ s|^#import <CoreGraphics/CGContext.h>$|#import <CoreGraphics/CGContext.h>\n#impo
     clk_cgcall("ClipToMask", __builtin_return_address(0), rect, image, 0);
 /^void CGContextSetBlendMode\(CGContextRef context, CGBlendMode blendMode\) \{$/a\
     clk_cgcall("SetBlendMode", __builtin_return_address(0), CGRectZero, NULL, (long) blendMode);
+# ClokeOS: CLOKE_CGCALL_TRACE meldet auch CGContextSelectFont (Name, Größe) und CGContextShowText (Text), höchstens 300
+/^void CGContextSelectFont\(CGContextRef context, const char \*name, CGFloat size,$/,/^\{$/s/^\{$/{\
+    if (getenv("CLOKE_CGCALL_TRACE")) {\
+        static int clk_n;\
+        if (clk_n++ < 300)\
+            fprintf(stderr, "[clokeos-cg] SelectFont %s %.1f enc=%d\\n", name ? name : "(null)", (double) size, (int) encoding);\
+    }/
+/^void CGContextShowText\(CGContextRef context, const char \*text, unsigned count\) \{$/a\
+    if (getenv("CLOKE_CGCALL_TRACE")) {\
+        static int clk_n;\
+        if (clk_n++ < 300)\
+            fprintf(stderr, "[clokeos-cg] ShowText \\"%.*s\\"\\n", (int) (count < 60 ? count : 60), text ? text : "");\
+    }

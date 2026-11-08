@@ -1165,6 +1165,7 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
 * **Open – ruler offset:** the ruler (`CLgScrollView` with a `CLgSectionView`, top row of `CLgSplitView`) is full width, and its
   bar 1 sits above the track headers while the regions start after them. AppKit layout matches macOS here (only `adjustSubviews` sets
   that frame); the offset on the Mac must come from inside Logic's section view (`contentSectionView`, decorations), not found yet.
-* **Open – region names:** no region name reaches `CTLineDraw` (track names and bar numbers do), so Logic draws them another way or
-  not at all.
+* **Open – region names:** no region name reaches `CTLineDraw` (track names and bar numbers do), `CGContextShowText`/`SelectFont`
+  (never called; `CLOKE_CGCALL_TRACE` now logs both) or an unimplemented AppKit string method. Logic skips them or draws them
+  another way; next step: compare with a Mac screenshot of the same view and disassemble the region drawing.
 * Small: with 368 pt headers the pan knob is cut a few points at the right edge.
