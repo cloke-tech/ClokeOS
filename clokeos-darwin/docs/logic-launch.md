@@ -1298,3 +1298,14 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   the attributes say San Francisco 8 pt, centred — the shared string drawer seems to keep stale attributes (next round).
 * `CLOKE_DRAW_TRACE=1` logs every NSString/NSAttributedString draw: point, container size, glyph count, used rect, colour, font,
   CTM; for empty layouts also font metrics and paragraph style.
+
+### Round 71: attribute keys with Apple's values
+
+* Cocotron's `NSFontAttributeName` was `@"NSFontAttributeName"`, Apple's is `@"NSFont"` (likewise `NSColor`, `NSParagraphStyle`,
+  `NSKern`, `NSUnderline`, `NSSuperScript` …). Programs, archives and CoreText (`kCTFontAttributeName` = `"NSFont"`) use Apple's
+  strings, so their fonts, colours and paragraph styles were dropped in AppKit text layout. The 22 keys now carry Apple's values
+  (`patches/…/NSAttributedString.m.sed`).
+* Probe that found it: the same `drawInRect:` call with font, colour and centred style lays out correctly in a test program
+  (Cocotron's constants on both sides) but not in Logic (Apple's strings).
+* Result: BAR and BEAT are 8 pt, grey and centred under the position digits, as on the Mac. Open: "KEEP" is drawn without a font
+  (12 pt default) and covers "TEMPO".
