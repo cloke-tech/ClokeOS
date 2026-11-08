@@ -51,6 +51,8 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
     objc_setAssociatedObject(self, &clk_keepsUnarranged, flag ? nil : @YES, OBJC_ASSOCIATION_RETAIN);\
 }\
 - (void) addArrangedSubview: (NSView *) view {\
+    if (getenv("CLOKE_SCROLL_TRACE"))\
+        NSLog(@"[clokeos-split] %s add %s doc=%s (%ld Ansichten)", object_getClassName(self), object_getClassName(view), [view respondsToSelector: @selector(documentView)] ? object_getClassName([(id) view documentView]) : "-", (long) [[self subviews] count]);\
     [[self clk_unarrangedSet] removeObject: view];\
     if ([view superview] != self)\
         [self addSubview: view];\
@@ -58,6 +60,8 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
         [self adjustSubviews];\
 }\
 - (void) insertArrangedSubview: (NSView *) view atIndex: (NSInteger) index {\
+    if (getenv("CLOKE_SCROLL_TRACE"))\
+        NSLog(@"[clokeos-split] %s insert %s doc=%s (%ld Ansichten)", object_getClassName(self), object_getClassName(view), [view respondsToSelector: @selector(documentView)] ? object_getClassName([(id) view documentView]) : "-", (long) [[self subviews] count]);\
     [[self clk_unarrangedSet] removeObject: view];\
     NSArray *arranged = [self arrangedSubviews];\
     if ([view superview] != self) {\
@@ -69,6 +73,8 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
     [self adjustSubviews];\
 }\
 - (void) removeArrangedSubview: (NSView *) view {\
+    if (getenv("CLOKE_SCROLL_TRACE"))\
+        NSLog(@"[clokeos-split] %s remove %s doc=%s (%ld Ansichten)", object_getClassName(self), object_getClassName(view), [view respondsToSelector: @selector(documentView)] ? object_getClassName([(id) view documentView]) : "-", (long) [[self subviews] count]);\
     if (view == nil || [view superview] != self)\
         return;\
     if ([self arrangesAllSubviews]) {\

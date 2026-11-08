@@ -9,12 +9,16 @@
  * 2. -[NSThread initWithBlock:] und +detachNewThreadWithBlock: (seit macOS 10.12), fehlen bei Darling.
  * 3. Platzhalter für NSURLRequest, NSURLResponse, NSHTTPURLResponse und NSURLConnection. Auf macOS
  *    kommen sie aus CFNetwork, das Foundation re-exportiert. Für die Foundation-Probe gibt es kein
- *    CFNetwork; Laden über http(s) meldet deshalb einen Fehler, file:-URLs gehen an NSData vorbei. */
+ *    CFNetwork; Laden über http(s) meldet deshalb einen Fehler, file:-URLs gehen an NSData vorbei.
+ * 4. NSNumberFormatter: minimum, maximum, attributedStringForZero/Nil/NotANumber (gespeicherte Werte; nur eingetragen, wo Darling sie
+ *    nicht hat). Logic Pros Transportanzeige (TransportTempoFormatter, TransportDisplayClockFormatter) fragt sie ab; ohne sie bekam sie
+ *    nil und zeigte statt Position und Tempo nur Striche. Anders als bei Apple prüft getObjectValue: die Grenzen nicht. */
 #import <Foundation/Foundation.h>
 #import <Foundation/NSURLConnection.h>
 #import <Foundation/NSURLRequest.h>
 #import <Foundation/NSURLResponse.h>
 #include <CoreFoundation/CFNumber.h>
+#import <objc/runtime.h>
 
 #define CLOKE_IMMORTAL                                        \
   -(id)retain { return self; }                                \
@@ -187,3 +191,27 @@ CLOKE_NUMBER_COMMON
   return nil;
 }
 @end
+
+/* --- 4. NSNumberFormatter: Grenzen und Texte für 0, nil, NaN ----------------------------------------------------------------------- */
+static char nf_min, nf_max, nf_zero, nf_nil, nf_nan;
+static id nf_get(id self, SEL s) {
+    const char *n = sel_getName(s);
+    char *k = strcmp(n, "minimum") == 0 ? &nf_min : strcmp(n, "maximum") == 0 ? &nf_max : strcmp(n, "attributedStringForZero") == 0 ? &nf_zero
+            : strcmp(n, "attributedStringForNil") == 0 ? &nf_nil : &nf_nan;
+    return objc_getAssociatedObject(self, k);
+}
+static void nf_set(id self, SEL s, id v) {
+    const char *n = sel_getName(s);
+    char *k = strcmp(n, "setMinimum:") == 0 ? &nf_min : strcmp(n, "setMaximum:") == 0 ? &nf_max : strcmp(n, "setAttributedStringForZero:") == 0 ? &nf_zero
+            : strcmp(n, "setAttributedStringForNil:") == 0 ? &nf_nil : &nf_nan;
+    objc_setAssociatedObject(self, k, v, OBJC_ASSOCIATION_COPY_NONATOMIC);
+}
+__attribute__((constructor)) static void clk_numberformatter_init(void) {
+    Class C = [NSNumberFormatter class];
+    const char *names[] = { "minimum", "maximum", "attributedStringForZero", "attributedStringForNil", "attributedStringForNotANumber" };
+    const char *setters[] = { "setMinimum:", "setMaximum:", "setAttributedStringForZero:", "setAttributedStringForNil:", "setAttributedStringForNotANumber:" };
+    for (unsigned i = 0; i < 5; i++) {
+        class_addMethod(C, sel_registerName(names[i]), (IMP) nf_get, "@@:");
+        class_addMethod(C, sel_registerName(setters[i]), (IMP) nf_set, "v@:@");
+    }
+}

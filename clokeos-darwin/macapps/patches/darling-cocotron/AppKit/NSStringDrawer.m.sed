@@ -7,3 +7,10 @@
 /^                      atPoint: \(NSPoint\) point$/,/^\}$/s/^(    glyphRange = \[_layoutManager glyphRangeForTextContainer: _textContainer\];)$/\1\
     if (maxSize.width == NSStringDrawerLargeDimension)\
         point.x -= [_layoutManager usedRectForTextContainer: _textContainer].origin.x;/
+# ClokeOS: CLOKE_CT_TRACE meldet auch den Text, den AppKit selbst zeichnet (NSString/NSAttributedString draw…), höchstens 400 Zeilen
+s/^    \[_textStorage setAttributedString: astring\];$/    [_textStorage setAttributedString: astring];\
+    if (getenv("CLOKE_CT_TRACE")) {\
+        static int clk_n;\
+        if (clk_n++ < 400)\
+            fprintf(stderr, "[clokeos-ct] AppKit \\"%.60s\\"\\n", [[astring string] UTF8String] ?: "");\
+    }/

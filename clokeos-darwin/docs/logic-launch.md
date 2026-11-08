@@ -1169,3 +1169,22 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
   (never called; `CLOKE_CGCALL_TRACE` now logs both) or an unimplemented AppKit string method. Logic skips them or draws them
   another way; next step: compare with a Mac screenshot of the same view and disassemble the region drawing.
 * Small: with 368 pt headers the pan knob is cut a few points at the right edge.
+
+### Round 64: comparison with the Mac, formatter properties
+
+* **Mac reference** (same project, Tracks window, dark): matches now – inspector labels and values (right-aligned), instrument icons,
+  M/S/I, volume/pan, track names, 4/4 and Cmaj. Still different on ClokeOS:
+  * **Ruler:** on the Mac it starts at the regions' left edge; above the track headers there is a bar with `+`, duplicate and a
+    collapse button. On ClokeOS the top row is one full-width `CLgScrollView` (the only frame setter is `adjustSubviews`, Logic adds
+    no other pane: `CLOKE_SCROLL_TRACE` shows a single `removeArrangedSubview:` of the Live Loops grid), so the bar is missing and
+    bar 1 sits above the headers.
+  * **Region names** ("Pop Synth", "Electric Drum Kit", …) in each region's top strip: not drawn.
+  * **LCD:** position `001 1 1` and tempo `260` missing (`TransportSegmentedScrubber`s draw nothing).
+  * **Formatted values** missing as well: Key Limit `C-2 G8`, Velocity Limit `1 127`. Logic's `UnilibFormatter stringForObjectValue:`
+    formats only `NSNumber` values; AppKit draws 43 empty strings, so the cells probably get no number. Next step: trace the
+    object values handed to these formatters.
+  * Arrange toolbar: Edit/Functions/View menus, Snap and Drag pop-ups, zoom sliders missing.
+* **`NSNumberFormatter`** gained `minimum`, `maximum`, `attributedStringForZero`/`Nil`/`NotANumber` (stored; `macapps/fndcompat.m`).
+  Logic's transport and inspector formatters call them; they were caught by the lenient sink. No visible change yet.
+* Traces: `CLOKE_CT_TRACE` also logs strings drawn by AppKit itself (`NSStringDrawer`); `CLOKE_SCROLL_TRACE` also logs
+  `add`/`insert`/`removeArrangedSubview:`.
