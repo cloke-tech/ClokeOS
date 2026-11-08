@@ -232,6 +232,10 @@ static void img_draw_in_rect(NSImage *self, SEL s, NSRect r) {
     [self drawInRect: r fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1.0 respectFlipped: YES hints: nil];
 }
 
+/* -[NSPopUpButton altersStateOfSelectedItem]/setAltersStateOfSelectedItem: reichen wie bei Apple an die Zelle weiter */
+static BOOL pub_alters(id self, SEL s) { return ((BOOL (*)(id, SEL)) objc_msgSend)([self cell], s); }
+static void pub_set_alters(id self, SEL s, BOOL v) { ((void (*)(id, SEL, BOOL)) objc_msgSend)([self cell], s, v); }
+
 static IMP o_image_named;
 static NSImage *asset_png(NSBundle *b, NSString *name) {
     if (b == nil || ![name isKindOfClass: [NSString class]] || [name length] == 0) return nil;
@@ -599,6 +603,8 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(objc_getClass("CALayer"), sel_registerName("setContentsScale:"), (IMP)ignore_scale, "v@:d");
     class_addMethod(object_getClass([NSDate class]), sel_registerName("now"), (IMP)date_now, "@@:");
     class_addMethod([NSImage class], sel_registerName("imageWithSymbolConfiguration:"), (IMP)img_self, "@@:@");
+    class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("altersStateOfSelectedItem"), (IMP)pub_alters, "c@:");
+    class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("setAltersStateOfSelectedItem:"), (IMP)pub_set_alters, "v@:c");
     class_addMethod([NSImage class], sel_registerName("drawInRect:"), (IMP)img_draw_in_rect, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(object_getClass([NSImage class]), sel_registerName("imageWithSize:flipped:drawingHandler:"), (IMP)img_with_handler, "@@:{CGSize=dd}c@?");
     class_addMethod(objc_getClass("NSFontDescriptor"), sel_registerName("fontDescriptorWithDesign:"), (IMP)fd_design, "@@:@");

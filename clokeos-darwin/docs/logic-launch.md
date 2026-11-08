@@ -1014,3 +1014,17 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * Found, not fixed: **`NSTextAlignment` values differ on arm64.** Apple uses the iOS order there (Left 0, Center 1, Right 2), Cocotron
   the old macOS order (Left 0, Right 1, Center 2), so text a Mac arm64 app centres in code comes out right-aligned. Nib decoding uses
   the stored values too, so a fix needs care.
+
+### Round 58: inspector pop-up values
+
+* Logic's inspector (`TableViewInspectorTile`) shows a row's value with `-[NSPopUpButtonCell setTitle:]`; items are only built when
+  the menu opens. Cocotron added the item and selected it, but Logic's `-[MAPopUpButtonCell synchronizeTitleAndSelectedItem]` then
+  looks for the item whose **state is On** and found none, so it deselected again (title stayed "dummy").
+* **`altersStateOfSelectedItem`** (default YES) added to `NSPopUpButtonCell` (and forwarded by `NSPopUpButton`): `selectItem:` now
+  turns the old item off and the new one on, as on macOS (`patches/…/NSPopUpButtonCell.m.sed`, `modern.m`).
+* **Dark bezels:** Cocotron's push-button/pop-up bezel was always white; with a dark appearance it is now drawn dark (fill white 37 %,
+  edge white 25 %), so Logic's light text is readable (`patches/…/NSGraphicsStyle.m.sed`).
+* Result: the inspector shows Quantize/Off, (Undefined), Inst 6, All, Pre Fader, Delay …; the LCD shows the time signature.
+* `CLOKE_BUTTON_TRACE=1` also logs pop-up `setTitle:` (items, selection, menu).
+* Build note: `macapps/appkit.sh` stops when a patch's sed script is invalid (e.g. an unescaped `/` in a replacement); check its exit
+  code before deploying.
