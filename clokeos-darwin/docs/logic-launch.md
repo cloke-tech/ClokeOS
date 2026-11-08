@@ -1229,3 +1229,22 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
   itself (Logic: `ClipToRect`, translate, `ScaleCTM(1,-1)`, `[font set]`, `CGContextShowGlyphsWithAdvances`) therefore lands outside
   its field (trace: device y = 795 in an 800-pt window for the LCD digits). Fix: render glyphs through the full matrix (outline →
   path fill, or a transformed glyph image) and honour the clip. Not done yet.
+
+### Round 67: LCD and inspector values visible
+
+The renderer rewrite from round 66 turned out unnecessary; the digits were placed wrong by gaps in the text system:
+* **`NSTextStorage initWithString:attributes:` / `initWithAttributedString:`** were missing (unrecognized selector). Logic's
+  `+[MAKitSegmentedScrubberCell getXOffset:yOffset:…]` builds a one-line layout with them to place its digits; under the lenient sink
+  the text storage was nil and every offset 0 (`patches/…/NSTextView.subproj/NSTextStorage_concrete.m.sed`).
+* **`NSLayoutManager typesetterBehavior`/`setTypesetterBehavior:`** added (forwarded to the typesetter, `modern.m`).
+* **`lineFragmentRectForGlyphAtIndex:`, `locationForGlyphAtIndex:`, `lineFragmentUsedRectForGlyphAtIndex:`** now lay out first, like
+  AppKit (Cocotron returned zero rects right after building a layout); a depth counter keeps Cocotron's typesetter, which calls them
+  during layout, from recursing. **`lineFragmentRectForGlyphAtIndex:`** returns the whole line (container width), as on the Mac:
+  centred "0" in 100 pt → `{{0,0},{100,15}}`, location `{46,12}` (probe, Mac and ClokeOS agree).
+* **Text position advances after `CGContextShowGlyphs…`**, as in CoreGraphics (Onyx2D computed the advance but dropped it): Logic
+  draws the dim "00" and the bright "1" one after the other from the current position (`patches/…/Onyx2D/O2Context_builtin_FT.m.sed`).
+* Result: LCD `001  1`, tempo `260`; inspector Key Limit `C-2 G8`, Velocity Limit `1 127` (screenshot `compare/13-values.png`, not in
+  the repo). Still missing: the small BAR/BEAT/TEMPO labels under the LCD digits.
+* Also from this hunt: `CLOKE_RECT_TRACE` and the `flipped` flag in the F12 view dump. ClokeOS exposes a view's flip in the CTM
+  (`d = -1`), the Mac draws flipped views with an identity CTM and a hidden base transform; Onyx2D draws glyphs upright whatever the
+  CTM (not changed).

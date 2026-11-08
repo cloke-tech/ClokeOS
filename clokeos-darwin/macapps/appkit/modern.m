@@ -261,6 +261,17 @@ CLK_VISIBLE NSSize _NSTextCellSize(NSCell *cell, NSRect rect) {
     return sz;
 }
 
+/* -[NSLayoutManager typesetterBehavior]/setTypesetterBehavior: fehlten (Cocotron hat sie nur am NSTypesetter): wie bei Apple an den
+ * Typesetter weitergereicht. Logic Pros Zahlenfelder setzen sie, bevor sie Glyphenpositionen abfragen. */
+static NSInteger lm_tsb(id self, SEL s) {
+    id t = [self respondsToSelector: @selector(typesetter)] ? [self typesetter] : nil;
+    return [t respondsToSelector: @selector(typesetterBehavior)] ? (NSInteger) [t typesetterBehavior] : 0;
+}
+static void lm_set_tsb(id self, SEL s, NSInteger v) {
+    id t = [self respondsToSelector: @selector(typesetter)] ? [self typesetter] : nil;
+    if ([t respondsToSelector: @selector(setTypesetterBehavior:)]) ((void (*)(id, SEL, NSInteger)) objc_msgSend)(t, @selector(setTypesetterBehavior:), v);
+}
+
 static IMP o_image_named;
 static NSImage *asset_png(NSBundle *b, NSString *name) {
     if (b == nil || ![name isKindOfClass: [NSString class]] || [name length] == 0) return nil;
@@ -630,6 +641,8 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSImage class], sel_registerName("imageWithSymbolConfiguration:"), (IMP)img_self, "@@:@");
     class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("altersStateOfSelectedItem"), (IMP)pub_alters, "c@:");
     class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("setAltersStateOfSelectedItem:"), (IMP)pub_set_alters, "v@:c");
+    class_addMethod(objc_getClass("NSLayoutManager"), sel_registerName("typesetterBehavior"), (IMP)lm_tsb, "q@:");
+    class_addMethod(objc_getClass("NSLayoutManager"), sel_registerName("setTypesetterBehavior:"), (IMP)lm_set_tsb, "v@:q");
     class_addMethod([NSImage class], sel_registerName("lockFocusFlipped:"), (IMP)img_lock_flipped, "v@:c");
     class_addMethod([NSImage class], sel_registerName("drawInRect:"), (IMP)img_draw_in_rect, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(object_getClass([NSImage class]), sel_registerName("imageWithSize:flipped:drawingHandler:"), (IMP)img_with_handler, "@@:{CGSize=dd}c@?");

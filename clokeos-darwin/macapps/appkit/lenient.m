@@ -190,8 +190,8 @@ static BOOL ck_overrides(Class c, SEL sel) {
 static void ck_dumpview(id v, int depth) {
     NSRect f = [v frame];
     BOOL layer = [v respondsToSelector: @selector(wantsLayer)] && [v wantsLayer];
-    fprintf(stderr, "[viewdump] %*s%s {%.0f,%.0f %.0fx%.0f}%s%s%s%s%s\n", depth * 2, "", class_getName(object_getClass(v)),
-            f.origin.x, f.origin.y, f.size.width, f.size.height, [v isHidden] ? " hidden" : "", layer ? " layer" : "",
+    fprintf(stderr, "[viewdump] %*s%s {%.0f,%.0f %.0fx%.0f}%s%s%s%s%s%s\n", depth * 2, "", class_getName(object_getClass(v)),
+            f.origin.x, f.origin.y, f.size.width, f.size.height, [v isFlipped] ? " flipped" : "", [v isHidden] ? " hidden" : "", layer ? " layer" : "",
             ck_overrides(object_getClass(v), @selector(drawRect:)) ? " drawRect" : "",
             ck_overrides(object_getClass(v), @selector(updateLayer)) ? " updateLayer" : "",
             [v respondsToSelector: @selector(stringValue)] && [v isKindOfClass: [NSControl class]] ? " ctl" : "");
