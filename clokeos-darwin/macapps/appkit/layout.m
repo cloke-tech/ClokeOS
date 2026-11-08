@@ -6,10 +6,10 @@
  *     (wie bei Apple).
  *   - -[NSWindow displayIfNeeded]/-display legen vor dem Zeichnen den ganzen Baum aus (höchstens 4 Durchgänge, falls -layout neue
  *     Layouts anfordert); -layoutSubtreeIfNeeded geht von oben nach unten: erst die Ansicht selbst, dann ihre Unteransichten.
- *   - -[NSView layout] tut nichts (ohne Auto Layout gibt es keine Bedingungen anzuwenden); ist die Ansicht die eines
- *     NSViewController (nextResponder), werden dessen viewWillLayout/viewDidLayout gerufen.
- *   - updateConstraints, updateConstraintsForSubtreeIfNeeded, setNeedsUpdateConstraints: und needsUpdateConstraints sind leer
- *     (kein Auto Layout), damit sie nicht in den nachsichtigen Methodenfänger laufen.
+ *   - Auto Layout (autolayout.m in AppKit): vor jedem Durchgang werden die Bedingungen des Fensters gelöst, falls sich etwas
+ *     geändert hat (-_clkSolveConstraintsIfNeeded setzt die Rahmen); -[NSView layout] selbst tut darum nichts. Ruft ein Programm
+ *     -layoutSubtreeIfNeeded direkt auf, wird ebenfalls zuerst gelöst (bei losgelösten Bäumen mit fester Größe der Wurzel).
+ *     Ist die Ansicht die eines NSViewController (nextResponder), werden dessen viewWillLayout/viewDidLayout gerufen.
  * Eingetragen mit class_addMethod/Methodentausch beim Laden von AppKit. */
 #import <AppKit/NSView.h>
 #import <AppKit/NSWindow.h>
@@ -36,8 +36,10 @@ static void v_setneeds(id self, SEL c, BOOL flag) {
 }
 static void v_layout(id self, SEL c) {}
 static void v_noop(id self, SEL c) {}
-static void v_noop_b(id self, SEL c, BOOL f) {}
-static BOOL v_no(id self, SEL c) { return NO; }
+static int g_depth;
+static void solve(id v) {
+    if ([v respondsToSelector: @selector(_clkSolveConstraintsIfNeeded)]) [v performSelector: @selector(_clkSolveConstraintsIfNeeded)];
+}
 
 static void layout_one(NSView *v) {
     set_st(v, (st(v) | 1) & ~2u);
@@ -49,8 +51,14 @@ static void layout_one(NSView *v) {
 }
 static void v_subtree(id self, SEL c) {
     if ([self isHidden]) return;
-    if (v_needs(self, c)) layout_one(self);
-    for (NSView *sub in [[[self subviews] copy] autorelease]) [sub layoutSubtreeIfNeeded];
+    if (!g_depth) solve(self);
+    g_depth++;
+    @try {
+        if (v_needs(self, c)) layout_one(self);
+        for (NSView *sub in [[[self subviews] copy] autorelease]) [sub layoutSubtreeIfNeeded];
+    } @finally {
+        g_depth--;
+    }
 }
 
 static IMP o_setframe;
@@ -65,7 +73,7 @@ static void layout_window(NSWindow *w) {
     NSView *root = [[w contentView] superview] ?: [w contentView];
     for (int pass = 0; pass < 4; pass++) {
         g_pending = NO;
-        @try { [root layoutSubtreeIfNeeded]; }
+        @try { solve(w); [root layoutSubtreeIfNeeded]; }
         @catch (id e) { NSLog(@"layoutSubtreeIfNeeded: %@", e); break; }
         if (!g_pending) break;
     }
@@ -80,10 +88,6 @@ __attribute__((constructor)) static void clk_layout_init(void) {
     class_addMethod(v, @selector(setNeedsLayout:), (IMP) v_setneeds, "v@:c");
     class_addMethod(v, @selector(layout), (IMP) v_layout, "v@:");
     class_addMethod(v, @selector(layoutSubtreeIfNeeded), (IMP) v_subtree, "v@:");
-    class_addMethod(v, @selector(updateConstraints), (IMP) v_noop, "v@:");
-    class_addMethod(v, @selector(updateConstraintsForSubtreeIfNeeded), (IMP) v_noop, "v@:");
-    class_addMethod(v, @selector(setNeedsUpdateConstraints:), (IMP) v_noop_b, "v@:c");
-    class_addMethod(v, @selector(needsUpdateConstraints), (IMP) v_no, "c@:");
     Class vc = [NSViewController class];
     class_addMethod(vc, @selector(viewWillLayout), (IMP) v_noop, "v@:");
     class_addMethod(vc, @selector(viewDidLayout), (IMP) v_noop, "v@:");

@@ -1063,3 +1063,42 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
   to grow it and size the checkbox titles. ClokeOS has no constraint solver (`NSLayoutConstraint` and `NSGridView` are stubs), so
   OK/Cancel sit below the window (y = −107), the grid's checkboxes are 100 pt wide ("Include Aud…") and the view-based destination
   list has no labels. The Start/End fields are Logic's own dark scrubbers and look plausible.
+
+### Round 61: Auto Layout
+
+Nib dialogs now size and lay out like on macOS. Cocotron had no Auto Layout: `NSLayoutConstraint`, the anchors, `NSLayoutGuide`
+and `NSGridView` were stubs that swallowed every message, and nothing solved constraints.
+
+* **Constraints** (`macapps/fndlayout.m`, in Foundation where Darling put the stubs): `NSLayoutConstraint` with items, attributes,
+  relation, multiplier, constant, priority, `active`, nib decoding (`NSFirstItem`, `NSFirstAttribute(V2)`, `NSConstant(V2)`,
+  `NSPriority`, `NSSymbolicConstant` = IB's standard space …), `constraintWithItem:…`, `activate/deactivateConstraints:`, the visual
+  format language, `NSLayoutAnchor`/`X`/`YAxisAnchor`/`Dimension`.
+* **Solver** (`macapps/appkit/alsolver.c`): Cassowary with lexicographic priorities like AppKit (one 999 beats any number of 998s);
+  unsatisfiable required constraints are dropped and logged.
+* **Engine** (`macapps/appkit/autolayout.m`): per window, unknowns = frame of every view a constraint touches plus its ancestors.
+  Autoresizing views are bound to their superview by their mask; constraint-driven views keep their offset from the superview's
+  origin where constraints leave them free (as AppKit's engine does). The content view keeps its size at priority 500, so required
+  constraints grow the window with its top edge fixed. `fittingSize` solves the subtree at priority 50. It runs before a window is
+  first shown and in the layout pass (`layout.m`) when constraints, contents, the view tree or frames of autoresizing views changed.
+* **Measured on the Mac** (macOS 27, `macapps/layoutprobe.m` runs the same code on both): intrinsic sizes (push button text + 24 × 24,
+  checkbox text + 22 × 16, label text with 2 pt alignment insets, field −1 × 24, pop-up widest item + 47.5 × 24), baselines, default
+  hugging/compression (controls 250/750, grid 249 and 1000, labels from `+labelWithString:` 251), standard spacing (20 to the edge, 8
+  between siblings, 12 between rounded push buttons, vertically 6 between checkboxes, 10 between fields or between pop-ups, 20 above a
+  pop-up), and what `NSGridView` installs (placement required, 650 vertically in baseline rows, containment required, sizing 249).
+* **NSGridView** (`macapps/appkit/gridview.m`): rows, columns, cells, merging, nib keys `NSGrid_*`; layout through those constraints;
+  `replaceSubview:with:` replaces the cell's content and removing a view empties its cell (Logic swaps the nib's Start/End scrubbers
+  that way). `NSGridViewSizeForContent` is `FLT_MIN` as at Apple (Cocotron: 0); `NSViewNoIntrinsicMetric` −1 (Cocotron: 1.38e19).
+* **Nibs:** NIBArchive booleans were inverted (type 4 is *false*, 5 *true*; checked on the Mac with `isContinuous`, `isEnabled`,
+  `translatesAutoresizingMaskIntoConstraints`), so every boolean in every modern nib was read the wrong way (`nibarchive.m`,
+  `nibarchive.py`). `NSCustomView` created its view with `initWithFrame:` and dropped constraints, `NSDoNotTranslateAutoresizingMask`
+  and priorities; it now replaces the placeholder in the unarchiver and decodes them (`patches/…/NSCustomView.m.sed`).
+* **Also added:** `+[NSTextField labelWithString:]`, `wrappingLabelWithString:`, `textFieldWithString:`, `+[NSButton buttonWithTitle:…]`,
+  `checkboxWithTitle:…`, `radioButtonWithTitle:…`, `+[NSImageView imageViewWithImage:]`, `-[NSNib initWithNibData:bundle:]`.
+* **Result:** the Bounce dialog opens at 685 × 453 (Mac with the same nib: 681 × 453) with OK/Cancel at the bottom right, full
+  checkbox titles, the Start/End scrubbers in their grid rows and the "Requires … (Time 2:16)" line. The Mac probe and the VM agree
+  on the nib's structure (same grid rows and offsets; widths differ by the font). Logic's project window is unchanged.
+* **Still open:** the destination list stays without labels: it is a *view-based* table (`tableView:viewForTableColumn:row:` with
+  `NSTableCellView`s from nibs inside the table), and Cocotron's `NSTableView` only draws cell-based columns. Not a layout problem.
+  `NSStackView` is still a stub. 13 pt line height is 15 here (Cocotron's font) vs 16 on the Mac.
+* Traces: `CLOKE_AL_TRACE=1` (each solve: constraints, views, broken constraints, window growth), `=2` frames set, `=3` intrinsic
+  sizes and baselines, `=4` every node and constraint.

@@ -7,7 +7,7 @@ nicht lädt, und gibt Klassen und Objekte lesbar aus.
 Aufbau (aus den Dateien abgelesen, Little Endian; Variable Längen: 7 Bit je Byte, niederwertige zuerst, gesetztes Bit 7 = letztes Byte):
   "NIBArchive", dann 10 x uint32: Version 1, Version 10, Anzahl und Offset der Objekte, der Schlüssel, der Werte, der Klassen.
   Objekt: varint Klassenindex, varint erster Wert, varint Anzahl Werte.   Schlüssel: varint Länge + Bytes.
-  Wert: varint Schlüsselindex, Byte Typ (0 int8, 1 int16, 2 int32, 3 int64, 4 wahr, 5 falsch, 6 float, 7 double, 8 Daten mit varint Länge,
+  Wert: varint Schlüsselindex, Byte Typ (0 int8, 1 int16, 2 int32, 3 int64, 4 falsch, 5 wahr, 6 float, 7 double, 8 Daten mit varint Länge,
         9 nil, 10 Objektverweis uint32), dann die Daten.   Klasse: varint Namenslänge (mit NUL), varint Zahl Zusatzwerte, uint32 je Zusatzwert, Name.
 Ergebnis für Logic Pros MainMenu.nib (3359 Bytes, 95 Objekte): NSIBObjectData mit dem File's Owner (NSCustomObject, Klasse CLgApplication) und dem
 Standardmenü (About/Hide/Quit); es enthält keinen Delegaten.  Ein Umsetzer nach NSKeyedArchiver-Plist (NS.objects für UINibEncoderEmptyKey-Folgen,
@@ -35,8 +35,8 @@ def parse(d):
         elif t==1: x=struct.unpack('<h',d[o:o+2])[0];o+=2
         elif t==2: x=struct.unpack('<i',d[o:o+4])[0];o+=4
         elif t==3: x=struct.unpack('<q',d[o:o+8])[0];o+=8
-        elif t==4: x=True
-        elif t==5: x=False
+        elif t==4: x=False
+        elif t==5: x=True
         elif t==6: x=struct.unpack('<f',d[o:o+4])[0];o+=4
         elif t==7: x=struct.unpack('<d',d[o:o+8])[0];o+=8
         elif t==8:

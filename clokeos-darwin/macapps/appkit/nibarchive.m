@@ -75,8 +75,8 @@ static CFStringRef strFromBytes(const uint8_t *p, uint32_t len) {
 static CFTypeRef valueObject(const nval *v) {
     switch (v->type) {
     case 0: case 1: case 2: case 3: { long long x = v->i; return CFNumberCreate(kCFAllocatorDefault, kCFNumberLongLongType, &x); }
-    case 4: return CFRetain(kCFBooleanTrue);
-    case 5: return CFRetain(kCFBooleanFalse);
+    case 4: return CFRetain(kCFBooleanFalse);   /* 4 = falsch, 5 = wahr (auf dem Mac geprüft: NSControlContinuous 4 -> NO, NSEnabled 5 -> YES) */
+    case 5: return CFRetain(kCFBooleanTrue);
     case 6: case 7: { double x = v->d; return CFNumberCreate(kCFAllocatorDefault, kCFNumberDoubleType, &x); }
     case 8: return CFDataCreate(kCFAllocatorDefault, v->p, v->len);
     case 9: return uid(0);

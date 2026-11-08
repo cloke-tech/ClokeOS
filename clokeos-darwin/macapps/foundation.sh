@@ -110,6 +110,13 @@ compile_all() {
     esac
     "${flags[@]}" -c "$src" -o "$o" 2> "$o.log" || { echo "FEHLER: $s" >&2; head -25 "$o.log" >&2; exit 255; }
   ' < "$list"
+  # Objekte von Quellen, die nicht (mehr) in der Liste stehen, wegräumen (gelinkt wird alles in objdir; wie in appkit.sh)
+  local keep f
+  keep="$(sed -E 's#.*/##; s#$#.o#' "$list")"
+  for f in "$objdir"/*.o; do
+    [ -e "$f" ] || continue
+    grep -qxF "$(basename "$f")" <<< "$keep" || rm -f "$f" "$f.log"
+  done
 }
 
 # bundle <Name> <Version> <dylib> <Info.plist>: Framework-Ordner wie bei Apple
@@ -174,11 +181,13 @@ compile_all "$obj/cf" "$CF" "$obj/cf.list" -DCF_BUILDING_CF -DU_SHOW_DRAFT_API=1
 bundle CoreFoundation A "$obj/CoreFoundation" "$CF/Info.plist"
 
 # --- Foundation --------------------------------------------------------------------------------
-# NSNetServices (Bonjour) braucht CFNetwork und fehlt in der Probe.
+# NSNetServices (Bonjour) braucht CFNetwork und fehlt in der Probe. NSLayoutConstraint und die Anker sind bei Darling
+# Platzhalter; fndlayout.m ersetzt sie (Auto Layout, gelöst in AppKit: appkit/autolayout.m).
 echo "Baue Foundation"
 { sed -n '/^set(foundation_sources/,/^)/p' "$FND/CMakeLists.txt" |
-    grep -oE '^[[:space:]]+[A-Za-z0-9_/+.-]+\.(c|m)' | sed -E 's/^[[:space:]]+//' | grep -v NSNetServices | sort -u
-  echo "$M/fndcompat.m"; echo "$M/fndurlcomponents.m"; echo "$M/syscompat.c"; } > "$obj/fnd.list"
+    grep -oE '^[[:space:]]+[A-Za-z0-9_/+.-]+\.(c|m)' | sed -E 's/^[[:space:]]+//' | grep -v NSNetServices |
+    grep -vxE 'src/NSLayout(Constraint|Anchor)\.m' | sort -u
+  echo "$M/fndcompat.m"; echo "$M/fndurlcomponents.m"; echo "$M/fndlayout.m"; echo "$M/syscompat.c"; } > "$obj/fnd.list"
 patch_list darling-foundation "$obj/fnd.list"
 compile_all "$obj/fnd" "$FND" "$obj/fnd.list" -include "$M/include/cloke_fnd_compat.h" \
   -I"$FND/include/Foundation" -DNSBUILDINGFOUNDATION=1
