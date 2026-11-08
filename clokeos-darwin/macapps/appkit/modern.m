@@ -222,6 +222,31 @@ static id cell_unformatted_attr(NSCell *self, SEL s, id str) {
     return [[[NSAttributedString alloc] initWithString: str attributes: cell_textattrs(self, s)] autorelease];
 }
 
+/* -[NSColor colorUsingColorSpace:] (NSColorSpace-Objekt): nach dem Farbmodell des Ziels in Grau oder RGB umrechnen, Alpha bleibt.
+ * Fehlte ganz; Logic Pro rechnet seine Themenfarben so um (GrayColor:{255,11} für die Taktstriche) und nahm ohne Ergebnis
+ * deckendes Weiß. */
+static id c_using_space(NSColor *self, SEL s, NSColorSpace *space) {
+    if (space == nil) return nil;
+    CGColorSpaceRef cs = [space respondsToSelector: @selector(CGColorSpace)] ? [space CGColorSpace] : NULL;
+    BOOL gray = cs != NULL && CGColorSpaceGetModel(cs) == kCGColorSpaceModelMonochrome;
+    return [self colorUsingColorSpaceName: gray ? NSCalibratedWhiteColorSpace : NSCalibratedRGBColorSpace];
+}
+static NSInteger cs_model(NSColorSpace *self, SEL s) {
+    CGColorSpaceRef cs = [self CGColorSpace];
+    switch (cs ? CGColorSpaceGetModel(cs) : kCGColorSpaceModelRGB) {
+        case kCGColorSpaceModelMonochrome: return 0;   /* NSColorSpaceModelGray */
+        case kCGColorSpaceModelCMYK: return 2;
+        default: return 1;                             /* NSColorSpaceModelRGB */
+    }
+}
+static id cs_gray(Class c, SEL s) {
+    CGColorSpaceRef g = CGColorSpaceCreateDeviceGray();
+    id r = [[[NSColorSpace alloc] initWithCGColorSpace: g] autorelease];
+    CGColorSpaceRelease(g);
+    return r;
+}
+static id cs_rgb(Class c, SEL s) { return [NSColorSpace sRGBColorSpace]; }
+
 static id fd_design(id self, SEL s, id design) { return self; }
 
 static void *gc_cgcontext(id self, SEL s) { return ((void *(*)(id, SEL)) objc_msgSend)(self, sel_registerName("graphicsPort")); }
@@ -590,6 +615,15 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(cm, sel_registerName("colorWithDisplayP3Red:green:blue:alpha:"), (IMP)c_with_p3, "@@:dddd");
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
+    class_addMethod([NSColor class], sel_registerName("colorUsingColorSpace:"), (IMP)c_using_space, "@@:@");
+    class_addMethod([NSColorSpace class], sel_registerName("colorSpaceModel"), (IMP)cs_model, "q@:");
+    {
+        Class csm = object_getClass([NSColorSpace class]);
+        const char *grays[] = { "genericGrayColorSpace", "deviceGrayColorSpace", "genericGamma22GrayColorSpace", "extendedGenericGamma22GrayColorSpace" };
+        for (unsigned i = 0; i < 4; i++) class_addMethod(csm, sel_registerName(grays[i]), (IMP)cs_gray, "@@:");
+        const char *rgbs[] = { "genericRGBColorSpace", "extendedSRGBColorSpace", "displayP3ColorSpace", "adobeRGB1998ColorSpace" };
+        for (unsigned i = 0; i < 4; i++) class_addMethod(csm, sel_registerName(rgbs[i]), (IMP)cs_rgb, "@@:");
+    }
     class_addMethod([NSCell class], sel_registerName("_unformattedAttributedStringValue:"), (IMP)cell_unformatted_attr, "@@:@");
     class_addMethod([NSCell class], sel_registerName("_contents"), (IMP)cell_contents, "@@:");
     class_addMethod([NSButtonCell class], sel_registerName("_imageRectWithRect:"), (IMP)bc_image_rect, "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}");

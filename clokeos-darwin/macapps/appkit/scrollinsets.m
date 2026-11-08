@@ -7,6 +7,7 @@
  * automaticallyAdjustsContentInsets werden nur gemerkt. */
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
+#include <dlfcn.h>
 
 static char k_ci, k_si, k_auto;
 
@@ -20,7 +21,15 @@ static void set_insets(id self, char *key, NSEdgeInsets e) {
     objc_setAssociatedObject(self, key, [NSValue valueWithBytes: &e objCType: @encode(NSEdgeInsets)], OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 
-static NSEdgeInsets sv_content_insets(id self, SEL s) { return get_insets(self, &k_ci); }
+static NSEdgeInsets sv_content_insets(id self, SEL s) {
+    static int n;
+    if (getenv("CLOKE_SCROLL_TRACE") && n++ < 40) {
+        void *ra = __builtin_return_address(0); Dl_info di;
+        NSLog(@"[clokeos-scroll] %s contentInsets gelesen von %s+0x%lx", object_getClassName(self),
+              dladdr(ra, &di) && di.dli_fname ? strrchr(di.dli_fname, '/') + 1 : "?", dladdr(ra, &di) ? (unsigned long) ((char *) ra - (char *) di.dli_fbase) : 0);
+    }
+    return get_insets(self, &k_ci);
+}
 static void sv_set_content_insets(NSScrollView *self, SEL s, NSEdgeInsets e) {
     if (getenv("CLOKE_SCROLL_TRACE"))   /* CLOKE_SCROLL_TRACE: wer welchen Einzug setzt (Fehlersuche) */
         NSLog(@"[clokeos-scroll] %s %@ contentInsets %.0f %.0f %.0f %.0f doc=%s", object_getClassName(self), NSStringFromRect([self frame]),

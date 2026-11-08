@@ -100,7 +100,10 @@ P1="$M/patches/darling-cocotron" P2="$M/patches/arm64/darling-cocotron"
 # Ändert eine Korrektur einen Header, werden alle Objekte neu übersetzt (compile_all vergleicht sonst nur mit der eigenen Quelle)
 HSTAMP="$obj/patched-headers.stamp"; [ -f "$HSTAMP" ] || touch "$HSTAMP"; export HSTAMP
 while read -r f; do   # Korrekturen, die es nicht mehr gibt, zurücknehmen
-  [ -f "$P1/$f.sed" ] || [ -f "$P2/$f.sed" ] || cp -p "$COC/$f" "$src/$f"
+  # zurückgenommen: neu datieren, sonst bleibt das alte (korrigierte) Objekt stehen
+  if [ ! -f "$P1/$f.sed" ] && [ ! -f "$P2/$f.sed" ] && ! cmp -s "$COC/$f" "$src/$f"; then
+    cp "$COC/$f" "$src/$f"; case "$f" in *.h) touch "$HSTAMP" ;; esac
+  fi
 done < "$obj/patched.list"
 for d in "$P1" "$P2"; do
   [ -d "$d" ] && (cd "$d" && find . -name '*.sed' | sed -e 's|^\./||' -e 's|\.sed$||')

@@ -333,6 +333,17 @@ static id h_alerterr(id s, SEL c, NSError *e) {
 /* Logic Pro (MAToolKit): Farben aus Abschnitt/Name; nil-Ergebnisse melden, mit dem Bestandteil davor (Asset) */
 static id h_colsec(id s, SEL c, id section, id name) {
     id r = ((id (*)(id, SEL, id, id))o_colsec)(s, c, section, name);
+    if (r != nil && getenv("CLOKE_ASSET_ALL") && [r isKindOfClass: [NSColor class]]) {
+        static NSMutableSet *all;
+        if (!all) all = [NSMutableSet new];
+        NSString *k = [NSString stringWithFormat: @"%@|%@", section, name];
+        if (![all containsObject: k]) {
+            [all addObject: k];
+            CGFloat cr = -1, cg = -1, cb = -1, ca = -1;
+            [[(NSColor *) r colorUsingColorSpaceName: NSCalibratedRGBColorSpace] getRed: &cr green: &cg blue: &cb alpha: &ca];
+            fprintf(stderr, "[clokeos-asset] MAKitColor %s/%s -> %.2f %.2f %.2f a %.2f\n", [[section description] UTF8String] ?: "", [[name description] UTF8String] ?: "", cr, cg, cb, ca);
+        }
+    }
     if (r == nil) fprintf(stderr, "[clokeos-trace] MAKitColor %s/%s -> nil\n", [[section description] UTF8String] ?: "", [[name description] UTF8String] ?: "");
     return r;
 }
@@ -348,6 +359,19 @@ static id h_asset(id s, SEL c, id name, id set, id family) {
                     [[set description] UTF8String] ?: "", [[family description] UTF8String] ?: "", [[r description] UTF8String] ?: "");
         }
     }
+    if (r != nil && getenv("CLOKE_ASSET_ALL") && [r isKindOfClass: [NSColor class]]) {   /* CLOKE_ASSET_ALL=1: jede Farbe je Name einmal */
+        static NSMutableSet *all;
+        if (!all) all = [NSMutableSet new];
+        NSString *k = [NSString stringWithFormat: @"%@|%@|%@", name, set, family];
+        if (![all containsObject: k]) {
+            [all addObject: k];
+            CGFloat cr = -1, cg = -1, cb = -1, ca = -1;
+            NSColor *rgb = [(NSColor *) r colorUsingColorSpaceName: NSCalibratedRGBColorSpace];
+            [rgb getRed: &cr green: &cg blue: &cb alpha: &ca];
+            fprintf(stderr, "[clokeos-asset] %s set %s family %s -> %.2f %.2f %.2f a %.2f %s\n", [[name description] UTF8String] ?: "", [[set description] UTF8String] ?: "",
+                    [[family description] UTF8String] ?: "", cr, cg, cb, ca, object_getClassName(r));
+        }
+    }
     if (r == nil) fprintf(stderr, "[clokeos-trace] MAAssetManager asset %s set %s family %s -> nil\n", [[name description] UTF8String] ?: "",
                           [[set description] UTF8String] ?: "", [[family description] UTF8String] ?: "");
     return r;
@@ -359,6 +383,14 @@ static id h_colstr_n(int i, id s, SEL c, id str) {
     CGFloat a = -1;
     if ([r isKindOfClass: [NSColor class]]) a = ((CGFloat (*)(id, SEL)) objc_msgSend)(r, @selector(alphaComponent));
     else if (r && strcmp(class_getName(object_getClass(r)), "O2Color") == 0) a = CGColorGetAlpha((CGColorRef) r);
+    if (getenv("CLOKE_ASSET_ALL")) {
+        static NSMutableSet *all;
+        if (!all) all = [NSMutableSet new];
+        if (![all containsObject: str ?: @""]) {
+            [all addObject: str ?: @""];
+            fprintf(stderr, "[clokeos-asset] %s createFromString \"%s\" -> a %.2f %s\n", class_getName(object_getClass(s)), [[str description] UTF8String] ?: "", a, r ? object_getClassName(r) : "nil");
+        }
+    }
     if (a == 0) {
         static NSMutableSet *seen;
         if (!seen) seen = [NSMutableSet new];

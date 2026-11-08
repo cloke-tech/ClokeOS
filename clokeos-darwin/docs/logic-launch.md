@@ -1317,3 +1317,24 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   when the context is not flipped (`patches/…/NSStringDrawer.m.sed`).
 * Result: the LCD reads like the Mac — 260 / KEEP / TEMPO stacked, 4/4 above Cmaj, BAR and BEAT under the digits. No other
   visible change in the window (toolbar menu titles move up 2 pt).
+
+### Round 73: bar lines vs. ruler (diagnosis, not fixed yet)
+
+* **Offset:** the 16 px between ruler ticks and bar lines is not a small shift. At the project start the ruler's bar 1 sits at the
+  left edge of the ruler (above the track headers), the regions start 368 pt further right. Traced with `CLOKE_STROKE_TRACE`:
+  ruler ticks and bar lines use the same document x (e.g. 7641), but the ruler context is 368 pt further left (CTM tx −7392 vs.
+  −7024). Logic expects the ruler's scroll view to begin after the track headers (on the Mac a bar with `+` sits above them).
+  Ruled out: scroller width (overlay scrollers tried and reverted), `contentInsets` (never set or read), `addFloatingSubview:`.
+  Still open: what places the ruler after the headers on the Mac.
+* **Brightness:** the bar lines are `CGContextFillRects` (1×651 pt) after `CGContextSetFillColor(ctx, {1, 1, 1, 0.10})`, but the
+  context fills them opaque white; the notes lose their alpha 0.75 the same way. The theme colours themselves are right
+  (`GrayColor:{255,11}` → alpha 0.11, checked with `CLOKE_ASSET_ALL=1`). Likely cause: `CGContextSetFillColor` reads the
+  components in the current fill colour space, which is not RGB at that point (grey or NULL space after a
+  `CGContextSetFillColorSpace` with a space ClokeOS does not know). Next: the `[clokeos-setfill] space` trace (added) shows which.
+* Added: `-[NSColor colorUsingColorSpace:]`, `-[NSColorSpace colorSpaceModel]`, grey/generic `NSColorSpace` constructors
+  (`appkit/modern.m`) — were missing, not the cause here.
+* Build: removing a `.sed` patch now rebuilds the restored file (it kept the old timestamp, so the patched object stayed).
+* Traces: `CLOKE_STROKE_TRACE=1` (strokes, path fills, FillRects with rects, images, fill colours and spaces),
+  `CLOKE_FILL_BT=thin` (only 1–2 pt wide fills, with colour/blend/alpha), `CLOKE_ASSET_ALL=1` (every theme colour Logic resolves),
+  `CLOKE_SCROLL_TRACE` also logs `contentInsets` reads.
+* Open as well: pan knob too large (user report), region names, the 100 % CPU of non-main threads.
