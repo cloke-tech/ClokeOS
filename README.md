@@ -1,10 +1,36 @@
 # ClokeOS
 
-ClokeOS is an operating system built on the Darwin kernel (XNU), with a cape as its logo. Its default look is macOS-like, but the goal is one system with three worlds: **Mac** (apps from macOS on Darling's frameworks), **Windows** (a Windows-like interface today, `.exe` programs through Raven) and **Linux** (programs in a tree of their own at `/TUX`). What works today and what is still planned is listed under [One system, three worlds](#one-system-three-worlds).
+ClokeOS is an operating system built on the Darwin kernel (XNU), with a cape as its logo. Its default look is macOS-like, but the goal is one system with three worlds: **Mac** (apps from macOS on Darling's frameworks), **Windows** (a Windows-like interface today, `.exe` programs through Raven) and **Linux** (programs in a tree of their own at `/TUX`). What works today and what is still planned is listed under [One system, three worlds](#one-system-three-worlds). **New in 3.0:** [Logic Pro runs on ClokeOS](#whats-new-in-30) (arm64), Windows programs such as Notepad++ run through Raven (x86_64 and arm64), and the x86-to-arm translation is up to 180 times faster.
 
 **Download:** the [latest release](https://github.com/cloke-tech/ClokeOS/releases/latest) has USB installers for PCs (offline and online), a ready-made SSD image and installer images for virtual machines (x86_64 and arm64). See [Installing ClokeOS](#installing-clokeos).
 
 ![ClokeOS desktop: Fundus (Thunar) and Terminal over the papercut wallpaper, the Dock below, a glass menu bar on top](clokeos-darwin/screenshots/desktop.png)
+
+## What's new in 3.0
+
+![Logic Pro 12 on ClokeOS (arm64): the Jump demo project with tracks, regions and notes, the LCD at the top, the inspector on the left, ClokeOS's menu bar and Dock](clokeos-darwin/screenshots/logic-pro.png)
+
+**Logic Pro runs on ClokeOS** (arm64, in the VM with Apple's hypervisor). Apple's Logic Pro 12 is not included, you bring your own copy; ClokeOS provides what it needs. Logic starts on Darling's Mac frameworks, opens a project (the "Jump" demo), draws its main window with track headers, the arrange area with regions and notes, the LCD (position, tempo, key) and the toolbar menus, and its menus go to ClokeOS's menu bar. The audio engine runs on a CoreAudio shim: an offline bounce of the demo song matches a bounce from a real Mac, and ALAC and CAF audio decode. Getting there needed a real Swift runtime, a Foundation Swift overlay, CoreData, Core Text and AppKit text layout like Apple's, asset catalogs, NIBArchive nibs and many smaller pieces (`clokeos-darwin/docs/logic-launch.md` has the 70-plus rounds). **Not yet:** steady real-time playback, plug-in windows, some drawing details (bar lines, region names), x86_64. It is a technical demonstration, not a usable studio yet.
+
+![Notepad++ running on ClokeOS through Raven, with a macOS title bar and its menus in the global menu bar](clokeos-darwin/screenshots/notepadpp.png)
+
+**Windows programs through Raven, no Wine.** Notepad++ runs with a macOS title bar, its menus in the ClokeOS menu bar, its icon in the Dock, file dialogs and the clipboard in both directions. 32-bit programs run; NSIS, Inno Setup (the wizard installs from the first to the last page) and MSI installers run; Start Menu shortcuts become apps. Raven now also runs on arm64.
+
+**Much faster x86 to arm translation.** The block JIT translates SSE to AVX2, atomics and bit instructions to ARM code, protects translated pages and notices self-modifying code. Measured on integer kernels with the same program in each column (milliseconds, lower is better; Apple silicon with other VMs running, so about 10 % noise):
+
+| kernel | Rosetta 2 | Unicorn interpreter | ClokeOS JIT |
+|---|---|---|---|
+| sieve, 4M x 10 | 110 | 4400 | 57 |
+| fib(35) | 42 | 2650 | 39 |
+| collatz to 1M | 221 | 630 | 155 |
+| crc32 bitwise, 2 MB | 14 | 100 | 9 |
+| matrix 200x200 | 3 | 60 | 4 |
+| byte copy, 32 MiB | 17 | 3500 | 11 |
+| div/mod, 6M | 7 | 30 | 4 |
+
+For Windows programs (Raven on the JIT) the same kind of test gives 22 ms for fib(35) (native arm64: 26, Rosetta 2: 26; the Unicorn engine: 135) and 8 ms for a 400 MiB `rep movsq` copy (Unicorn: 11,457). Correctness: 8 runs of 60,000 random instruction sequences each, compared with Unicorn as the oracle, show no mismatch. Limits: the JIT is opt-in (`UCRUN_JIT=1`, `RAVEN_JIT=1`, AVX with `RAVEN_JIT_AVX=1`), x87 and parallel guest threads are not translated, FMA and BMI are not reported. Program start-up (Notepad++ shows its window after about 9 s in the VM) is dominated by Raven, not by the engine. Details: [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md) section 17 and [`docs/raven-port.md`](clokeos-darwin/docs/raven-port.md).
+
+**Also new:** macOS-style title bars for every program (Mac, GTK, Windows), the Cloke Store and the package manager `cloke` for every kind of app, Search on WebKitGTK, a USB HID stall fix and Realtek receive recovery for real PCs, and the new `clokefetch` logo.
 
 ## One system, three worlds
 
@@ -12,10 +38,10 @@ ClokeOS starts as a macOS-like system and grows towards running software from ot
 
 | World | Works today | Planned |
 |---|---|---|
-| **Mac** (default interface "ClokeOS") | macOS-like desktop (CloakServer), Mac apps on Darling's frameworks (with many gaps), Fundus, Launchpad, Spotlight, System Settings, recovery and installer | bash and Homebrew, a modern browser |
-| **Windows** | the **NT interface**: a Windows-like desktop with taskbar, Start menu, tray and desktop icons (System Settings > Appearance > Interface) | `.exe` programs through **Raven** (x86_64 only, no Wine): `raven` on the PATH, double-click in Fundus, "Raven" app; a 64-bit console program runs in the VM | windows and installers (Raven's graphics components), 32-bit programs, arm64 (needs the translation layer) |
+| **Mac** (default interface "ClokeOS") | macOS-like desktop (CloakServer), Mac apps on Darling's frameworks, including **Logic Pro** (arm64, bring your own copy), Fundus, Launchpad, Spotlight, System Settings, Cloke Store, WebKit browser, bash and Homebrew, recovery and installer | steady real-time audio in Logic Pro, plug-ins, more big Mac apps |
+| **Windows** | the **NT interface** (a Windows-like desktop with taskbar, Start menu, tray and desktop icons) and `.exe` programs through **Raven** (no Wine): **Notepad++**, 32-bit programs, NSIS, Inno Setup and MSI installers, installed programs as apps in the Dock and the global menu bar; x86_64 natively and arm64 through the block JIT | Direct3D, elevation (installs for all users), more programs |
 | **Linux** | first version (arm64 and x86_64) | programs in their own tree `/TUX` (Alpine: musl, BusyBox) run through `tux`, a user-space loader that translates Linux system calls; BusyBox `sh`, `ls`, `cat` work on both, and so do threads, sockets, epoll and `/proc`; Debian's glibc programs run on both (see [Linux programs](#linux-programs-tux)) |
-| **Other CPU** | images for x86_64 and arm64; **x86_64 programs on arm64** through the translator `ucrun` (see [x86_64 programs on arm64](#x86_64-programs-on-arm64-ucrun)) | a translation layer between arm64 and x86_64 in both directions, like Rosetta 2; see the [feasibility study](clokeos-darwin/docs/translation-study.md) |
+| **Other CPU** | images for x86_64 and arm64; **x86_64 programs on arm64** through `ucrun` and **arm64 programs on x86_64** through `a64run`, with an own block JIT that is 0.85 to 2 times as slow as Rosetta 2 on integer code (see [What's new](#whats-new-in-30) and [x86_64 programs on arm64](#x86_64-programs-on-arm64-ucrun)) | the JIT as the default, x87, threads in the JIT, a persistent translation cache; see the [study](clokeos-darwin/docs/translation-study.md) |
 
 ![The NT interface: square windows with the buttons on the right, a taskbar with the Start button, the running apps, speaker, network and clock, and icons on the desktop](clokeos-darwin/screenshots/nt-desktop.png)
 
@@ -52,7 +78,7 @@ There are two sticks:
 
 ![Setup assistant after installing: "Select Your Language" with English and Deutsch](clokeos-darwin/screenshots/setup.png)
 
-Requirements: UEFI, a SATA or NVMe SSD. Keyboard and mouse over USB (plugged in at power-on) or a built-in PS/2 keyboard and PS/2 touchpad (ClokeOS' own driver ClokePS2); I²C touchpads, as in most notebooks from about 2015 on, do not work yet. If ClokeOS finds no keyboard or mouse, it shows a diagnostics window after 45 seconds to take a photo of. Network only over LAN with Realtek RTL8111/8168/8169 or Intel 82545EM; Wi-Fi and newer Intel network chips (I219, I225) are not supported. Display through the firmware's graphics (GOP).
+Requirements: UEFI, a SATA or NVMe SSD. Keyboard and mouse over USB (plugged in at power-on) or a built-in PS/2 keyboard and PS/2 touchpad (ClokeOS' own driver ClokePS2); I²C touchpads, as in most notebooks from about 2015 on, work on the one notebook tested (HP 15s-fq5655ng, driver ClokeI2CHID) and are untested elsewhere. If ClokeOS finds no keyboard or mouse, it shows a diagnostics window after 45 seconds to take a photo of. Network only over LAN with Realtek RTL8111/8168/8169 or Intel 82545EM; Wi-Fi and newer Intel network chips (I219, I225) are not supported. Display through the firmware's graphics (GOP).
 
 ### Without a USB stick: ready-made SSD image
 
@@ -69,8 +95,8 @@ Later, "Restart in Recovery…" in the ClokeOS menu starts the recovery on the d
 ```text
 root@clokeos / # sw_vers
 ProductName:		ClokeOS
-ProductVersion:		2.3
-BuildVersion:		2C1
+ProductVersion:		3.0
+BuildVersion:		3A1
 root@clokeos / # uname -a
 Darwin clokeos 20.5.0 Darwin Kernel Version 20.5.0: Sun Aug 23 10:54:37 UTC 2026; nixbld:xnu-build/RELEASE_X86_64 x86_64
 ```
@@ -79,7 +105,7 @@ Darwin clokeos 20.5.0 Darwin Kernel Version 20.5.0: Sun Aug 23 10:54:37 UTC 2026
 
 The base is the ready-made image of [PureDarwin 20.5](https://github.com/PureDarwin/PureDarwin/releases/tag/20.5) (UEFI, its own loader, XNU, launchd, zsh, ext4 as root file system). ClokeOS changes:
 
-- `SystemVersion.plist`: ClokeOS 2.3 "Presidio", build 2C1 (launchd also sets `kern.osversion` from it)
+- `SystemVersion.plist`: ClokeOS 3.0 "Presidio", build 3A1 (launchd also sets `kern.osversion` from it)
 - `sw_vers` reads the plist as on macOS; PureDarwin's own `sw_vers` has "PureDarwin 11.3" compiled in
 - host name `clokeos` via the launchd service `com.clokeos.hostname`
 - login text with the cape (`/etc/motd`), prompt `root@clokeos / #`
@@ -99,7 +125,7 @@ Build and start:
 cd clokeos-darwin && ./brand.sh && ./run.sh
 ```
 
-`brand.sh` downloads the PureDarwin image (275 MB) and the boot loader's sources (300 KB together, all checksums are verified), builds the loader with the boot logo, writes the files from `overlay/` into the ext4 file system with `debugfs` (no Linux and no root needed), puts loader and boot arguments into the EFI partition with `mtools` and produces `~/ClokeOS-work/out/clokeos-2.3-x86_64.img`. `run.sh` opens a QEMU window with the screen and the serial console in the terminal. On a Mac with Apple silicon x86_64 is emulated; reaching the prompt takes about 70 seconds (arm64 with Apple's hypervisor: about 7, see [Architectures](#architectures)). Quit with `poweroff` in the VM.
+`brand.sh` downloads the PureDarwin image (275 MB) and the boot loader's sources (300 KB together, all checksums are verified), builds the loader with the boot logo, writes the files from `overlay/` into the ext4 file system with `debugfs` (no Linux and no root needed), puts loader and boot arguments into the EFI partition with `mtools` and produces `~/ClokeOS-work/out/clokeos-3.0-x86_64.img`. `run.sh` opens a QEMU window with the screen and the serial console in the terminal. On a Mac with Apple silicon x86_64 is emulated; reaching the prompt takes about 70 seconds (arm64 with Apple's hypervisor: about 7, see [Architectures](#architectures)). Quit with `poweroff` in the VM.
 
 For tests without a window: `./run.sh --headless`, then `./vmctl.py wait 'Welcome'`, `./vmctl.py send 'clokefetch'`, `./vmctl.py shot screen.png`, `./vmctl.py quit`. Downloads, images and VM state live in `~/ClokeOS-work`, not in the project folder. Versions and names are in `clokeos-darwin/config.sh`.
 
@@ -125,7 +151,7 @@ During PCI configuration PureDarwin's `IOPCIFamily` moves the console and writes
 
 ![The same desktop in dark mode: dark window frames on the plum wallpaper, the Dock as lighter violet glass](clokeos-darwin/screenshots/desktop-dark.png)
 
-The desktop variant builds on PureDarwin's preview image `puredarwin.img` (6.1 GiB, from puredarwin.org; Xorg with PureDarwin's own driver `puredarwingop`, Wayland/sway, i3, Xfce, Wine, compilers). Nothing graphical starts there by itself; ClokeOS starts Xorg with CloakServer at boot through the launchd service `com.clokeos.cloakserver` (`/usr/libexec/cloakserver-start` and `cloakserver-session`, with a D-Bus for the session):
+The desktop variant builds on PureDarwin's preview image `puredarwin.img` (6.1 GiB, from puredarwin.org; Xorg with PureDarwin's own driver `puredarwingop`, Wayland/sway, i3, Xfce, compilers; its Wine is not used, Windows programs run through Raven). Nothing graphical starts there by itself; ClokeOS starts Xorg with CloakServer at boot through the launchd service `com.clokeos.cloakserver` (`/usr/libexec/cloakserver-start` and `cloakserver-session`, with a D-Bus for the session):
 
 ```bash
 cd clokeos-darwin && CLOKEOS_FLAVOR=desktop ./brand.sh && CLOKEOS_FLAVOR=desktop ./run.sh
@@ -263,16 +289,17 @@ Not there yet: `io_uring` (programs fall back), netlink that changes things, pac
 
 ### x86_64 programs on arm64 (ucrun)
 
-The arm64 desktop image can run x86_64 Mac programs (Mach-O) with `ucrun`, an emulator built on [Unicorn](https://www.unicorn-engine.org/) (QEMU's CPU core, GPL-2.0) with its own Darwin system-call layer. It loads PureDarwin's x86_64 `dyld` and `libSystem` from `/Library/ClokeOS/x86` and runs them like the kernel would. A library `libxlat-exec.dylib` hooks `execve`, `posix_spawn` and friends, so `./program` in a terminal, a script, or a double click in Fundus (`xlat-open`, in a terminal window) starts an x86_64 program through `ucrun` automatically; the hook is loaded through `DYLD_INSERT_LIBRARIES` from `/etc/profile`, and interactive zsh restarts itself once at startup to pick it up. Works so far: static and dynamic programs, `fork`/`exec`/`posix_spawn`, pipes, signals, threads, mutexes, condition variables, semaphores. Not yet: `pthread_rwlock` under contention, GUI/Mach services/Objective-C frameworks, bash (only zsh gets the hook at startup), speed (about 20x slower than Rosetta 2; a JIT is the planned next step), arm64 programs on x86_64. Details, measurements and open points: [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). It is built into the arm64 desktop image only if `~/ClokeOS-work/download/unicorn/src` (Unicorn 2.1.4 source) and the x86_64 PureDarwin image are present.
+The arm64 desktop image can run x86_64 Mac programs (Mach-O) with `ucrun`, an emulator built on [Unicorn](https://www.unicorn-engine.org/) (QEMU's CPU core, GPL-2.0) with its own Darwin system-call layer. It loads PureDarwin's x86_64 `dyld` and `libSystem` from `/Library/ClokeOS/x86` and runs them like the kernel would. A library `libxlat-exec.dylib` hooks `execve`, `posix_spawn` and friends, so `./program` in a terminal, a script, or a double click in Fundus (`xlat-open`, in a terminal window) starts an x86_64 program through `ucrun` automatically; the hook is loaded through `DYLD_INSERT_LIBRARIES` from `/etc/profile`, and interactive zsh restarts itself once at startup to pick it up. Works so far: static and dynamic programs, `fork`/`exec`/`posix_spawn`, pipes, signals, threads, mutexes, condition variables, semaphores. Not yet: `pthread_rwlock` under contention, GUI/Mach services/Objective-C frameworks, bash (only zsh gets the hook at startup), speed (the interpreter is about 20x slower than Rosetta 2; with `UCRUN_JIT=1` the block JIT is within 0.85 to 2 times of it on integer code, see [What's new](#whats-new-in-30); it is still opt-in), arm64 programs on x86_64 work through `a64run`. Details, measurements and open points: [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). It is built into the arm64 desktop image only if `~/ClokeOS-work/download/unicorn/src` (Unicorn 2.1.4 source) and the x86_64 PureDarwin image are present.
 
 ### Windows programs (Raven)
 
-The x86_64 desktop image runs Windows programs with [Raven](https://github.com/mirkobrombin/raven) (GPL-3.0), which replaces Wine here (PureDarwin's Wine 11.0 crashes `wineboot` on every start in the VM). Raven does not emulate Windows around a Linux-like system: it runs the program's x86-64 code natively in a child process and answers every NT call itself (files, registry, threads, windows). ClokeOS ported it from Linux to XNU (`raven/`, a patch set on a pinned upstream commit, built on the Mac by `raven/build.sh`; details and measurements in `docs/raven-port.md`):
+Both desktop images run Windows programs with [Raven](https://github.com/mirkobrombin/raven) (GPL-3.0), which replaces Wine here (PureDarwin's Wine 11.0 crashes `wineboot` on every start in the VM, so Wine is not part of ClokeOS any more). Raven does not emulate Windows around a Linux-like system: it runs the program's x86-64 code natively in a child process and answers every NT call itself (files, registry, threads, windows). ClokeOS ported it from Linux to XNU (`raven/`, a patch set on a pinned upstream commit, built on the Mac by `raven/build.sh`; details and measurements in `docs/raven-port.md`):
 
 - **Mach instead of ptrace:** the guest is a task whose exception port the runtime owns (`task_for_pid`); API traps (`int3`), faults and the NT service calls (`EXC_SYSCALL`, because the stubs of Raven's ntdll use a Mach trap number XNU does not have) arrive as Mach exceptions; registers and XSTATE through `thread_get_state`, memory through `mach_vm_*`. No sandbox yet (a raw `syscall` of the guest would reach XNU).
 - **`raven`** (`overlay-desktop/usr/bin/raven`) starts a program: `raven setup.exe`, `raven --inspect program.exe`. The Windows prefix of each user is `~/Library/Raven`; its C: drive is `/NT`, shared by all users (`C:\Windows` is `/NT/Windows`, `C:\Users\<name>` is `/NT/Users/<name>`, made with the account). Installed programs get an app in `~/Applications`. Fundus opens `.exe` with it by double-click (`/share/applications/raven.desktop`, `mimeapps.list`), and "Raven" is an app in `/Applications`.
 - **PureDarwin workarounds:** PE images are copied into guest pages (shared memory cannot be mapped executable) and the host's view is re-pointed with `vm_remap`; `/usr/lib/libc++.1.dylib` is replaced by a copy with a working `std::uncaught_exceptions()`.
-- **Works:** 64-bit console programs (MinGW/ucrt: `printf`, system information, exit codes) and plain GDI windows on the desktop (Raven's X11 presentation through xcb, xkbcommon and pixman; the libraries come from the PureDarwin image and pixman is built by `raven/build.sh`), tested in the x86_64 VM. Text in windows works through Skia (CPU build, no CoreText) and the Liberation fonts (`raven/build.sh` fetches Skia and only its FreeType dependency). SQLite, a 64-bit installer-like program and **Notepad++** (menus, toolbar, typing, open and save through Raven's file dialogs, `Z:` is the Unix root, copy and paste to and from Unix programs) run. **32-bit programs run** too (a 64-bit process runs the 32-bit code in compatibility mode through an LDT entry; a real NSIS installer ran) and **`.msi` packages install and uninstall** through `msiexec` (`raven setup.msi`). **Not yet:** Direct3D, Inno Setup wizards run from the first page to the finish page (silent installs for the current user work: `/VERYSILENT /CURRENTUSER`), elevation (installs for all users), arm64 (needs the translation layer).
+- **On arm64** (new in 3.0) the program's x86-64 code runs in a backend built on Unicorn, or with `RAVEN_JIT=1` in ClokeOS's block JIT (`raven/raven-arm64.patch`, `xlat/jit`); 64-bit and 32-bit programs and Notepad++ start in the arm64 VM.
+- **Works:** 64-bit console programs (MinGW/ucrt: `printf`, system information, exit codes) and plain GDI windows on the desktop (Raven's X11 presentation through xcb, xkbcommon and pixman; the libraries come from the PureDarwin image and pixman is built by `raven/build.sh`), tested in the x86_64 VM. Text in windows works through Skia (CPU build, no CoreText) and the Liberation fonts (`raven/build.sh` fetches Skia and only its FreeType dependency). SQLite, a 64-bit installer-like program and **Notepad++** (menus, toolbar, typing, open and save through Raven's file dialogs, `Z:` is the Unix root, copy and paste to and from Unix programs) run. **32-bit programs run** too (a 64-bit process runs the 32-bit code in compatibility mode through an LDT entry; a real NSIS installer ran) and **`.msi` packages install and uninstall** through `msiexec` (`raven setup.msi`). **Inno Setup wizards run from the first page to the last**, and the installed Inno Setup Compiler starts. Notepad++ gets a macOS title bar from CloakServer, its menus appear in the global menu bar, and its icon is in the Dock; shortcuts of installed programs become apps in `~/Applications` (`raven --install-menu`). **Not yet:** Direct3D, elevation (installs for all users).
 
 ### cloke: one package manager for everything
 
@@ -322,7 +349,7 @@ Drivers ClokeOS uses: virtio disk and network (`IOVirtIOBlock`, `IOVirtIONet`), 
 
 - **More than one CPU core**: `kext/build.sh` builds `kernel` with PureDarwin's `PDACPIPlatform` (uACPI interpreter, reads the MADT, starts the other cores) rebuilt from source (`kext/pdacpi/`), and `kernel-up` without it (hold **U** at power-on; the key does not reach the loader on every PC, e.g. the HP). 4 cores in QEMU. On the HP 15s-fq5655ng (Alder Lake, 2 P-cores with 2 threads + 8 E-cores = 12 threads) XNU's `x86_validate_topology()` used to panic invisibly (the screen is already off): MSR 0x35 says 10 cores / 12 threads and CPUID 32 cores / 12 logical IDs per package. The driver now replaces XNU's topology values with a consistent description of the MADT's CPUs (12 CPUs, APIC IDs grouped into 6 two-thread cores) and falls back to one thread per core (10 CPUs) or one core if that does not work out. Boot-args: `cloke_trace=1` paints the progress on the framebuffer, `cloke_pause=N` waits N s, `cloke_smt=0` uses 10 CPUs, `cloke_nofit=1` leaves the MADT alone; `cpus=N` triggers the panic and should not be used.
 - **Graphics acceleration.** Drawing is in software.
-- **Wi-Fi, I²C touchpads, audio on most hardware.**
+- **Wi-Fi** (Realtek RTL8821CE in development: firmware starts, no network yet) and **audio on most hardware.**
 
 #### Own kernel drivers
 
@@ -408,9 +435,9 @@ The kernel is the smaller problem, since XNU is open source (Apple Public Source
 4. **Port the shell.** Menu bar, Dock, Launchpad and System Settings are native in CloakServer, apps are `.app` bundles, Mac apps run through Darling's AppKit. Open: Fundus, Search and the other prototype apps as native programs.
 5. ~~**Installer.**~~ Done: installer, recovery, USB sticks and SSD image (see [Recovery and installation](#recovery-and-installation)).
 6. **Real hardware.** Started: USB installers, SATA detection, PS/2 keyboard and touchpad (ClokePS2), I²C touchpads, several CPU cores. Next: Wi-Fi (Realtek RTL8821CE in development), graphics.
-7. **Windows.** The NT interface exists, and Raven (a Linux Windows-compatibility runtime ported to XNU) runs 64-bit console `.exe` programs and GDI windows with text on x86_64. Next: installers, more programs tested, more programs tested, arm64 through the translation layer.
+7. **Windows.** The NT interface exists, and Raven (a Linux Windows-compatibility runtime ported to XNU) runs 64-bit console `.exe` programs and GDI windows with text on x86_64. Installers (NSIS, Inno Setup, MSI), 32-bit programs, Notepad++ and arm64 work now. Next: Direct3D, more programs tested.
 8. **Linux.** First version done on arm64 and x86_64 (`tux`, see [Linux programs](#linux-programs-tux)); still to do: graphical Linux programs, `inotify`, programs of the other architecture.
-9. **Other CPU.** Done: x86_64 programs on arm64 (`ucrun`, Unicorn-based, about 20x slower than Rosetta 2; own block JIT started) and arm64 programs on x86_64 (`a64run`), see [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). Next: JIT for SSE/dynamic programs and threads, Windows programs on arm64 through the translated Wine, x86_64 Linux programs through `tux`.
+9. **Other CPU.** Done: x86_64 programs on arm64 (`ucrun`; Unicorn interpreter about 20x slower than Rosetta 2, own block JIT within 0.85 to 2 times of it on integer code) and arm64 programs on x86_64 (`a64run`), see [`docs/translation-study.md`](clokeos-darwin/docs/translation-study.md). Windows programs run on arm64 through Raven's backend. Next: JIT as the default, x87 and threads in the JIT, a persistent translation cache.
 10. **iOS apps.** Run iOS apps (arm64 Mach-O) on ClokeOS, on top of the Mac frameworks and the translation layer, with UIKit shims. Not started.
 11. **Android apps.** Run Android apps through a Dalvik/ART layer on top of `tux`. Not started.
 
