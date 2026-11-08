@@ -1248,3 +1248,17 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
 * Also from this hunt: `CLOKE_RECT_TRACE` and the `flipped` flag in the F12 view dump. ClokeOS exposes a view's flip in the CTM
   (`d = -1`), the Mac draws flipped views with an identity CTM and a hidden base transform; Onyx2D draws glyphs upright whatever the
   CTM (not changed).
+
+### Round 68: region names – search narrowed down
+
+* Region names ("Pop Synth", "Electric Drum Kit", …) are still missing. Ruled out on ClokeOS:
+  * no `CTLineCreateWithAttributedString`/`CTLineDraw` with a region name (`CLOKE_CT_TRACE` now also logs every line created: track
+    names, bar numbers and LCD/inspector values appear, region names never);
+  * no AppKit string drawing, `CGContextShowText` or `CGContextShowGlyphsWithAdvances` with them;
+  * no layers: `ArrangeContentsSectionView` has no sublayers (`CLOKE_DUMP_LAYERS=1` adds layer trees to the F12 dump); the only
+    `MTKView` in Logic is `CLgPlayheadView`;
+  * no lenient-sink or stub call related to text (`CLOKE_STUB_VERBOSE=1` lists stub calls: e.g. `CGAffineTransformEqualToTransform`,
+    `CGImageGetTypeID`, `CGPathGetTypeID`, `NSEdgeInsetsEqual`, `CVDisplayLink*` are still stubs).
+* So Logic's C++ region renderer (`ArrangeContentsSectionView drawRect:`) decides not to draw the names at all; the condition
+  (header height, a measured font value, a stubbed function's result) is open. Next: disassemble the region drawing around the
+  `CTLineCreateWithAttributedString` call sites in `Logic.framework`.

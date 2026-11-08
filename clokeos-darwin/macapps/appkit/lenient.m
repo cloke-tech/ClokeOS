@@ -187,6 +187,17 @@ static BOOL ck_overrides(Class c, SEL sel) {
     IMP mine = class_getMethodImplementation(c, sel), base = class_getMethodImplementation([NSView class], sel);
     return mine && mine != base;
 }
+/* Ebenenbaum einer Ansicht (Klasse, Rahmen, verborgen, Text einer CATextLayer, Inhalt ja/nein), höchstens 6 Stufen, 40 Ebenen je Ansicht */
+static void ck_dumplayer(CALayer *l, int depth, int *budget) {
+    if (l == nil || depth > 6 || (*budget)-- <= 0) return;
+    CGRect f = [l frame];
+    id str = [l respondsToSelector: @selector(string)] ? [(id) l string] : nil;
+    if ([str isKindOfClass: [NSAttributedString class]]) str = [str string];
+    fprintf(stderr, "[viewdump] %*s~ %s {%.0f,%.0f %.0fx%.0f}%s%s%s%s%s\n", depth * 2, "", class_getName(object_getClass(l)),
+            f.origin.x, f.origin.y, f.size.width, f.size.height, [l isHidden] ? " hidden" : "", [l contents] ? " contents" : "",
+            [l delegate] ? " delegate" : "", str ? " text=" : "", str ? [[[str description] substringToIndex: MIN((NSUInteger) 40, [[str description] length])] UTF8String] : "");
+    for (CALayer *s in [l sublayers]) ck_dumplayer(s, depth + 1, budget);
+}
 static void ck_dumpview(id v, int depth) {
     NSRect f = [v frame];
     BOOL layer = [v respondsToSelector: @selector(wantsLayer)] && [v wantsLayer];
@@ -195,6 +206,10 @@ static void ck_dumpview(id v, int depth) {
             ck_overrides(object_getClass(v), @selector(drawRect:)) ? " drawRect" : "",
             ck_overrides(object_getClass(v), @selector(updateLayer)) ? " updateLayer" : "",
             [v respondsToSelector: @selector(stringValue)] && [v isKindOfClass: [NSControl class]] ? " ctl" : "");
+    if (getenv("CLOKE_DUMP_LAYERS") && [v respondsToSelector: @selector(layer)] && [[(NSView *) v layer] sublayers].count > 0) {
+        int budget = 40;
+        for (CALayer *s in [[(NSView *) v layer] sublayers]) ck_dumplayer(s, depth + 2, &budget);
+    }
     /* Tabellen: Delegat und welche Zeichenwege er anbietet (zellen- oder ansichtsbasiert) */
     if ([v isKindOfClass: [NSTableView class]]) {
         id d = [v delegate];

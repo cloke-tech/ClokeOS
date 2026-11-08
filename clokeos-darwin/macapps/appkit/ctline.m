@@ -140,6 +140,8 @@ CFTypeID CTLineGetTypeID(void) { return 0; }
 CFTypeID CTRunGetTypeID(void) { return 0; }
 
 CTLineRef CTLineCreateWithAttributedString(CFAttributedStringRef s) {
+    if (getenv("CLOKE_CT_TRACE"))   /* angelegte Zeilen (Fehlersuche: wird ein Text gebaut, aber nicht gezeichnet?) */
+        fprintf(stderr, "[clokeos-ct] neue Zeile \"%.60s\"\n", s ? [[(NSAttributedString *) s string] UTF8String] ?: "" : "(NULL)");
     return s ? (CTLineRef) make_line((NSAttributedString *) s) : NULL;
 }
 CTLineRef CTLineCreateTruncatedLine(CTLineRef line, double width, CTLineTruncationType type, CTLineRef token) {
