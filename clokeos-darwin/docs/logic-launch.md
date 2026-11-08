@@ -1286,3 +1286,15 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   window asked for layout or joined it (`_setWindow:`). `CRASHPC_SAMPLE=2` afterwards: the main thread mostly waits in `mach_msg`,
   `layoutSubtreeIfNeeded` no longer shows up. The process still uses about 100 % CPU, so another thread is busy — not yet
   sampled (`CRASHPC_SAMPLE_ALL=1`).
+
+### Round 70: LCD labels (BAR / BEAT / TEMPO)
+
+* **Lines taller than their text container got no glyphs.** Cocotron's typesetter dropped the first line when the container was
+  lower than the line; Apple sets it anyway and only clips when drawing (probe on the Mac: 3 glyphs for a 14 pt line in a 12 pt
+  box; ClokeOS: 0). Logic draws BAR, BEAT and TEMPO with `drawInRect:` into 12 pt high boxes. The first line of a container is now
+  always set (`patches/…/NSTypesetter_concrete.m.sed`). In the Logic run, empty layouts dropped from 64 to 42 (the rest are empty
+  strings).
+* Result: BAR, BEAT, TEMPO appear. Not right yet: they are laid out with a 12 pt font (used rect 24×15) and left-aligned, although
+  the attributes say San Francisco 8 pt, centred — the shared string drawer seems to keep stale attributes (next round).
+* `CLOKE_DRAW_TRACE=1` logs every NSString/NSAttributedString draw: point, container size, glyph count, used rect, colour, font,
+  CTM; for empty layouts also font metrics and paragraph style.

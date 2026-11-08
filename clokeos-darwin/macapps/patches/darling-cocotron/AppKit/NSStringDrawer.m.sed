@@ -21,3 +21,17 @@ s/^    \[_textStorage endEditing\];$/    [_textStorage endEditing];\
         if (clk_n++ < 400)\
             fprintf(stderr, "[clokeos-ct] AppKit-S \\"%.60s\\"\\n", [[_textStorage string] UTF8String] ?: "");\
     }/
+# CLOKE_DRAW_TRACE=1: jede Textausgabe von NSString/NSAttributedString mit Punkt, Behältergröße, Glyphenzahl, Farbe, Schrift und CTM
+s/^    \[_layoutManager drawGlyphsForGlyphRange: glyphRange atPoint: (rect\.origin|point)\];$/    if (getenv("CLOKE_DRAW_TRACE")) {\
+        static int clk_n;\
+        if (clk_n++ < 600) {\
+            NSPoint clk_p = \1;\
+            CGAffineTransform clk_m = CGContextGetCTM([[NSGraphicsContext currentContext] graphicsPort]);\
+            NSDictionary *clk_a = [_textStorage length] ? [_textStorage attributesAtIndex: 0 effectiveRange: NULL] : nil;\
+            fprintf(stderr, "[clokeos-draw] \\"%.40s\\" at %.1f,%.1f box %.1fx%.1f glyphs %lu used %s color %s font %s ctm %.1f %.1f %.1f %.1f %.1f %.1f\\n", [[_textStorage string] UTF8String] ?: "", clk_p.x, clk_p.y, [_textContainer containerSize].width, [_textContainer containerSize].height, (unsigned long) glyphRange.length, [NSStringFromRect([_layoutManager usedRectForTextContainer: _textContainer]) UTF8String], [[[clk_a objectForKey: @"NSColor"] description] UTF8String] ?: "-", [[[clk_a objectForKey: @"NSFont"] description] UTF8String] ?: "-", clk_m.a, clk_m.b, clk_m.c, clk_m.d, clk_m.tx, clk_m.ty);\
+            id clk_f = [clk_a objectForKey: @"NSFont"];\
+            if (clk_f \&\& glyphRange.length == 0)\
+                fprintf(stderr, "[clokeos-draw]   asc %.2f desc %.2f lead %.2f line %.2f para %s\\n", [clk_f ascender], [clk_f descender], [clk_f leading], [clk_f defaultLineHeightForFont], [[[clk_a objectForKey: @"NSParagraphStyle"] description] UTF8String] ?: "-");\
+        }\
+    }\
+&/
