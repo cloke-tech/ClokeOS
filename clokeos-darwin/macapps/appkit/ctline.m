@@ -255,6 +255,8 @@ static void draw_run(ClkCTRun *r, CGContextRef ctx, CGPoint origin, CFIndex from
 void CTLineDraw(CTLineRef line, CGContextRef context) {
     if (!line || !context) return;
     CGPoint tp = CGContextGetTextPosition(context);
+    if (getenv("CLOKE_CT_TRACE"))   /* der Text der Zeile (Fehlersuche: wer zeichnet was) */
+        fprintf(stderr, "[clokeos-ct] Zeile \"%.60s\"\n", [[LINE(line)->string description] UTF8String] ?: "");
     for (ClkCTRun *r in LINE(line)->runs) draw_run(r, context, tp, 0, r->count);
     CGContextSetTextPosition(context, tp.x + LINE(line)->width, tp.y);
 }

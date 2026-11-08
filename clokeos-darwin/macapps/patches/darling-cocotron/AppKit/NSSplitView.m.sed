@@ -79,3 +79,32 @@ s|^#import <AppKit/NSSplitView.h>$|#import <AppKit/NSSplitView.h>\n#import <objc
     [self adjustSubviews];\
 }\
 
+# ClokeOS: adjustSubviews fragt wie bei Apple splitView:shouldAdjustSizeOfSubview: des Delegaten; Ansichten, für die er NO sagt, behalten
+# ihre Größe, die übrigen teilen sich die Änderung im Verhältnis. Cocotron vergrößerte alle im Verhältnis: Logic Pros Spurköpfe wuchsen
+# beim Vergrößern des Fensters von 325 auf 604 Punkte mit, und Lineal und Regionen passten nicht mehr zueinander.
+/^- \(void\) _adjustSubviewWidths \{$/,/^\}$/s/^    CGFloat delta = totalWidthAfter \/ totalWidthBefore;$/    CGFloat clk_fixed = 0;\
+    BOOL clk_ask = [_delegate respondsToSelector: @selector(splitView:shouldAdjustSizeOfSubview:)];\
+    for (i = 0; clk_ask \&\& i < count; i++) {\
+        NSView *clk_sv = [_subviews objectAtIndex: i];\
+        if ([self isSubviewCollapsed: clk_sv] == NO \&\& ![_delegate splitView: self shouldAdjustSizeOfSubview: clk_sv])\
+            clk_fixed += NSWidth([clk_sv frame]);\
+    }\
+    if (clk_fixed >= totalWidthBefore || clk_fixed >= totalWidthAfter) {\
+        clk_fixed = 0;\
+        clk_ask = NO;\
+    }\
+    CGFloat delta = (totalWidthAfter - clk_fixed) \/ (totalWidthBefore - clk_fixed);/
+/^- \(void\) _adjustSubviewWidths \{$/,/^\}$/s/^            frame.size.width = NSWidth\(\[subview frame\]\) \* delta;$/            frame.size.width = (clk_ask \&\& ![_delegate splitView: self shouldAdjustSizeOfSubview: subview]) ? NSWidth([subview frame]) : NSWidth([subview frame]) * delta;/
+/^- \(void\) _adjustSubviewHeights \{$/,/^\}$/s/^    CGFloat delta = totalHeightAfter \/ totalHeightBefore;$/    CGFloat clk_fixed = 0;\
+    BOOL clk_ask = [_delegate respondsToSelector: @selector(splitView:shouldAdjustSizeOfSubview:)];\
+    for (i = 0; clk_ask \&\& i < count; i++) {\
+        NSView *clk_sv = [_subviews objectAtIndex: i];\
+        if ([self isSubviewCollapsed: clk_sv] == NO \&\& ![_delegate splitView: self shouldAdjustSizeOfSubview: clk_sv])\
+            clk_fixed += NSHeight([clk_sv frame]);\
+    }\
+    if (clk_fixed >= totalHeightBefore || clk_fixed >= totalHeightAfter) {\
+        clk_fixed = 0;\
+        clk_ask = NO;\
+    }\
+    CGFloat delta = (totalHeightAfter - clk_fixed) \/ (totalHeightBefore - clk_fixed);/
+/^- \(void\) _adjustSubviewHeights \{$/,/^\}$/s/^            frame.size.height = NSHeight\(\[subview frame\]\) \* delta;$/            frame.size.height = (clk_ask \&\& ![_delegate splitView: self shouldAdjustSizeOfSubview: subview]) ? NSHeight([subview frame]) : NSHeight([subview frame]) * delta;/

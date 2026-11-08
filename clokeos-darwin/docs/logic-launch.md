@@ -1151,3 +1151,20 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
   `columnAutoresizingStyle` says; no automatic row heights, no floating group rows, no row animations; outline views reload completely
   on `insertItems…`/`removeItems…`; the other 80 view-based tables in Logic are untested.
 * Trace: `CLOKE_TABLE_TRACE=1` logs templates read from nibs, views made from nibs, rows added and removed.
+
+### Round 63: split views keep fixed panes, scroll view insets
+
+* **`NSSplitView adjustSubviews`** now asks the delegate's `splitView:shouldAdjustSizeOfSubview:` like AppKit: panes it answers NO for
+  keep their size, the others share the change proportionally. Cocotron resized every pane proportionally, so Logic's track headers
+  grew with the window from 325 to 604 pt (traced with `CLOKE_SCROLL_TRACE`); they now stay at 368 pt and the regions area gets
+  the rest (`patches/…/NSSplitView.m.sed`).
+* **`NSScrollView contentInsets`/`scrollerInsets`/`automaticallyAdjustsContentInsets`** added (`macapps/appkit/scrollinsets.m`): the
+  clip view is laid out inside the insets (content does not scroll under them as on macOS). Logic does not call them at start-up.
+* `CLOKE_SCROLL_TRACE=1` logs `setContentInsets:`, clip-view `scrollToPoint:`/`setBoundsOrigin:` and scroll-view `setFrame:` with the
+  callers; `CLOKE_CT_TRACE` now also prints each `CTLineDraw` string.
+* **Open – ruler offset:** the ruler (`CLgScrollView` with a `CLgSectionView`, top row of `CLgSplitView`) is full width, and its
+  bar 1 sits above the track headers while the regions start after them. AppKit layout matches macOS here (only `adjustSubviews` sets
+  that frame); the offset on the Mac must come from inside Logic's section view (`contentSectionView`, decorations), not found yet.
+* **Open – region names:** no region name reaches `CTLineDraw` (track names and bar numbers do), so Logic draws them another way or
+  not at all.
+* Small: with 368 pt headers the pan knob is cut a few points at the right edge.
