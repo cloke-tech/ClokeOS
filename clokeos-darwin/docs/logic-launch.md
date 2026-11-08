@@ -1098,7 +1098,56 @@ and `NSGridView` were stubs that swallowed every message, and nothing solved con
   checkbox titles, the Start/End scrubbers in their grid rows and the "Requires … (Time 2:16)" line. The Mac probe and the VM agree
   on the nib's structure (same grid rows and offsets; widths differ by the font). Logic's project window is unchanged.
 * **Still open:** the destination list stays without labels: it is a *view-based* table (`tableView:viewForTableColumn:row:` with
-  `NSTableCellView`s from nibs inside the table), and Cocotron's `NSTableView` only draws cell-based columns. Not a layout problem.
+  `NSTableCellView`s from nibs inside the table), and Cocotron's `NSTableView` only draws cell-based columns. Not a layout problem
+  (done in round 62).
   `NSStackView` is still a stub. 13 pt line height is 15 here (Cocotron's font) vs 16 on the Mac.
 * Traces: `CLOKE_AL_TRACE=1` (each solve: constraints, views, broken constraints, window growth), `=2` frames set, `=3` intrinsic
   sizes and baselines, `=4` every node and constraint.
+
+### Round 62: view-based tables
+
+The Bounce dialog's destination list now shows its names ("Uncompressed", "MP3", "M4A: AAC", "Burn to CD / DVD") next to the
+checkboxes. It is a *view-based* table: its delegate (`BounceController`) implements only `numberOfRowsInTableView:` and
+`tableView:viewForTableColumn:row:`, and the nib carries one small nib per column ("enable": a checkbox whose action goes to the
+owner, "destination": an `NSTableCellView` with a label held by three constraints). Cocotron's `NSTableView` only drew cells, and
+`NSTableCellView`/`NSTableRowView` were Darling stubs that swallowed every message.
+
+* **Own code** (`macapps/appkit/tableviews.m`, replacing Darling's `NSTableCellView.m`/`NSTableRowView.m` in `appkit.sh`):
+  `NSTableCellView` (`objectValue`, `textField`, `imageView`, `backgroundStyle` passed on to the controls' cells, `rowSizeStyle`),
+  `NSTableRowView` (selected, emphasized, group row, drop target, `interiorBackgroundStyle`, `drawBackground/Selection/Separator…`,
+  `viewAtColumn:`); on `NSTableView`: `makeViewWithIdentifier:owner:` (reuse queue, else instantiate the registered nib with the
+  owner; the first top-level view gets the identifier), `registerNib:forIdentifier:`, `registeredNibsByIdentifier`,
+  `viewAtColumn:row:makeIfNecessary:`, `rowViewAtRow:makeIfNecessary:`, `rowForView:`, `columnForView:`,
+  `enumerateAvailableRowViewsUsingBlock:`, `begin/endUpdates`, `insertRowsAtIndexes:…`, `removeRowsAtIndexes:…`,
+  `moveRowAtIndex:toIndex:`, `reloadDataForRowIndexes:columnIndexes:`, `rowSizeStyle`; `-[NSNib instantiateWithOwner:topLevelObjects:]`.
+* **When a table is view-based:** the delegate answers `tableView:viewForTableColumn:row:` (`outlineView:viewForTableColumn:item:`
+  for outlines), or the nib has a non-empty `NSTableViewArchivedReusableViewsKey`. Across Logic's nibs that key appears on 69 tables
+  and 13 outline views and never empty; the 59 cell-based tables do not have it.
+* **Views:** for every visible row a row view (the delegate's `tableView:rowViewForRow:` or an `NSTableRowView`) is a subview of the
+  table at `rectOfRow:` over the full table width; in it one view per column from the delegate (without `viewFor…`: the nib template
+  named like the column). If the data source answers `objectValueFor…`, the view gets it through `setObjectValue:`. Frames as
+  AppKit (measured): cell = column width without the intercell spacing (half of it on each side) × row height; in an outline's
+  outline column indented by level × indentation plus the disclosure triangle. Rows are matched to the visible rect in the layout pass
+  and before drawing (also after `scrollToPoint:`); rows that scroll out go to the reuse queue; `didAdd/didRemoveRowView` are sent.
+  `reloadData` asks again for every visible view and, as on the Mac (measured; cell-based tables keep it), clears the selection.
+* **Cocotron hooks** (`patches/…/NSTableView.m.sed`, `NSOutlineView.m.sed`): no cell drawing and no selection fill for view-based
+  tables (the row views draw the selection); clicks on button cells and double-click editing with a cell skipped (`editColumn:…`
+  makes the cell view's text field first responder instead); views follow `reloadData`, row count, column width and selection.
+  Clicks on labels, images and empty parts of a row go to the table (select the row), enabled controls get their own clicks.
+* **Fixed on the way:** the table's intercell spacing was always 3 × 2 (now `NSIntercellSpacingWidth/Height` from the nib; Bounce
+  uses 8 × 2); a table that disallows an empty selection selects row 0 once it has rows (Bounce does; Logic then shows that
+  destination's settings); embedded nibs (`NSNib` inside an archive) were not marked keyed and every instantiation woke the objects
+  of all earlier ones again (`patches/…/nib.subproj/NSNib.m.sed`); a text cell on an emphasized background draws system text colors
+  white (`patches/…/NSTextFieldCell.m.sed`, `ClkCellTextColor`).
+* **Probe** (`macapps/tableprobe.m`, nib from `macapps/tableprobe-nib.py`, which writes NIBArchive itself because ibtool is not
+  available): a table in code (scroll, insert, delete, select, `reloadData…`) and the same table from a nib with templates (delegate
+  with `makeViewWithIdentifier:owner:`, checkbox action to the owner with `rowForView:`; data source only with `objectValue`).
+  Mac and VM print the same 156 lines (row and cell frames, identifiers, texts, states, selection).
+* **Result:** Bounce shows all four destinations; clicking a name selects the row (white text) and Logic switches the settings to
+  that format; clicking a checkbox reaches `change_destination:`; the offline bounce of `Jump.logicx` still writes `Jump.aif`
+  (36.2 MB, 2:16). Logic's start-up alert (also view-based, `LgAlertTableCellView`) now shows its messages
+  ("Error initializing CoreMIDI.", "MIDI Services not available.") instead of an empty grey box.
+* **Still open:** a tiny stray "Title" label in that alert's table; Cocotron still stretches the last column to the clip view whatever
+  `columnAutoresizingStyle` says; no automatic row heights, no floating group rows, no row animations; outline views reload completely
+  on `insertItems…`/`removeItems…`; the other 80 view-based tables in Logic are untested.
+* Trace: `CLOKE_TABLE_TRACE=1` logs templates read from nibs, views made from nibs, rows added and removed.

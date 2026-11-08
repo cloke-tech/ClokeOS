@@ -81,6 +81,7 @@ Dateien:
 - `fndlayout.m`, `appkit/autolayout.m`, `appkit/alsolver.c`, `appkit/gridview.m`: Auto Layout (constraints, anchors, visual format
   language, solver, intrinsic sizes, `fittingSize`, windows growing to their content, `NSGridView`); see docs/logic-launch.md round 61.
 - `layoutprobe.m`: Auto Layout probe, same output on the Mac and in ClokeOS (built-in cases, or a nib: `layoutprobe x.nib`).
+- `tableprobe.m`: view-based table probe, same output on the Mac and in ClokeOS; its nib comes from `tableprobe-nib.py` (writes NIBArchive).
 - `fprobe.m`, `hallo.m`: Prüfprogramm (Foundation) und Test-App (Cocoa), `hallo-icon.svg` ihr Icon.
 - `install.sh`: Frameworks und `Hallo.app` in die Stage des Desktop-Images (von `brand.sh`), für die
   Architektur des Images; `Hallo.app` ist universal.

@@ -297,10 +297,10 @@ ak=(-I"$src/AppKit")
 for d in nib.subproj NSColorPicker.subproj NSMenu.subproj NSTextView.subproj NSEvent.subproj NSColor.subproj \
          RTF.subproj NSToolbar.subproj NSDrawer.subproj X11.backend; do ak+=(-I"$src/AppKit/$d"); done
 # NSGridView.m und NSLayoutGuide.m sind Platzhalter; appkit/gridview.m und appkit/autolayout.m (Auto Layout mit dem Löser
-# appkit/alsolver.c) setzen sie um
-sources AppKit AppKit_sources NSGridView.m NSLayoutGuide.m > "$obj/ak.list"
+# appkit/alsolver.c) setzen sie um. NSTableCellView.m/NSTableRowView.m ebenso; appkit/tableviews.m (ansichtsbasierte Tabellen)
+sources AppKit AppKit_sources NSGridView.m NSLayoutGuide.m NSTableCellView.m NSTableRowView.m > "$obj/ak.list"
 printf '%s\n' "$M/appkit/sysstubs.c" "$M/appkit/nibarchive.m" "$M/appkit/modern.m" "$M/appkit/autolayout.m" "$M/appkit/alsolver.c" \
-  "$M/appkit/gridview.m" >> "$obj/ak.list"
+  "$M/appkit/gridview.m" "$M/appkit/tableviews.m" >> "$obj/ak.list"
 compile_all "$obj/ak" "$src/AppKit" "$obj/ak.list" "${ak[@]}"
 framework AppKit C 45 1499.11 "$obj/ak" -Wl,-reexport_library,"$fnd" -Wl,-reexport_library,"$(fwlib ApplicationServices)" \
   "$(fwlib Onyx2D)" "$(fwlib CoreGraphics)" "$(fwlib CoreText)" "$(fwlib ImageIO)" "$(fwlib QuartzCore)" \
