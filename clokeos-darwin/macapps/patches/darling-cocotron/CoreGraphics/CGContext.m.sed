@@ -25,3 +25,24 @@ s|^#import <CoreGraphics/CGContext.h>$|#import <CoreGraphics/CGContext.h>\n#impo
         if (clk_n++ < 300)\
             fprintf(stderr, "[clokeos-cg] ShowText \\"%.*s\\"\\n", (int) (count < 60 ? count : 60), text ? text : "");\
     }
+# … und CGContextShowGlyphsWithAdvances (Anzahl, erste Glyphe, Textposition, CTM), höchstens 300
+/^void CGContextShowGlyphsWithAdvances\(CGContextRef context,$/,/^\{$/s/^\{$/{\
+    if (getenv("CLOKE_CGCALL_TRACE")) {\
+        static int clk_n;\
+        Dl_info clk_di;\
+        void *clk_ra = __builtin_return_address(0);\
+        BOOL clk_own = dladdr(clk_ra, \&clk_di) \&\& clk_di.dli_fname \&\& strstr(clk_di.dli_fname, "ClokeOS\/MacFrameworks");\
+        if (!clk_own \&\& clk_n++ < 300) {\
+            CGPoint clk_p = CGContextGetTextPosition(context);\
+            CGAffineTransform clk_m = CGContextGetCTM(context);\
+            CGRect clk_cb = CGContextGetClipBoundingBox(context);\
+            O2ColorRef clk_fc = O2ContextFillColor((O2ContextRef) context);\
+            const O2Float *clk_k = clk_fc ? O2ColorGetComponents(clk_fc) : NULL;\
+            size_t clk_kn = clk_fc ? O2ColorGetNumberOfComponents(clk_fc) : 0;\
+            fprintf(stderr, "[clokeos-cg]   clip %.0f,%.0f %.0fx%.0f fill n=%zu %.2f %.2f %.2f %.2f\\n", clk_cb.origin.x, clk_cb.origin.y, clk_cb.size.width,\
+                    clk_cb.size.height, clk_kn, clk_kn > 0 ? clk_k[0] : -1.0, clk_kn > 1 ? clk_k[1] : -1.0, clk_kn > 2 ? clk_k[2] : -1.0, clk_kn > 3 ? clk_k[3] : -1.0);\
+            fprintf(stderr, "[clokeos-cg] ShowGlyphsWithAdvances n=%u g0=%u adv0=%.1f at %.1f,%.1f ctm=[%.2f %.2f %.2f %.2f %.1f %.1f] from %p\\n", count,\
+                    count ? glyphs[0] : 0, (count \&\& advances) ? advances[0].width : -1.0, clk_p.x, clk_p.y, clk_m.a, clk_m.b, clk_m.c, clk_m.d,\
+                    clk_m.tx, clk_m.ty, clk_ra);\
+        }\
+    }/

@@ -15,3 +15,18 @@ s/^    return nil;$/    return clk_nsfont(name, size);/
 s/^    printf\("STUB %s\\n", __PRETTY_FUNCTION__\);$//
 s/^    return nil;$/    id f = (id) font;\n    if ([f respondsToSelector: sel_registerName("fontName")])\n        return (CFStringRef) [((id (*)(id, SEL)) objc_msgSend)(f, sel_registerName("fontName")) copy];\n    return [font copyName];/
 }
+# ClokeOS: CTFontGetBoundingRectsForGlyphs war ein Platzhalter (leere Rechtecke). Jetzt die Umrisse je Glyphe über die FreeType-Schrift
+# (KTFont_FT getBoundingRects:…) und als Ergebnis ihre Vereinigung. Logic Pros Zahlenfelder (Transportanzeige, Inspektor) richten ihre
+# Ziffern danach aus und blieben ohne sie leer.
+/^CGRect CTFontGetBoundingRectsForGlyphs\(CTFontRef font, CTFontOrientation orientation,$/,/^\}$/s/^    printf\("STUB %s\\n", __PRETTY_FUNCTION__\);$/    CGRect clk_tmp[count > 0 ? count : 1];\
+    CGRect *clk_r = boundingRects ? boundingRects : clk_tmp;\
+    if (font == NULL || count <= 0 || glyphs == NULL)\
+        return CGRectZero;\
+    if (![(id) font respondsToSelector: @selector(getBoundingRects:forGlyphs:count:)])\
+        return CGRectZero;\
+    [(id) font getBoundingRects: clk_r forGlyphs: glyphs count: count];\
+    CGRect clk_u = CGRectNull;\
+    for (CFIndex i = 0; i < count; i++)\
+        if (!CGRectIsEmpty(clk_r[i]))\
+            clk_u = CGRectUnion(clk_u, clk_r[i]);\
+    return CGRectIsNull(clk_u) ? CGRectZero : clk_u;/

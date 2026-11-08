@@ -32,3 +32,21 @@ N
 N
 s/^                    \[NSNumber\n                            numberWithDouble: \[self maximumAdvancement\]\.width\],\n                    NSFontFixedAdvanceAttribute, \[self displayName\],$/                    [self displayName],/
 }
+# ClokeOS: boundingRectForGlyph: war nicht umgesetzt (leeres Rechteck); jetzt über CTFontGetBoundingRectsForGlyphs
+/^- \(NSRect\) boundingRectForGlyph: \(NSGlyph\) glyph \{$/,/^\}$/c\
+- (NSRect) boundingRectForGlyph: (NSGlyph) glyph {\
+    CGGlyph clk_g = (CGGlyph) glyph;\
+    CGRect clk_r = CGRectZero;\
+    CTFontGetBoundingRectsForGlyphs(_ctFont, 0, \&clk_g, \&clk_r, 1);\
+    return NSRectFromCGRect(clk_r);\
+}
+# ClokeOS: -[NSFont set] setzt wie bei Apple nur Schrift und Größe im CGContext, nicht die Textmatrix. Cocotrons setInContext: kippte sie in
+# gespiegelten Ansichten zusätzlich; Programme, die selbst spiegeln (Logic Pros Zahlenfelder: CGContextScaleCTM(1, -1), dann
+# CGContextShowGlyphsWithAdvances), zeichneten ihre Ziffern so doppelt gekippt außerhalb des Clips (Transportanzeige, Inspektorwerte leer).
+# setInContext: bleibt, wie es war: Cocotrons NSLayoutManager verlässt sich darauf.
+/^- \(void\) set \{$/,/^\}$/c\
+- (void) set {\
+    CGContextRef clk_cg = [[NSGraphicsContext currentContext] graphicsPort];\
+    CGContextSetFont(clk_cg, _cgFont);\
+    CGContextSetFontSize(clk_cg, _pointSize);\
+}

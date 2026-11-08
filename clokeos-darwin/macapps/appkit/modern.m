@@ -236,6 +236,16 @@ static void img_draw_in_rect(NSImage *self, SEL s, NSRect r) {
 static BOOL pub_alters(id self, SEL s) { return ((BOOL (*)(id, SEL)) objc_msgSend)([self cell], s); }
 static void pub_set_alters(id self, SEL s, BOOL v) { ((void (*)(id, SEL, BOOL)) objc_msgSend)([self cell], s, v); }
 
+/* -[NSImage lockFocusFlipped:] (macOS 10.6) fehlte: wie lockFocus, mit YES zusätzlich gespiegelt (Ursprung oben links, isFlipped YES) */
+static void img_lock_flipped(NSImage *self, SEL s, BOOL flipped) {
+    [self lockFocus];
+    if (!flipped) return;
+    CGContextRef c = (CGContextRef) [[NSGraphicsContext currentContext] graphicsPort];
+    CGContextTranslateCTM(c, 0, [self size].height);
+    CGContextScaleCTM(c, 1, -1);
+    [NSGraphicsContext setCurrentContext: [NSGraphicsContext graphicsContextWithGraphicsPort: c flipped: YES]];
+}
+
 static IMP o_image_named;
 static NSImage *asset_png(NSBundle *b, NSString *name) {
     if (b == nil || ![name isKindOfClass: [NSString class]] || [name length] == 0) return nil;
@@ -605,6 +615,7 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod([NSImage class], sel_registerName("imageWithSymbolConfiguration:"), (IMP)img_self, "@@:@");
     class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("altersStateOfSelectedItem"), (IMP)pub_alters, "c@:");
     class_addMethod(objc_getClass("NSPopUpButton"), sel_registerName("setAltersStateOfSelectedItem:"), (IMP)pub_set_alters, "v@:c");
+    class_addMethod([NSImage class], sel_registerName("lockFocusFlipped:"), (IMP)img_lock_flipped, "v@:c");
     class_addMethod([NSImage class], sel_registerName("drawInRect:"), (IMP)img_draw_in_rect, "v@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod(object_getClass([NSImage class]), sel_registerName("imageWithSize:flipped:drawingHandler:"), (IMP)img_with_handler, "@@:{CGSize=dd}c@?");
     class_addMethod(objc_getClass("NSFontDescriptor"), sel_registerName("fontDescriptorWithDesign:"), (IMP)fd_design, "@@:@");

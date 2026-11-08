@@ -224,8 +224,11 @@ static void ck_dumpview(id v, int depth) {
                 if (!cell) continue;
                 id t = [cell respondsToSelector: @selector(titleOfSelectedItem)] ? [(id)cell titleOfSelectedItem]
                      : [cell respondsToSelector: @selector(title)] ? [(id)cell title] : nil;
-                fprintf(stderr, "[viewdump] %*s    [%ld,%ld] %s align=%ld title=\"%s\" value=%s\n", depth * 2, "", (long)r, (long)c,
-                        class_getName(object_getClass(cell)), (long)[cell alignment], [[t description] UTF8String] ?: "",
+                fprintf(stderr, "[viewdump] %*s    [%ld,%ld] %s align=%ld fmt=%s vclass=%s str=\"%s\" title=\"%s\" value=%s\n", depth * 2, "", (long)r, (long)c,
+                        class_getName(object_getClass(cell)), (long)[cell alignment],
+                        [cell formatter] ? class_getName(object_getClass([cell formatter])) : "-",
+                        [cell objectValue] ? class_getName(object_getClass([cell objectValue])) : "nil",
+                        [[[cell stringValue] description] UTF8String] ?: "", [[t description] UTF8String] ?: "",
                         [[[[cell objectValue] description] substringToIndex: MIN((NSUInteger)40, [[[cell objectValue] description] length])] UTF8String] ?: "nil");
             }
     }

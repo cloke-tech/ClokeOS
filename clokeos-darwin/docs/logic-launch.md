@@ -1188,3 +1188,24 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
   Logic's transport and inspector formatters call them; they were caught by the lenient sink. No visible change yet.
 * Traces: `CLOKE_CT_TRACE` also logs strings drawn by AppKit itself (`NSStringDrawer`); `CLOKE_SCROLL_TRACE` also logs
   `add`/`insert`/`removeArrangedSubview:`.
+
+### Round 65: formatted values – font and glyph fixes, cause narrowed down
+
+* The values are formatted correctly: the F12 dump (`fmt=`, `vclass=`, `str=`) shows e.g. Key Limit = 127 → "C-2 G8", Velocity
+  Limit = 65663 → "1 127", as on the Mac. They are lost when `MAKitSegmentedScrubberCell` draws them: it lays the digits out itself
+  (font metrics, `boundingRectForGlyph:`), clips to its text rect, flips the CTM, calls `[font set]` and
+  `CGContextShowGlyphsWithAdvances`. `CLOKE_CGCALL_TRACE` now logs these calls (outside ClokeOS frameworks) with clip box and fill
+  colour: the glyphs are drawn, but for the LCD the clip is only 1–2 pt high (118×2, 63×1).
+* Fixed on the way (all global):
+  * `-[NSFont set]` sets only font and size, as on macOS; Cocotron also flipped the text matrix in flipped views (`setInContext:`
+    keeps that for Cocotron's `NSLayoutManager`).
+  * `-[NSFont boundingRectForGlyph:]` and `CTFontGetBoundingRectsForGlyphs` were stubs (empty rects); now FreeType glyph metrics
+    (`KTFont_FT getBoundingRects:…`).
+  * Cap height and x-height came from `face->height` (≈1.2 em); now from the OS/2 table (`sCapHeight`/`sxHeight`, else 0.7/0.5 em)
+    (`patches/…/Onyx2D/O2Font_freetype.m.sed`).
+  * `-[NSImage lockFocusFlipped:]` (macOS 10.6) added.
+* A probe that repeats Logic's sequence (flipped image, clip, translate, flip, `[font set]`, `CGContextShowGlyphsWithAdvances`)
+  draws visible text on ClokeOS as on the Mac (first case), so the remaining cause is the cell's text rect: Logic derives it from
+  its bezel and stepper-button rects (`textRectForBounds:` → `incrementButtonRectForBounds:`, asset rendition metrics). Next: log
+  those rects. The probe's second case (no clip, flipped) aborts on ClokeOS; not investigated.
+* Still not visible: LCD position/tempo, Key/Velocity Limit.
