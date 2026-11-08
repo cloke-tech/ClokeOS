@@ -1000,3 +1000,17 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * `CLOKE_IMAGE_TRACE=1` logs every `-[NSBundle imageForResource:]` (bundle, name, file found, size).
 * Found on the way, not fixed: Onyx2D treats `kCGBitmapByteOrderDefault` as little-endian for 8-bit RGBA images and contexts; Apple
   treats it as byte order (RGBA in memory). Raw bytes written by apps with default order are read with swapped channels.
+
+### Round 57: M/S/I letters in the track headers
+
+* Logic makes the letters with `+[MAAssetManager characterImageFromString:fontSize:color:]` (MACore): rounded system font via
+  `fontWithDescriptor:size:0.0`, centred paragraph style, attributed string drawn with `drawAtPoint:` into a `lockFocus` image of
+  its `size`. Two Cocotron bugs left the image empty:
+  * **Font size 0** made a 0-point font (image 2 × 1). Apple uses the descriptor's size, else 12 pt; same for `fontWithName:size:`
+    (`patches/…/NSFont.m.sed`).
+  * **`drawAtPoint:` with right/centred alignment** laid the text out in a 1,000,000-pt container and drew it far to the right.
+    Apple starts the text at the point; Cocotron now shifts by the used rect (`patches/…/NSStringDrawer.m.sed`).
+* Result: M, S and I show on every track header; the selected track's input-monitoring button is orange as on the Mac.
+* Found, not fixed: **`NSTextAlignment` values differ on arm64.** Apple uses the iOS order there (Left 0, Center 1, Right 2), Cocotron
+  the old macOS order (Left 0, Right 1, Center 2), so text a Mac arm64 app centres in code comes out right-aligned. Nib decoding uses
+  the stored values too, so a fix needs care.
