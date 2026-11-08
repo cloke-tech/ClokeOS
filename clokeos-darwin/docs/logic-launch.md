@@ -1283,5 +1283,6 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   "View" menus (65 pt containers) still truncate to "V…".
 * `CLOKE_CELL_TRACE=1` logs every NSCell text draw (class, type, string, frame).
 * Layout pass (`appkit/layout.m`): `displayIfNeeded` walked the whole view tree every time; it now walks only when a view of that
-  window asked for layout or joined it (`_setWindow:`). Idle CPU in this run was still about 100 % (30 s CPU in 30 s), so the
-  busy loop is elsewhere — open.
+  window asked for layout or joined it (`_setWindow:`). `CRASHPC_SAMPLE=2` afterwards: the main thread mostly waits in `mach_msg`,
+  `layoutSubtreeIfNeeded` no longer shows up. The process still uses about 100 % CPU, so another thread is busy — not yet
+  sampled (`CRASHPC_SAMPLE_ALL=1`).
