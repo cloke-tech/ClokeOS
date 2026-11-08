@@ -1604,9 +1604,10 @@ Sonstiges: clokefetch  calc <ausdruck>  say <text>  history  clear  exit`),
     },
     clokefetch: () => {
       const art = [
-        '        .--.        ', '      /  __  \\      ', '     /  /  \\  \\     ', '    /   \\__/   \\    ', '   /     ()     \\   ',
-        '  /   /  ||  \\   \\  ', ' /   /   ||   \\   \\ ', '/___/____||____\\___\\', '\\/\\/\\/\\/\\/\\/\\/\\/\\/\\/', '                    '
+        '       __       ', '     / __ \\     ', '    / /  \\ \\    ', '   | |    | |   ', '    \\ \\__/ /    ', '   /   ()   \\   ',
+        '  /  / || \\  \\  ', ' /  /  ||  \\  \\ ', '/  /   ||   \\  \\', '\\_/    ||    \\_/', '   \\___||___/   ', '                '
       ];
+
       const up = Math.floor((Date.now() - bootTime) / 60000);
       const info = [
         `<span class="t-acc t-b">gast</span>@<span class="t-acc t-b">${esc(S.host)}</span>`, '-'.repeat(5 + S.host.length + 1),
