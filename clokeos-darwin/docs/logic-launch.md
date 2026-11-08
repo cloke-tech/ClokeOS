@@ -1222,5 +1222,10 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
 * **Still not visible.** The glyphs are drawn (San Francisco, correct colour, clip now large enough). Probes: on ClokeOS Onyx2D
   draws glyphs upright whatever the CTM's flip (the Mac mirrors them), so position/clip geometry differs from the Mac when an app
   flips the CTM itself, as Logic does after `ClipToRect`. On the Mac, `NSControl` is not flipped, `NSButton`/`NSTextField`/
-  `NSSegmentedControl`/`NSTableView` are. Next: log the device-space clip and glyph positions, compare flippedness of Logic's
-  scrubber views with the Mac, and make Onyx2D honour the CTM orientation for glyphs.
+  `NSSegmentedControl`/`NSTableView` are.
+* **Root cause found:** Onyx2D's FreeType glyph renderer (`O2Context_builtin_FT showGlyphs:advances:count:`) maps only the text
+  origin through the text rendering matrix and then pastes each glyph bitmap upright in device pixels (`renderFreeTypeBitmap` at
+  `point.y - bitmap_top`), ignoring rotation/flip of the matrix and apparently the clip. Text that an app draws after flipping the CTM
+  itself (Logic: `ClipToRect`, translate, `ScaleCTM(1,-1)`, `[font set]`, `CGContextShowGlyphsWithAdvances`) therefore lands outside
+  its field (trace: device y = 795 in an 800-pt window for the LCD digits). Fix: render glyphs through the full matrix (outline →
+  path fill, or a transformed glyph image) and honour the clip. Not done yet.
