@@ -1209,3 +1209,18 @@ owner, "destination": an `NSTableCellView` with a label held by three constraint
   its bezel and stepper-button rects (`textRectForBounds:` → `incrementButtonRectForBounds:`, asset rendition metrics). Next: log
   those rects. The probe's second case (no clip, flipped) aborts on ClokeOS; not investigated.
 * Still not visible: LCD position/tempo, Key/Velocity Limit.
+
+### Round 66: `_NSTextCellSize`, text rects of Logic's number fields
+
+* `CLOKE_RECT_TRACE=Class:sel,sel,…` (`macapps/appkit/recttrace.m`) logs `-(NSRect)x:(NSRect)` methods of a class from a later-loaded
+  framework (input and result). It showed `MAKitSegmentedScrubberCell textRectForBounds:` returning garbage
+  (`{{96,252},{123,23}}` → `{{96,138},{123,252}}`, LCD height 0): it calls the private AppKit function **`_NSTextCellSize`**, which
+  existed only as a generated stub (`FN_P`, sets `x0`), so the caller read the size from stale FP registers.
+* `_NSTextCellSize(NSCell *, NSRect)` is now implemented in `modern.m` (size of the cell's attributed string, at least one line of its
+  font; Logic passes 32000 as width). The stub generator skips it because AppKit exports it now. Text rects are sane (14 pt; LCD
+  clip 118×38).
+* **Still not visible.** The glyphs are drawn (San Francisco, correct colour, clip now large enough). Probes: on ClokeOS Onyx2D
+  draws glyphs upright whatever the CTM's flip (the Mac mirrors them), so position/clip geometry differs from the Mac when an app
+  flips the CTM itself, as Logic does after `ClipToRect`. On the Mac, `NSControl` is not flipped, `NSButton`/`NSTextField`/
+  `NSSegmentedControl`/`NSTableView` are. Next: log the device-space clip and glyph positions, compare flippedness of Logic's
+  scrubber views with the Mac, and make Onyx2D honour the CTM orientation for glyphs.

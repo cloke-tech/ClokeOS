@@ -55,6 +55,7 @@
 #import <AppKit/NSGraphicsContext.h>
 #import <AppKit/NSImageRep.h>
 #import <objc/runtime.h>
+#define CLK_VISIBLE __attribute__((visibility("default")))
 #import <objc/message.h>
 #include <string.h>
 #include <ctype.h>
@@ -244,6 +245,20 @@ static void img_lock_flipped(NSImage *self, SEL s, BOOL flipped) {
     CGContextTranslateCTM(c, 0, [self size].height);
     CGContextScaleCTM(c, 1, -1);
     [NSGraphicsContext setCurrentContext: [NSGraphicsContext graphicsContextWithGraphicsPort: c flipped: YES]];
+}
+
+/* _NSTextCellSize (private AppKit-Funktion, Logic Pros MAKitSegmentedScrubberCell ruft sie in textRectForBounds: auf): Größe des Texts
+ * einer Zelle im Rechteck (Logic gibt 32000 als Breite = unbegrenzt), mindestens eine Zeile ihrer Schrift. Bisher ein erzeugter Platzhalter,
+ * der nur x0 setzte: der Aufrufer las die Höhe aus d1 (einem alten Wert, z. B. 0) und klippte die Ziffern der Transportanzeige und der
+ * Inspektorwerte auf 0–2 Punkte. */
+CLK_VISIBLE NSSize _NSTextCellSize(NSCell *cell, NSRect rect) {
+    NSAttributedString *a = [cell respondsToSelector: @selector(attributedStringValue)] ? [cell attributedStringValue] : nil;
+    NSSize sz = [a length] ? [a size] : NSZeroSize;
+    NSFont *f = [cell respondsToSelector: @selector(font)] ? [cell font] : nil;
+    CGFloat line = f ? ceil([f ascender] - [f descender] + [f leading]) : 0;
+    if (sz.height < line) sz.height = line;
+    if (rect.size.width > 0 && sz.width > rect.size.width) sz.width = rect.size.width;
+    return sz;
 }
 
 static IMP o_image_named;

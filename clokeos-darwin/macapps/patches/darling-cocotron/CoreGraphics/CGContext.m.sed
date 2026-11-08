@@ -39,6 +39,10 @@ s|^#import <CoreGraphics/CGContext.h>$|#import <CoreGraphics/CGContext.h>\n#impo
             O2ColorRef clk_fc = O2ContextFillColor((O2ContextRef) context);\
             const O2Float *clk_k = clk_fc ? O2ColorGetComponents(clk_fc) : NULL;\
             size_t clk_kn = clk_fc ? O2ColorGetNumberOfComponents(clk_fc) : 0;\
+            O2FontRef clk_f = O2GStateFont(O2ContextCurrentGState((O2ContextRef) context));\
+            CFStringRef clk_fn = clk_f ? CGFontCopyFullName((CGFontRef) clk_f) : NULL;\
+            fprintf(stderr, "[clokeos-cg]   font %s\\n", clk_fn ? [(NSString *) clk_fn UTF8String] : "(keine)");\
+            if (clk_fn) CFRelease(clk_fn);\
             fprintf(stderr, "[clokeos-cg]   clip %.0f,%.0f %.0fx%.0f fill n=%zu %.2f %.2f %.2f %.2f\\n", clk_cb.origin.x, clk_cb.origin.y, clk_cb.size.width,\
                     clk_cb.size.height, clk_kn, clk_kn > 0 ? clk_k[0] : -1.0, clk_kn > 1 ? clk_k[1] : -1.0, clk_kn > 2 ? clk_k[2] : -1.0, clk_kn > 3 ? clk_k[3] : -1.0);\
             fprintf(stderr, "[clokeos-cg] ShowGlyphsWithAdvances n=%u g0=%u adv0=%.1f at %.1f,%.1f ctm=[%.2f %.2f %.2f %.2f %.1f %.1f] from %p\\n", count,\
@@ -46,3 +50,5 @@ s|^#import <CoreGraphics/CGContext.h>$|#import <CoreGraphics/CGContext.h>\n#impo
                     clk_m.tx, clk_m.ty, clk_ra);\
         }\
     }/
+s|^#import <Onyx2D/O2Context.h>$|#import <Onyx2D/O2Context.h>\
+#import <Onyx2D/O2GraphicsState.h>|
