@@ -141,7 +141,20 @@ CFTypeID CTRunGetTypeID(void) { return 0; }
 
 CTLineRef CTLineCreateWithAttributedString(CFAttributedStringRef s) {
     if (getenv("CLOKE_CT_TRACE"))   /* angelegte Zeilen (Fehlersuche: wird ein Text gebaut, aber nicht gezeichnet?) */
-        fprintf(stderr, "[clokeos-ct] neue Zeile \"%.60s\"\n", s ? [[(NSAttributedString *) s string] UTF8String] ?: "" : "(NULL)");
+    {
+        Dl_info clk_di; void *clk_ra = __builtin_return_address(0);
+        unsigned long clk_off = dladdr(clk_ra, &clk_di) ? (unsigned long) ((char *) clk_ra - (char *) clk_di.dli_fbase) : 0;
+        const char *clk_m = clk_di.dli_fname ? (strrchr(clk_di.dli_fname, '/') ? strrchr(clk_di.dli_fname, '/') + 1 : clk_di.dli_fname) : "?";
+        fprintf(stderr, "[clokeos-ct] neue Zeile \"%.60s\" von %s+%#lx", s ? [[(NSAttributedString *) s string] UTF8String] ?: "" : "(NULL)", clk_m, clk_off);
+        void *clk_pcs[40]; int clk_k = backtrace(clk_pcs, 40), clk_got = 0;
+        for (int i = 1; i < clk_k && clk_got < 14; i++) {
+            Dl_info d2;
+            if (!dladdr(clk_pcs[i], &d2) || !d2.dli_fname || strstr(d2.dli_fname, "ClokeOS/MacFrameworks")) continue;
+            fprintf(stderr, " %s+%#lx", strrchr(d2.dli_fname, '/') ? strrchr(d2.dli_fname, '/') + 1 : d2.dli_fname, (unsigned long) ((char *) clk_pcs[i] - (char *) d2.dli_fbase));
+            clk_got++;
+        }
+        fprintf(stderr, "\n");
+    }
     return s ? (CTLineRef) make_line((NSAttributedString *) s) : NULL;
 }
 CTLineRef CTLineCreateTruncatedLine(CTLineRef line, double width, CTLineTruncationType type, CTLineRef token) {
@@ -330,6 +343,11 @@ static NSArray *break_lines(NSAttributedString *s, CFRange range, CGFloat width,
 CFTypeID CTFramesetterGetTypeID(void) { return 0; }
 CFTypeID CTFrameGetTypeID(void) { return 0; }
 CTFramesetterRef CTFramesetterCreateWithAttributedString(CFAttributedStringRef s) {
+    if (getenv("CLOKE_CT_TRACE")) {
+        Dl_info clk_di; void *clk_ra = __builtin_return_address(0);
+        unsigned long clk_off = dladdr(clk_ra, &clk_di) ? (unsigned long) ((char *) clk_ra - (char *) clk_di.dli_fbase) : 0;
+        fprintf(stderr, "[clokeos-ct] Framesetter \"%.60s\" von +%#lx\n", s ? [[(NSAttributedString *) s string] UTF8String] ?: "" : "(NULL)", clk_off);
+    }
     if (!s) return NULL;
     ClkCTFramesetter *f = [ClkCTFramesetter new];
     f->string = [(NSAttributedString *) s copy];

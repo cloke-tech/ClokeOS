@@ -52,3 +52,21 @@ s|^#import <CoreGraphics/CGContext.h>$|#import <CoreGraphics/CGContext.h>\n#impo
     }/
 s|^#import <Onyx2D/O2Context.h>$|#import <Onyx2D/O2Context.h>\
 #import <Onyx2D/O2GraphicsState.h>|
+# … CLOKE_FILL_BT=1: CGContextFillRect meldet die ersten 6 Rücksprünge in Logic (bzw. außerhalb der ClokeOS-Frameworks), höchstens 300
+/^void CGContextFillRect\(CGContextRef context, CGRect rect\) \{$/a\
+    if (getenv("CLOKE_FILL_BT")) {\
+        static int clk_n;\
+        if (clk_n < 300) {\
+            void *clk_pcs[40]; int clk_k = backtrace(clk_pcs, 40);\
+            char clk_buf[1400]; int clk_len = 0, clk_got = 0;\
+            for (int clk_i = 1; clk_i < clk_k \&\& clk_got < 14; clk_i++) {\
+                Dl_info clk_di;\
+                if (!dladdr(clk_pcs[clk_i], \&clk_di) || !clk_di.dli_fname || strstr(clk_di.dli_fname, "ClokeOS\/MacFrameworks")) continue;\
+                clk_len += snprintf(clk_buf + clk_len, sizeof clk_buf - clk_len, " %s+%#lx", strrchr(clk_di.dli_fname, '\/') + 1, (unsigned long) ((char *) clk_pcs[clk_i] - (char *) clk_di.dli_fbase));\
+                clk_got++;\
+            }\
+            if (clk_got) { clk_n++; fprintf(stderr, "[clokeos-fill] %.0fx%.0f%s\\n", rect.size.width, rect.size.height, clk_buf); }\
+        }\
+    }
+s|#import <dlfcn.h>|#import <dlfcn.h>\
+#import <execinfo.h>|

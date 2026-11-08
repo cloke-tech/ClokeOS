@@ -66,3 +66,28 @@ s/^    \[self setObjectValue: \[NSNumber numberWithInteger: value\]\];$/    clk_
 s/^    NSCellAppleFlag2TextAlignmentShift    = 16,$/    NSCellAppleFlag2TextAlignmentShift    = 26,/
 s/^    _textAlignment = \(flags2 \& NSCellAppleFlag2TextAlignmentMask\) >> NSCellAppleFlag2TextAlignmentShift;$/    _textAlignment = _CLKTextAlignmentFromArchive((flags2 \& NSCellAppleFlag2TextAlignmentMask) >> NSCellAppleFlag2TextAlignmentShift);/
 s/^    \*flags2 \|= \(_textAlignment << NSCellAppleFlag2TextAlignmentShift\) \& NSCellAppleFlag2TextAlignmentMask;$/    *flags2 |= (_CLKTextAlignmentToArchive(_textAlignment) << NSCellAppleFlag2TextAlignmentShift) \& NSCellAppleFlag2TextAlignmentMask;/
+# ClokeOS: -[NSCell drawInteriorWithFrame:inView:] war leer. Bei Apple zeichnet NSCell selbst Text (attributedStringValue) bzw. Bild.
+# Direkte NSCell-Unterklassen, die [super drawWithFrame:inView:] rufen (MAToolKits Segment-Beschriftung), blieben sonst leer.
+s/^(#import <AppKit\/NSCell.h>)$/\1\n#import "NSStringDrawer.h"/
+/^- \(void\) drawInteriorWithFrame: \(NSRect\) frame inView: \(NSView \*\) view \{$/,/^\}$/c\
+- (void) drawInteriorWithFrame: (NSRect) frame inView: (NSView *) view {\
+    if (_image != nil && [self type] != NSTextCellType) {\
+        NSSize s = [_image size];\
+        if (s.width <= 0 || s.height <= 0)\
+            return;\
+        NSRect r = NSMakeRect(NSMidX(frame) - s.width / 2, NSMidY(frame) - s.height / 2, s.width, s.height);\
+        [_image drawInRect: NSIntegralRect(r) fromRect: NSZeroRect operation: NSCompositeSourceOver fraction: 1.0 respectFlipped: YES hints: nil];\
+        return;\
+    }\
+    if (_objectValue == nil || [self type] != NSTextCellType)\
+        return;\
+    NSAttributedString *s = [self attributedStringValue];\
+    if ([s length] == 0)\
+        return;\
+    {\
+        static int clk_t = -1;\
+        if (clk_t < 0) clk_t = getenv("CLOKE_CELL_TRACE") != NULL;\
+        if (clk_t) NSLog(@"[clokeos-cell] %@ type=%d str=%@ frame=%@ title=%@ ctl=%@", [self class], (int) [self type], [s string], NSStringFromRect(frame), NSStringFromRect([self titleRectForBounds: frame]), [view class]);\
+    }\
+    [s _clipAndDrawInRect: [self titleRectForBounds: frame] truncatingTail: _lineBreakMode > NSLineBreakByClipping];\
+}

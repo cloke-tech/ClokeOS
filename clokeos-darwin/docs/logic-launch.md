@@ -1266,3 +1266,22 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   LCD labels BAR, BEAT and TEMPO being drawn, but they are not visible (KEEP is); likely placed outside their area. The six
   `CTLineCreateWithAttributedString` call sites in `Logic.framework` are in unnamed C++ functions (0x95fe60, 0xe4f268, 0xe4f3b0,
   0x115cd50, 0x115d090).
+
+### Round 69: arrange toolbar menus (Edit / Functions / View)
+
+* **Labels were empty.** MAToolKit's segment label cell is a direct `NSCell` subclass that sets an attributed string and calls
+  `[super drawWithFrame:inView:]`. Cocotron's `-[NSCell drawInteriorWithFrame:inView:]` was empty; it now draws text cells
+  (`attributedStringValue`, clipped and truncated) and image cells (centred image) like Apple (`patches/…/NSCell.m.sed`).
+* `-[NSCell _unformattedAttributedStringValue:]` (private, used by the label cell) returns the string with the cell's text
+  attributes (`appkit/modern.m`; `CLOKE_UNF_TRACE=1` logs callers).
+* **Negative label widths.** MAToolKit places the menu arrow via Apple's private `-[NSSegmentedCell _rectForSegment:inFrame:]`
+  (checked with `respondsToSelector:`); without it the label rects came out −20…−119 pt wide. Added, using the same widths as
+  `drawWithFrame:`.
+* **Segments too narrow.** `-[NSSegmentedControl setShowsMenuIndicator:forSegment:]` (10.13) and the cell's
+  `setMenuIndicatorShown:forSegment:` were missing; auto-sized segments with a menu now get 16 pt extra for the arrow.
+* Result: "Edit  Functions  View" reads as on the Mac. Not done: the menu arrows themselves are not drawn; the single-segment
+  "View" menus (65 pt containers) still truncate to "V…".
+* `CLOKE_CELL_TRACE=1` logs every NSCell text draw (class, type, string, frame).
+* Layout pass (`appkit/layout.m`): `displayIfNeeded` walked the whole view tree every time; it now walks only when a view of that
+  window asked for layout or joined it (`_setWindow:`). Idle CPU in this run was still about 100 % (30 s CPU in 30 s), so the
+  busy loop is elsewhere — open.

@@ -209,6 +209,19 @@ static id cell_textattrs(NSCell *self, SEL s) {
     return d;
 }
 
+/* -[NSCell _unformattedAttributedStringValue:]: Text der Zelle mit ihren Attributen,
+ * ohne Formatter (MAToolKit-Segmentbeschriftungen holen ihren Text so). */
+static id cell_unformatted_attr(NSCell *self, SEL s, id str) {
+    if ([str isKindOfClass: [NSAttributedString class]]) return str;
+    if (![str isKindOfClass: [NSString class]]) str = str ? [str description] : [self stringValue];
+    if (!str) str = @"";
+    static int tr = -1;
+    if (tr < 0) tr = getenv("CLOKE_UNF_TRACE") != NULL;
+    if (tr) fprintf(stderr, "[unf] %s '%s' ctl=%s\n", object_getClassName(self), [str UTF8String],
+                    object_getClassName([self controlView]));
+    return [[[NSAttributedString alloc] initWithString: str attributes: cell_textattrs(self, s)] autorelease];
+}
+
 static id fd_design(id self, SEL s, id design) { return self; }
 
 static void *gc_cgcontext(id self, SEL s) { return ((void *(*)(id, SEL)) objc_msgSend)(self, sel_registerName("graphicsPort")); }
@@ -577,6 +590,7 @@ __attribute__((constructor)) static void clk_modern_appkit(void) {
     class_addMethod(cm, sel_registerName("colorWithDisplayP3Red:green:blue:alpha:"), (IMP)c_with_p3, "@@:dddd");
     class_addMethod([NSFont class], sel_registerName("copyName"), (IMP)font_copyname, "@@:");
     class_addMethod([NSCell class], sel_registerName("_textAttributes"), (IMP)cell_textattrs, "@@:");
+    class_addMethod([NSCell class], sel_registerName("_unformattedAttributedStringValue:"), (IMP)cell_unformatted_attr, "@@:@");
     class_addMethod([NSCell class], sel_registerName("_contents"), (IMP)cell_contents, "@@:");
     class_addMethod([NSButtonCell class], sel_registerName("_imageRectWithRect:"), (IMP)bc_image_rect, "{CGRect={CGPoint=dd}{CGSize=dd}}@:{CGRect={CGPoint=dd}{CGSize=dd}}");
     class_addMethod([NSButtonCell class], sel_registerName("_buttonType"), (IMP)bc_button_type, "q@:");

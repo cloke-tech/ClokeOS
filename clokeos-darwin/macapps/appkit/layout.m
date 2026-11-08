@@ -17,7 +17,12 @@
 #import <objc/runtime.h>
 
 static char k_state;   /* NSNumber: Bit 0 = ausgelegt, Bit 1 = braucht Layout */
+static char k_clean;   /* am Fenster: ja = seit dem letzten Durchgang hat keine Ansicht ein Layout angefordert */
 static BOOL g_pending;
+
+/* Fenster als „Layout nötig" markieren; ohne Markierung überspringt displayIfNeeded den Gang durch den ganzen Baum (vorher lief er
+ * bei jedem Zeichnen, Logic: hunderte Ansichten, ein Großteil der Leerlauf-CPU). */
+static void mark_window(NSWindow *w) { if (w) objc_setAssociatedObject(w, &k_clean, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
 
 static unsigned st(id v) { return [objc_getAssociatedObject(v, &k_state) unsignedIntValue]; }
 static void set_st(id v, unsigned s) { objc_setAssociatedObject(v, &k_state, @(s), OBJC_ASSOCIATION_RETAIN_NONATOMIC); }
@@ -31,6 +36,7 @@ static void v_setneeds(id self, SEL c, BOOL flag) {
     set_st(self, flag ? (s | 2) : (s & ~2u));
     if (flag) {
         g_pending = YES;
+        mark_window([self window]);
         [[self window] setViewsNeedDisplay: YES];
     }
 }
@@ -70,13 +76,23 @@ static void v_setframe(id self, SEL c, NSRect f) {
 
 static void layout_window(NSWindow *w) {
     if (![w isVisible]) return;
+    if (objc_getAssociatedObject(w, &k_clean)) { solve(w); return; }
     NSView *root = [[w contentView] superview] ?: [w contentView];
     for (int pass = 0; pass < 4; pass++) {
         g_pending = NO;
         @try { solve(w); [root layoutSubtreeIfNeeded]; }
         @catch (id e) { NSLog(@"layoutSubtreeIfNeeded: %@", e); break; }
-        if (!g_pending) break;
+        if (!g_pending) {
+            objc_setAssociatedObject(w, &k_clean, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            break;
+        }
     }
+}
+/* neue Ansichten im Fenster brauchen ihr erstes Layout */
+static IMP o_setwindow;
+static void v_setwindow(id self, SEL c, NSWindow *w) {
+    ((void (*)(id, SEL, id)) o_setwindow)(self, c, w);
+    mark_window(w);
 }
 static IMP o_disp_needed, o_disp;
 static void w_disp_needed(id self, SEL c) { layout_window(self); ((void (*)(id, SEL)) o_disp_needed)(self, c); }
@@ -93,6 +109,8 @@ __attribute__((constructor)) static void clk_layout_init(void) {
     class_addMethod(vc, @selector(viewDidLayout), (IMP) v_noop, "v@:");
     Method m = class_getInstanceMethod(v, @selector(setFrame:));
     o_setframe = method_setImplementation(m, (IMP) v_setframe);
+    Method sw = class_getInstanceMethod(v, sel_registerName("_setWindow:"));
+    if (sw) o_setwindow = method_setImplementation(sw, (IMP) v_setwindow);
     Class w = [NSWindow class];
     o_disp_needed = method_setImplementation(class_getInstanceMethod(w, @selector(displayIfNeeded)), (IMP) w_disp_needed);
     o_disp = method_setImplementation(class_getInstanceMethod(w, @selector(display)), (IMP) w_disp);
