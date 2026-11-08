@@ -441,7 +441,6 @@ const KNOWN = {
   'com.clokeos.terminal': { g:'term', c:['#3a3a46','#121218'], de:'Die Kommandozeile', en:'The command line', dd:'Terminal startet xfce4-terminal mit den Farben und der Schrift des ClokeOS-Prototyps.', ed:'Terminal starts xfce4-terminal with the colors and font of the ClokeOS prototype.' },
   'com.clokeos.fundus': { g:'files', c:['#5ac8fa','#0a74e6'], de:'Dateien ansehen und ordnen', en:'Browse and organize files', dd:'Fundus ist der Dateimanager von ClokeOS (ein Thunar dahinter). Er öffnet auch .dmg-Abbilder und .exe-Programme.', ed:'Fundus is the ClokeOS file manager (Thunar underneath). It also opens .dmg images and .exe programs.' },
   'org.dillo.dillo': { g:'globe', c:['#d29a64','#7a4a2a'], featured:2, hd:'Schlank surfen mit Dillo', he:'Light browsing with Dillo', de:'Ein schlanker Webbrowser', en:'A lightweight web browser', dd:'Dillo ist ein sehr kleiner, schneller Webbrowser. In ClokeOS dient er als Beispiel dafür, wie sich ein Programm nachinstallieren lässt.', ed:'Dillo is a very small, fast web browser. In ClokeOS it serves as the example of an app you add later.' },
-  'org.winehq.wine': { g:'wine', c:['#c2185b','#5a0f3a'], featured:1, hd:'Windows-Programme, direkt auf ClokeOS', he:'Windows programs, right on ClokeOS', de:'.exe- und .msi-Programme ausführen', en:'Run .exe and .msi programs', dd:'Wine 11.0 führt Windows-Programme aus. Laufwerk C: liegt unter /NT, ein Doppelklick in Fundus startet eine .exe. Das Programm öffnet den Wine-Dateimanager auf C:. Nur auf x86_64: auf arm64 gibt es noch keine Übersetzungsschicht.', ed:'Wine 11.0 runs Windows programs. Drive C: lives at /NT, and a double-click in Fundus starts an .exe. The app opens Wine’s file manager on C:. x86_64 only: arm64 has no translation layer yet.', x86only:true },
   'webkit': { g:'box', c:['#4fb4ff','#2447d8'], featured:3, hd:'Moderne Webseiten in Search', he:'Modern web pages in Search', de:'Web-Engine für Search', en:'Web engine for Search', dd:'WebKitGTK als Binärpaket. Search nutzt es, sobald es installiert ist, und fällt sonst auf NetSurf zurück.', ed:'WebKitGTK as a binary package. Search uses it once installed and falls back to NetSurf otherwise.' }
 };
 
@@ -453,7 +452,6 @@ const SNAPSHOT = {
   format: 1, repo: 'cloke-tech/ClokeOS-Apps', version: '2.8',
   apps: [
     snapApp('org.dillo.dillo','Dillo','Dillo','/Applications/Dillo.app','addon','3f9c3ff79db6b5637d1be7c30bf03a87906059cc0363e9b4362bbfe32bb934b7',1119),
-    snapApp('org.winehq.wine','Wine','Wine','/Applications/Wine.app','addon','6e3f3f407856d267953f5aa917ab2b2299f60bab990341cbf443ce3970eb06c4',1320),
     snapApp('com.clokeos.rechner','Calculator','Rechner','/System/Applications/Calculator.app','system','170171f4a7adc008722b9ef32b705263e54135affad0897d7e03cf5ed5e2d967',1727),
     snapApp('com.clokeos.kalender','Calendar','Kalender','/System/Applications/Calendar.app','system','26228614fd5c5843b3b6680b36df752ac8e5fb2615b9a25504a49a946abe8f8d',1703),
     snapApp('com.clokeos.launchpad','Launchpad','Programme','/System/Applications/Launchpad.app','system','52ce6f07636077d399d5c7922a53dc1416c9b86b50f760b4141cd3d40d2f0959',1688),
