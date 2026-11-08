@@ -1309,3 +1309,11 @@ The renderer rewrite from round 66 turned out unnecessary; the digits were place
   (Cocotron's constants on both sides) but not in Logic (Apple's strings).
 * Result: BAR and BEAT are 8 pt, grey and centred under the position digits, as on the Mac. Open: "KEEP" is drawn without a font
   (12 pt default) and covers "TEMPO".
+
+### Round 72: drawInRect: top-aligned in unflipped views
+
+* Cocotron placed `drawInRect:` text at the bottom of the rect in unflipped views; Apple sets the first line at the top. Logic's
+  "KEEP" (27 pt box) therefore sat on "TEMPO". `NSStringDrawer` now offsets the origin by the rect height minus the used height
+  when the context is not flipped (`patches/…/NSStringDrawer.m.sed`).
+* Result: the LCD reads like the Mac — 260 / KEEP / TEMPO stacked, 4/4 above Cmaj, BAR and BEAT under the digits. No other
+  visible change in the window (toolbar menu titles move up 2 pt).

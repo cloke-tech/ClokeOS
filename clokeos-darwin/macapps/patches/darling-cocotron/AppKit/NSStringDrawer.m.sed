@@ -30,8 +30,20 @@ s/^    \[_layoutManager drawGlyphsForGlyphRange: glyphRange atPoint: (rect\.orig
             NSDictionary *clk_a = [_textStorage length] ? [_textStorage attributesAtIndex: 0 effectiveRange: NULL] : nil;\
             fprintf(stderr, "[clokeos-draw] \\"%.40s\\" at %.1f,%.1f box %.1fx%.1f glyphs %lu used %s color %s font %s ctm %.1f %.1f %.1f %.1f %.1f %.1f\\n", [[_textStorage string] UTF8String] ?: "", clk_p.x, clk_p.y, [_textContainer containerSize].width, [_textContainer containerSize].height, (unsigned long) glyphRange.length, [NSStringFromRect([_layoutManager usedRectForTextContainer: _textContainer]) UTF8String], [[[clk_a objectForKey: @"NSColor"] description] UTF8String] ?: "-", [[[clk_a objectForKey: @"NSFont"] description] UTF8String] ?: "-", clk_m.a, clk_m.b, clk_m.c, clk_m.d, clk_m.tx, clk_m.ty);\
             id clk_f = [clk_a objectForKey: @"NSFont"];\
+            if (clk_f == nil)\
+                fprintf(stderr, "[clokeos-draw]   attrs %s\\n", [[[clk_a description] stringByReplacingOccurrencesOfString: @"\\n" withString: @" "] UTF8String] ?: "-");\
             if (clk_f \&\& glyphRange.length == 0)\
                 fprintf(stderr, "[clokeos-draw]   asc %.2f desc %.2f lead %.2f line %.2f para %s\\n", [clk_f ascender], [clk_f descender], [clk_f leading], [clk_f defaultLineHeightForFont], [[[clk_a objectForKey: @"NSParagraphStyle"] description] UTF8String] ?: "-");\
         }\
     }\
 &/
+# ClokeOS: drawInRect: in nicht gespiegelten Ansichten setzt die erste Zeile wie bei Apple an die Oberkante des Rechtecks. Cocotron
+# setzte den Text an die Unterkante (Logic Pros „KEEP“ in einem 27 Punkt hohen Rechteck lag dadurch auf „TEMPO“).
+s/^(#import <AppKit\/NSView.h>)$/\1\
+static NSPoint clkTopOrigin(NSLayoutManager *lm, NSTextContainer *tc, NSRect rect) {\
+    if ([[NSGraphicsContext currentContext] isFlipped])\
+        return rect.origin;\
+    NSRect used = [lm usedRectForTextContainer: tc];\
+    return NSMakePoint(rect.origin.x, rect.origin.y + rect.size.height - NSMaxY(used));\
+}/
+s/atPoint: rect\.origin\]/atPoint: clkTopOrigin(_layoutManager, _textContainer, rect)]/g
