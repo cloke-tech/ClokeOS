@@ -61,3 +61,8 @@ s/^    \[self setObjectValue: \[NSNumber numberWithInt: value\]\];$/    clk_cell
 s/^    \[self setObjectValue: \[NSNumber numberWithFloat: value\]\];$/    clk_cell_set_number(self, [NSNumber numberWithFloat: value]);/
 s/^    \[self setObjectValue: \[NSNumber numberWithDouble: value\]\];$/    clk_cell_set_number(self, [NSNumber numberWithDouble: value]);/
 s/^    \[self setObjectValue: \[NSNumber numberWithInteger: value\]\];$/    clk_cell_set_number(self, [NSNumber numberWithInteger: value]);/
+# ClokeOS: Textausrichtung in NSCellFlags2 steht wie bei Apple in Bit 26–28 (rechts 0x04000000, Mitte 0x08000000, natürlich 0x10000000;
+# auf dem Mac nachgeprüft), in der alten Reihenfolge. Cocotron las Bit 16–18, so ging die Ausrichtung aus Nibs verloren (alles links).
+s/^    NSCellAppleFlag2TextAlignmentShift    = 16,$/    NSCellAppleFlag2TextAlignmentShift    = 26,/
+s/^    _textAlignment = \(flags2 \& NSCellAppleFlag2TextAlignmentMask\) >> NSCellAppleFlag2TextAlignmentShift;$/    _textAlignment = _CLKTextAlignmentFromArchive((flags2 \& NSCellAppleFlag2TextAlignmentMask) >> NSCellAppleFlag2TextAlignmentShift);/
+s/^    \*flags2 \|= \(_textAlignment << NSCellAppleFlag2TextAlignmentShift\) \& NSCellAppleFlag2TextAlignmentMask;$/    *flags2 |= (_CLKTextAlignmentToArchive(_textAlignment) << NSCellAppleFlag2TextAlignmentShift) \& NSCellAppleFlag2TextAlignmentMask;/

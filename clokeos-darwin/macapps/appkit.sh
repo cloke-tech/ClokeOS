@@ -97,6 +97,8 @@ src="$obj/src"
 [ -d "$src" ] || cp -cR "$COC" "$src"
 touch "$obj/patched.list"
 P1="$M/patches/darling-cocotron" P2="$M/patches/arm64/darling-cocotron"
+# Ändert eine Korrektur einen Header, werden alle Objekte neu übersetzt (compile_all vergleicht sonst nur mit der eigenen Quelle)
+HSTAMP="$obj/patched-headers.stamp"; [ -f "$HSTAMP" ] || touch "$HSTAMP"; export HSTAMP
 while read -r f; do   # Korrekturen, die es nicht mehr gibt, zurücknehmen
   [ -f "$P1/$f.sed" ] || [ -f "$P2/$f.sed" ] || cp -p "$COC/$f" "$src/$f"
 done < "$obj/patched.list"
@@ -108,7 +110,7 @@ while read -r f; do
   [ -f "$P1/$f.sed" ] && p+=(-f "$P1/$f.sed")
   [ -f "$P2/$f.sed" ] && p+=(-f "$P2/$f.sed")
   sed -E "${p[@]}" "$COC/$f" > "$src/$f.neu"
-  if cmp -s "$src/$f.neu" "$src/$f"; then rm "$src/$f.neu"; else mv "$src/$f.neu" "$src/$f"; fi
+  if cmp -s "$src/$f.neu" "$src/$f"; then rm "$src/$f.neu"; else mv "$src/$f.neu" "$src/$f"; case "$f" in *.h) touch "$HSTAMP" ;; esac; fi
 done < "$obj/patched.list"
 
 # --- Übersetzen ---------------------------------------------------------------------------------
@@ -146,7 +148,7 @@ compile_all() {
   OBJDIR="$objdir" BASE="$base" M="$M" xargs -P "$JOBS" -n 1 bash -c '
     s="$0"; src="$s"; case "$s" in /*) ;; *) src="$BASE/$s" ;; esac
     o="$OBJDIR/$(basename "$s").o"
-    [ -f "$o" ] && [ "$o" -nt "$src" ] && [ "$o" -nt "$OBJDIR/.flags" ] && [ -z "$(find "$M/appkit/include" -newer "$o" -print -quit)" ] && exit 0
+    [ -f "$o" ] && [ "$o" -nt "$src" ] && [ "$o" -nt "$OBJDIR/.flags" ] && [ "$o" -nt "$HSTAMP" ] && [ -z "$(find "$M/appkit/include" -newer "$o" -print -quit)" ] && exit 0
     eval "flags=($(cat "$OBJDIR/.flags"))"
     case "$s" in *.c) flags+=(-x objective-c) ;; esac
     "${flags[@]}" -c "$src" -o "$o" 2> "$o.log" || { echo "FEHLER: $s" >&2; grep -m 8 -E "error" "$o.log" >&2; exit 255; }

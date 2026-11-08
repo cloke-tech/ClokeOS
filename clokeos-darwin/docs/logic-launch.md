@@ -1028,3 +1028,20 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * `CLOKE_BUTTON_TRACE=1` also logs pop-up `setTitle:` (items, selection, menu).
 * Build note: `macapps/appkit.sh` stops when a patch's sed script is invalid (e.g. an unescaped `/` in a replacement); check its exit
   code before deploying.
+
+### Round 59: text alignment on arm64
+
+* **`NSTextAlignment` values:** on arm64 Apple uses the iOS order (left 0, center 1, right 2, justified 3, natural 4), on x86_64 the
+  old macOS order (left 0, right 1, center 2). Cocotron always used the old order, so centred text from arm64 Mac apps came out
+  right-aligned. `NSText.h` now has the arm64 order on arm64 (`patches/…/include/AppKit/NSText.h.sed`, plus the `NSTextAlignment…`
+  names).
+* **Archives keep the old order on every architecture** (checked on the Mac: `NSParagraphStyle` "NSAlignment" center = 2, right = 1;
+  `NSCellFlags2` bits 26–28). `_CLKTextAlignmentFromArchive`/`…ToArchive` convert.
+  * `NSCell` read the alignment from bits 16–18 of `NSCellFlags2`, so alignment from nibs was lost (everything left); now bits 26–28.
+  * `NSParagraphStyle` read only Cocotron's own key "Alignment"; it now reads Apple's "NSAlignment" too and writes both.
+* Checked with a probe in the VM against the Mac: text drawn left/center/right lands at 5 / 49 / 94 % of the width, cells and
+  paragraph styles archived on the Mac decode to 0 / 1 / 2.
+* Result in Logic: inspector labels are right-aligned against their controls as on the Mac; LCD texts centred.
+* Build: `macapps/appkit.sh` now rebuilds all objects when a patch changes a header (before, only files whose own `.m` changed were
+  rebuilt, so the old enum stayed compiled in).
+* Probe trap: `vmctl.py send` stops reading at a line containing "% " (it looks like the shell prompt); keep "%" out of probe output.
