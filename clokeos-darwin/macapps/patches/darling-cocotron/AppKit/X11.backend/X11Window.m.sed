@@ -30,3 +30,34 @@ s/^    \[self ensureMapped\];$/    if (!_mapped)\n        return;/
 # ob es die Fläche oben selbst zeichnet (FullSizeContentView, Werkzeugleiste in der Titelleiste, NSAlert).
 s|^    \[self setWindowIcon\];$|    [self setWindowIcon];\
     { extern void ClokeTitlebarPublishX(id, Display *, Window); ClokeTitlebarPublishX(delegate, _display, _window); }|
+# ClokeOS: Fenstertitel auch als _NET_WM_NAME in UTF-8 (wie es Fenstermanager erwarten, CloakServer liest es zuerst); WM_NAME bekam nur
+# [title cString], Zeichen außerhalb von Latin-1 (Logic Pros Bounce-Dialog: „Bounce “Jump”“) kamen als Kästchen an.
+/^- \(void\) setTitle: \(NSString \*\) title \{$/,/^\}$/s/^    XSetWMName\(_display, _window, \&prop\);$/    XSetWMName(_display, _window, \&prop);\
+    if (prop.value)\
+        XFree(prop.value);\
+    {\
+        const char *clk_utf8 = [title UTF8String];\
+        if (clk_utf8)\
+            XChangeProperty(_display, _window, XInternAtom(_display, "_NET_WM_NAME", False), XInternAtom(_display, "UTF8_STRING", False), 8,\
+                            PropModeReplace, (const unsigned char *) clk_utf8, (int) strlen(clk_utf8));\
+    }/
+s/^    const char \*text = \[title cString\];$/    const char *text = [title cStringUsingEncoding: NSISOLatin1StringEncoding] ?: "";/
+# ClokeOS: isMiniaturized fragte bei jedem Aufruf den X-Server (XGetWindowProperty, eine Rundreise); NSWindow ruft es bei jedem
+# displayIfNeeded auf. Bei Logic Pro war das ein Viertel der Rechenzeit des untätigen Hauptfadens (ein Kern). Jetzt gemerkt und nur
+# verworfen, wenn sich _NET_WM_STATE ändert (PropertyNotify, dafür PropertyChangeMask).
+s/^                SubstructureRedirectMask;$/                SubstructureRedirectMask | PropertyChangeMask;/
+/^- \(BOOL\) isMiniaturized \{$/i\
+static char clk_mini_key;\
+- (void) propertyNotify: (XPropertyEvent *) ev {\
+    if (ev->atom == XInternAtom(_display, "_NET_WM_STATE", False))\
+        objc_setAssociatedObject(self, \&clk_mini_key, nil, OBJC_ASSOCIATION_RETAIN_NONATOMIC);\
+}\
+
+/^- \(BOOL\) isMiniaturized \{$/,/^\}$/s/^    Atom wmState = XInternAtom\(_display, "_NET_WM_STATE", FALSE\);$/    NSNumber *clk_cached = objc_getAssociatedObject(self, \&clk_mini_key);\
+    if (clk_cached != nil)\
+        return [clk_cached boolValue];\
+    Atom wmState = XInternAtom(_display, "_NET_WM_STATE", FALSE);/
+/^- \(BOOL\) isMiniaturized \{$/,/^\}$/s/^    return rv;$/    objc_setAssociatedObject(self, \&clk_mini_key, [NSNumber numberWithBool: rv], OBJC_ASSOCIATION_RETAIN_NONATOMIC);\
+    return rv;/
+s/^#import <AppKit\/NSPanel.h>$/#import <AppKit\/NSPanel.h>\
+#import <objc\/runtime.h>/

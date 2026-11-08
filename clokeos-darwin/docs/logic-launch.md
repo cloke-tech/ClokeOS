@@ -1045,3 +1045,21 @@ Logic on the Mac (macOS in Dark mode). All causes were gaps in Cocotron/Onyx2D/D
 * Build: `macapps/appkit.sh` now rebuilds all objects when a patch changes a header (before, only files whose own `.m` changed were
   rebuilt, so the old enum stayed compiled in).
 * Probe trap: `vmctl.py send` stops reading at a line containing "% " (it looks like the shell prompt); keep "%" out of probe output.
+
+### Round 60: idle CPU, display freeze, dialog title
+
+* **Logic used 80–99 % CPU while idle** on the VM's single core (`CRASHPC_SAMPLE=3` on the main thread, 54 samples):
+  * About half: `-[NSFont fontDescriptor]` called `-[NSFont maximumAdvancement]`, which measured **every glyph** of the font through
+    FreeType on each call. The value is now cached per font (name, size), and `fontDescriptor` no longer adds
+    `NSFontFixedAdvanceAttribute` (Apple only does that for fixed-pitch fonts) (`patches/…/NSFont.m.sed`).
+  * About a quarter: `-[X11Window isMiniaturized]` asked the X server (`XGetWindowProperty`, a round trip) on every `displayIfNeeded`.
+    It is now cached and dropped when `_NET_WM_STATE` changes (`PropertyNotify`; `PropertyChangeMask` added) (`X11Window.m.sed`).
+  * Result: idle CPU about 6 %; the main thread mostly waits in `mach_msg`.
+* **Display freeze (item 6):** likely the same cause: Logic's busy main thread starved Xorg and CloakServer on the single core. After
+  the fix, opening and closing the Bounce dialog and clicking for 4 minutes kept the display updating. Not proven for longer runs.
+* **Dialog title:** Cocotron set only `WM_NAME` from a lossy C string, so „Bounce “Jump”“ showed boxes. `setTitle:` now also sets
+  `_NET_WM_NAME` in UTF-8 (CloakServer reads it first).
+* **Dialog layout (item 5), not fixed:** the Bounce dialog's nib window is 671×400 and relies on **Auto Layout** (`NSViewConstraints`)
+  to grow it and size the checkbox titles. ClokeOS has no constraint solver (`NSLayoutConstraint` and `NSGridView` are stubs), so
+  OK/Cancel sit below the window (y = −107), the grid's checkboxes are 100 pt wide ("Include Aud…") and the view-based destination
+  list has no labels. The Start/End fields are Logic's own dark scrubbers and look plausible.
