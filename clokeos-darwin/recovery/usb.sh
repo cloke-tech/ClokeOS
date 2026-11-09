@@ -56,6 +56,7 @@ asset() { awk -F'[= ]' -v k="$1" '$1 == k {print $2}' "$payload/clokeos-$CLOKE_A
 # --- große RAM-Disk (offline): Wiederherstellung mit den Abbildern von EFI-Partition und System -----
 # Die Wiederherstellungspartition passt nicht mehr mit hinein; der Installer nimmt sie vom Stick.
 root="$tmp/root.ext4"
+big_rd=1
 if [ "$kind" = offline ]; then
   cp -c "$out/recovery.ext4" "$root" 2>/dev/null || cp "$out/recovery.ext4" "$root"
   files=("$payload/clokeos-$CLOKE_ARCH.txt")
@@ -82,7 +83,12 @@ if [ "$kind" = offline ]; then
   "$E2FSCK" -fy "$root" >/dev/null 2>&1 || true
   "$E2FSCK" -fn "$root" > "$tmp/e2fsck.log" 2>&1 || { cat "$tmp/e2fsck.log" >&2; exit 1; }
   rd_mb=$(( $(stat -f %z "$root") / 1048576 ))
-  [ "$rd_mb" -le 880 ] || { echo "RAM-Disk zu groß: $rd_mb MB (höchstens 880, siehe loader/xnu-loader.patch)" >&2; exit 1; }
+  # Zu groß für den Loader (siehe loader/xnu-loader.patch): kein großes \ramdisk.img; der Stick bootet dann
+  # immer die schlanke RAM-Disk und der Installer liest das System von der FAT-Partition (\ClokeOS\Install).
+  if [ "$rd_mb" -gt 880 ]; then
+    echo "Hinweis: große RAM-Disk $rd_mb MB (höchstens 880), der Stick bekommt nur die schlanke RAM-Disk" >&2
+    big_rd=0
+  fi
 fi
 
 # --- schlanke RAM-Disk: nur die Wiederherstellung, ohne alles, was sie zum Installieren aus dem
@@ -201,7 +207,7 @@ printf '%s rd=md0\n' "$base" > "$tmp/boot/boot-args.txt"
 stick_files=()
 [ "$kind" = offline ] && for k in esp system recovery; do stick_files+=("$payload/$(asset $k)"); done
 bytes=$(( $(stat -f %z "$lite") + $(du -sk "$tmp/boot" | cut -f1) * 1024 ))
-[ "$kind" = offline ] && bytes=$(( bytes + $(stat -f %z "$root") + $(du -ck "${stick_files[@]}" | tail -1 | cut -f1) * 1024 ))
+[ "$kind" = offline ] && bytes=$(( bytes + $([ "$big_rd" = 1 ] && stat -f %z "$root" || echo 0) + $(du -ck "${stick_files[@]}" | tail -1 | cut -f1) * 1024 ))
 esize=$(( (bytes + 96 * 1048576) / 1048576 * 1048576 ))
 esp="$tmp/usb-esp.img"
 truncate -s "$esize" "$esp"
@@ -211,7 +217,7 @@ mmd -i "$esp" ::/EFI ::/EFI/BOOT
 mcopy -i "$esp" "$tmp/boot/"* ::/EFI/BOOT/
 mtype -i "$esp" ::/EFI/BOOT/boot-args.txt | grep -q 'rd=md0' || { echo "boot-args.txt fehlt im USB-Abbild" >&2; exit 1; }
 if [ "$kind" = offline ]; then
-  mcopy -i "$esp" "$root" ::/ramdisk.img
+  [ "$big_rd" = 1 ] && mcopy -i "$esp" "$root" ::/ramdisk.img
   mmd -i "$esp" ::/ClokeOS ::/ClokeOS/Install
   mcopy -i "$esp" "$payload/clokeos-$CLOKE_ARCH.txt" "${stick_files[@]}" ::/ClokeOS/Install/
 fi
