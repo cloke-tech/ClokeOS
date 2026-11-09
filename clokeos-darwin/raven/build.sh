@@ -180,7 +180,7 @@ cmake -G Ninja -S "$src" -B "$build" $toolchain_args -DCMAKE_BUILD_TYPE=Release 
   -DFREETYPE_LIBRARY_RELEASE="$sys/lib/libfreetype.dylib" -DRAVEN_SKIA_SOURCE="$text/skia" -DRAVEN_SKIA_LIBRARY="$text/cpu-fonts/libskia.a" \
   -DRAVEN_FONT_DIRECTORY="$text/fonts" -DOPENSSL_INCLUDE_DIR="$sys/ssl/include" -DOPENSSL_CRYPTO_LIBRARY="$sys/lib/libcrypto.a" -DOPENSSL_SSL_LIBRARY="$sys/lib/libssl.a" \
   -DPNG_LIBRARY_RELEASE="$sys/png/lib/libpng16.a" -DPNG_PNG_INCLUDE_DIR="$sys/png/include" -DRAVEN_DESKTOP_WAYLAND=OFF -DCMAKE_FIND_ROOT_PATH="$sys" \
-  $unicorn_args "${link_args[@]}" -DRAVEN_RTL_COMPONENT_PATH="$R/components/rtl/raven-rtl.dll" \
+  $unicorn_args ${link_args[@]+"${link_args[@]}"} -DRAVEN_RTL_COMPONENT_PATH="$R/components/rtl/raven-rtl.dll" \
   -DRAVEN_CONTROLS_COMPONENT_DIR="$R/components/controls" -DRAVEN_CONTROLS32_COMPONENT_DIR="$R/components/controls32" \
   -DRAVEN_INSTALLER_COMPONENT_DIR="$R/components/installer" -DRAVEN_INSTALLER32_COMPONENT_DIR="$R/components/installer32" >/dev/null
 ninja -C "$build" raven raven-bootstrap installer_components_64 installer_components_32 >/dev/null
