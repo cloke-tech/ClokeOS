@@ -134,6 +134,25 @@ horizontal (no knob, the wheel over them did nothing); and the line scroll was 1
 Apple's 10. Checked in Fundus (VM) and in Logic Pro 12.3 (no permanent scroll bars any more, scrolling works; Logic's track
 area is wider than the 1280-pixel VM screen, so its knob could not be seen there).
 
-Not done yet: dragging to other programs, the Dock and the desktop (XDND), spring-loaded folders, rubber-band selection,
-column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
+## Rubber band, spring-loaded folders, autoscroll (2026-11-14, third round)
+
+* **Rubber-band selection**: dragging on empty space draws a selection rectangle (light accent fill, accent border) and selects
+  every item it touches; with ⌘ or ⇧ it toggles against the previous selection, as in the Finder.
+* **Autoscroll**: near or past the top or bottom edge the view scrolls, faster the further out the pointer is, also while the mouse
+  stands still, both for the rubber band and while dragging items.
+* **Spring-loaded folders**: holding dragged items over a folder (or a sidebar entry) for 0.9 s makes it blink twice and opens it
+  in the same window; the drag goes on there.
+* Found on the way and fixed for every Mac app:
+  * `NSMutableIndexSet` (Darling Foundation) inserted new ranges before instead of after their predecessor (`DL_INSERT`), so the
+    range list became unsorted: after adding 4, 5, 10, 11 `containsIndex:10` was false although `count` was 4. Patch
+    `macapps/patches/darling-foundation/src/NSIndexSet.m.sed` (also the split in `removeIndexesInRange:`).
+  * `-[NSWindow nextEventMatchingMask:untilDate:inMode:dequeue:]` (Darling AppKit) never returned when `untilDate` passed: the
+    `nil` from NSApp counted as "not matching" and the loop asked again. Tracking loops that work while the mouse stands still
+    (autoscroll, spring loading) stopped. Patch in `macapps/patches/darling-cocotron/AppKit/NSWindow.m.sed`.
+  * After scrolling inside a tracking loop Darling passed a shifted dirty rectangle; FundusKit draws the whole visible area.
+  * The drag image's shape is now built from the icon's pixels plus rectangles for the name capsule and badges (text drawn into
+    the mirrored bitmap landed one line off in Darling and showed as black letters).
+* Tested in the arm64 VM: rubber band with autoscroll over 60 files, spring-loading a folder and dropping into it.
+
+Not done yet: dragging to other programs, the Dock and the desktop (XDND), column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
 parent window (panels are modal windows), x86_64 in the VM, the GTK and Windows file dialogs (phase 3).

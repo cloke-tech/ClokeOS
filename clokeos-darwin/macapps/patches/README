@@ -6,6 +6,9 @@ darling-corefoundation/, darling-foundation/: foundation.sh kopiert die betroffe
 Korrektur ist ein Fehler in Darling (Stand der Commits in foundation.sh), gefunden mit der
 Foundation-Probe (fprobe.m) im Vergleich mit Apples Foundation.
 
+darling-foundation/src/NSIndexSet.m: neue Bereiche wurden vor statt nach ihrem Vorgänger eingehängt (DL_INSERT),
+die Liste wurde unsortiert und containsIndex: falsch (Fundus: Gummiband-Auswahl, 14.11.2026).
+
 darling-cocotron/: appkit.sh arbeitet auf einem APFS-Klon des ganzen Baums
 (~/ClokeOS-work/out/macapps/obj/appkit/src) und schreibt die korrigierten Dateien dort hinein,
 weil auch Header betroffen sind. Das sind Anpassungen an ClokeOS, keine Darling-Fehler:

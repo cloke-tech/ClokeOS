@@ -456,9 +456,11 @@ typedef NS_ENUM(NSInteger, FKGlyph) { FKGlyphBack, FKGlyphForward, FKGlyphIcons,
 @property NSTimeInterval typeTime;
 @property NSInteger dropIndex;   // Ziehen: Ordner unter dem Zeiger (-1 keiner)
 @property BOOL dropOnView;       // Ziehen: Ablage in den angezeigten Ordner
+@property NSRect band;           // Gummiband-Auswahl (leer = keine)
 - (void)layoutForWidth:(CGFloat)w;
 - (NSRect)rectOfItem:(NSInteger)i;
 - (void)fkMoveForQuickLook:(NSEvent *)e;
+- (BOOL)fkAutoscrollTo:(NSPoint)p;
 @end
 
 @interface FKPathBar : NSView
@@ -679,7 +681,9 @@ static BOOL gClipboardCut;
 	CGFloat x[] = { 14, MAX(240, w * 0.48), MAX(400, w * 0.69), MAX(500, w * 0.82) };
 	return x[c];
 }
-- (void)drawRect:(NSRect)dirty {
+- (void)drawRect:(NSRect)dirtyIn {
+	// Nach dem Scrollen gab Darling ein verschobenes Rechteck mit; Einträge darin fehlten dann. Immer die ganze sichtbare Fläche.
+	NSRect dirty = NSUnionRect(dirtyIn, [self visibleRect]);
 	[fkContent() setFill];
 	NSRectFill(dirty);
 	CGFloat W = NSWidth([self bounds]);
@@ -759,6 +763,13 @@ static BOOL gClipboardCut;
 			drawText(FKLocalized([NSString stringWithUTF8String:fc_kind_key(it.kind)]), NSMakeRect([self col:3], r.origin.y + 1, W - [self col:3] - 20, 18), 13, NO, sc, NSLeftTextAlignment);
 		}
 	}
+	if (!NSIsEmptyRect(self.band)) {   // Gummiband wie im Finder: helle Fläche mit Rand in Akzentfarbe
+		NSRect b = NSInsetRect(self.band, 0.5, 0.5);
+		[rgb(124, 92, 255, 0.15) setFill];
+		NSRectFillUsingOperation(b, NSCompositeSourceOver);
+		[rgb(124, 92, 255, 0.7) setStroke];
+		[NSBezierPath strokeRect:b];
+	}
 	if (self.dropOnView) {   // Ablage in den angezeigten Ordner: Rahmen wie im Finder
 		NSBezierPath *b = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect([self visibleRect], 3, 3) xRadius:8 yRadius:8];
 		[b setLineWidth:3];
@@ -789,7 +800,7 @@ static BOOL gClipboardCut;
 	}
 	NSInteger i = [self indexAtPoint:p];
 	NSUInteger mods = [e modifierFlags];
-	if (i < 0) { [self setSelectionTo:[NSIndexSet indexSet]]; return; }
+	if (i < 0) { [self fkTrackBand:e]; return; }
 	if ([e clickCount] >= 2 && !(mods & (NSShiftKeyMask | NSCommandKeyMask))) { [self.browser itemsDoubleClicked:i]; return; }
 	NSMutableIndexSet *s = [self.selection mutableCopy];
 	BOOL multi = self.browser.purpose == FKPurposeWindow || self.browser.allowsMultipleSelection;
@@ -820,6 +831,62 @@ static BOOL gClipboardCut;
 		return;
 	}
 	[self setSelectionTo:s];
+}
+// Fläche eines Eintrags für das Gummiband: in der Symbolansicht Symbol und Name, in der Liste die Zeile
+- (NSRect)fkBandRectOfItem:(NSInteger)i {
+	NSRect r = [self rectOfItem:i];
+	return self.mode == FKViewModeIcons ? NSInsetRect(r, 14, 4) : NSMakeRect(10, r.origin.y, NSWidth([self bounds]) - 20, LIST_ROW);
+}
+// Klick auf leere Fläche: Gummiband-Auswahl (⌘/⇧: zur bisherigen Auswahl umschalten wie im Finder), am Rand scrollt die Ansicht mit
+- (void)fkTrackBand:(NSEvent *)down {
+	NSUInteger mods = [down modifierFlags];
+	BOOL multi = self.browser.purpose == FKPurposeWindow || self.browser.allowsMultipleSelection;
+	NSIndexSet *before = (mods & (NSCommandKeyMask | NSShiftKeyMask)) && multi ? [self.selection copy] : [NSIndexSet indexSet];
+	if (![before count]) [self setSelectionTo:[NSIndexSet indexSet]];
+	if (!multi) return;
+	NSPoint start = [self convertPoint:[down locationInWindow] fromView:nil];
+	NSPoint lastWin = [down locationInWindow];   // Fensterpunkt: bleibt beim Rand-Scrollen gültig, die Ansicht verschiebt sich darunter
+	for (;;) {
+		NSEvent *ev = [[self window] nextEventMatchingMask:NSLeftMouseDraggedMask | NSLeftMouseUpMask
+		                                             untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]
+		                                                inMode:NSEventTrackingRunLoopMode dequeue:YES];
+		if (ev && [ev type] == NSLeftMouseUp) break;
+		if (ev) lastWin = [ev locationInWindow];   // ohne Ereignis (Zeiger steht still): letzte Stelle
+		BOOL scrolled = [self fkAutoscrollTo:[self convertPoint:lastWin fromView:nil]];
+		NSPoint p = [self convertPoint:lastWin fromView:nil];
+		NSRect band = NSMakeRect(MIN(start.x, p.x), MIN(start.y, p.y), fabs(p.x - start.x), fabs(p.y - start.y));
+		band = NSIntersectionRect(band, [self bounds]);
+		if (NSIsEmptyRect(band) && NSIsEmptyRect(self.band)) continue;
+		[self setNeedsDisplayInRect:NSInsetRect(NSUnionRect(band, self.band), -2, -2)];
+		self.band = band;
+		NSMutableIndexSet *s = [before mutableCopy];
+		for (NSInteger i = 0; i < (NSInteger)[self.items count]; i++)
+			if (NSIntersectsRect([self fkBandRectOfItem:i], band)) {
+				if ([before containsIndex:i]) [s removeIndex:i]; else [s addIndex:i];
+			}
+		if (![s isEqualToIndexSet:self.selection]) [self setSelectionTo:s];
+		// In der Verfolgungsschleife zeichnete Darling nach dem Scrollen nicht alles nach (Zeilen mit alter Auswahl): sofort zeichnen
+		if (scrolled) [self displayRect:[self visibleRect]];
+	}
+	self.band = NSZeroRect;
+	[self displayRect:[self visibleRect]];
+	if ([self.selection count]) self.anchor = [self.selection firstIndex];
+}
+// Zeiger am oder hinter dem Rand der sichtbaren Fläche: in diese Richtung scrollen (schneller, je weiter draußen)
+- (BOOL)fkAutoscrollTo:(NSPoint)p {
+	NSRect vis = [self visibleRect];
+	CGFloat top = NSMinY(vis) + (self.mode == FKViewModeList ? LIST_HEAD : 0), dy = 0;
+	if (p.y < top + 8) dy = -MIN(40, 4 + (top + 8 - p.y) / 2);
+	else if (p.y > NSMaxY(vis) - 8) dy = MIN(40, 4 + (p.y - NSMaxY(vis) + 8) / 2);
+	if (!dy) return NO;
+	NSRect target = NSOffsetRect(vis, 0, dy);
+	if (NSMinY(target) < 0 || NSMaxY(target) > NSHeight([self bounds])) {
+		target.origin.y = MAX(0, MIN(NSHeight([self bounds]) - NSHeight(vis), target.origin.y));
+		if (target.origin.y == vis.origin.y) return NO;
+	}
+	[self scrollRectToVisible:target];
+	[self setNeedsDisplay:YES];   // Darling verschiebt beim Scrollen Pixel und zeichnete Teile nicht neu
+	return YES;
 }
 // Taste gedrückt auf einem ausgewählten Eintrag: ab 4 Punkten Weg wird gezogen. YES = es wurde gezogen.
 - (BOOL)fkTrackDrag:(NSEvent *)down grabbed:(NSInteger)i {
@@ -1608,6 +1675,10 @@ static FKQuickLookView *gQLView;
 @property (strong) FKItem *item;
 @property NSInteger count;
 @property BOOL copying, list, solid;   // solid: ohne Alphakanal im Fenster (ClokeOS), dafür ausgeschnitten
+@property BOOL iconOnly;               // nur das Symbol zeichnen (für die Form aus dessen Pixeln)
+- (NSRect)labelRect;
+- (NSRect)copyBadgeRect;
+- (NSRect)countBadgeRect;
 @property NSRect iconRect;
 @end
 @implementation FKDragImageView
@@ -1622,37 +1693,61 @@ static FKQuickLookView *gQLView;
 		NSImage *img = iconFor(self.item.path, self.item.kind, self.list);
 		[img drawInRect:ir fromRect:NSZeroRect operation:NSCompositeSourceOver fraction:alpha respectFlipped:YES hints:nil];
 	}
+	if (self.iconOnly) return;
 	NSDictionary *at = textAttrs(13, NO, [NSColor whiteColor], self.list ? NSLeftTextAlignment : NSCenterTextAlignment);
-	NSSize ts = [self.item.name sizeWithAttributes:at];
-	NSRect tr = self.list ? NSMakeRect(NSMaxX(ir) + 6, NSMinY(ir) - 1, MIN(ts.width + 12, NSWidth([self bounds]) - NSMaxX(ir) - 10), 19)
-	                      : NSMakeRect(NSMidX([self bounds]) - MIN(ts.width + 12, NSWidth([self bounds]) - 4) / 2, NSMaxY(ir) + 9,
-	                                   MIN(ts.width + 12, NSWidth([self bounds]) - 4), 19);
+	NSRect tr = [self labelRect];
 	[rgb(124, 92, 255, self.solid ? 1 : 0.85) setFill];
 	[[NSBezierPath bezierPathWithRoundedRect:tr xRadius:5 yRadius:5] fill];
 	[self.item.name drawInRect:NSInsetRect(tr, 6, 1) withAttributes:at];
 	// Zähler (mehrere Einträge) und grünes Plus (kopieren) oben rechts am Symbol, wie bei macOS
-	CGFloat bx = NSMaxX(ir) - 6, by = NSMinY(ir) - 6;
 	if (self.copying) {
-		NSRect b = NSMakeRect(bx, by, 18, 18);
+		NSRect b = [self copyBadgeRect];
 		[rgb(52, 199, 89, 1) setFill];
 		[[NSBezierPath bezierPathWithOvalInRect:b] fill];
 		NSBezierPath *p = [NSBezierPath bezierPath];
 		[p moveToPoint:NSMakePoint(NSMidX(b), NSMinY(b) + 4.5)]; [p lineToPoint:NSMakePoint(NSMidX(b), NSMaxY(b) - 4.5)];
 		[p moveToPoint:NSMakePoint(NSMinX(b) + 4.5, NSMidY(b))]; [p lineToPoint:NSMakePoint(NSMaxX(b) - 4.5, NSMidY(b))];
 		[p setLineWidth:2]; [[NSColor whiteColor] setStroke]; [p stroke];
-		bx -= 20;
 	}
 	if (self.count > 1) {
 		NSString *n = [NSString stringWithFormat:@"%ld", (long)self.count];
 		NSDictionary *bat = textAttrs(12, YES, [NSColor whiteColor], NSCenterTextAlignment);
-		CGFloat w = MAX(18, [n sizeWithAttributes:bat].width + 10);
-		NSRect b = NSMakeRect(bx - w + 18, by, w, 18);
+		NSRect b = [self countBadgeRect];
+		CGFloat w = NSWidth(b);
 		[rgb(255, 59, 48, 1) setFill];
 		[[NSBezierPath bezierPathWithRoundedRect:b xRadius:9 yRadius:9] fill];
 		[n drawInRect:NSMakeRect(NSMinX(b), NSMinY(b) + 1, w, 16) withAttributes:bat];
 	}
 }
+- (NSRect)labelRect {
+	NSRect ir = self.iconRect;
+	CGFloat tw = [self.item.name sizeWithAttributes:textAttrs(13, NO, [NSColor whiteColor], NSLeftTextAlignment)].width + 12;
+	if (self.list) return NSMakeRect(NSMaxX(ir) + 6, NSMinY(ir) - 1, MIN(tw, NSWidth([self bounds]) - NSMaxX(ir) - 10), 19);
+	tw = MIN(tw, NSWidth([self bounds]) - 4);
+	return NSMakeRect(floor(NSMidX([self bounds]) - tw / 2), NSMaxY(self.iconRect) + 9, ceil(tw), 19);
+}
+- (NSRect)copyBadgeRect {
+	if (!self.copying) return NSZeroRect;
+	return NSMakeRect(NSMaxX(self.iconRect) - 6, NSMinY(self.iconRect) - 6, 18, 18);
+}
+- (NSRect)countBadgeRect {
+	if (self.count <= 1) return NSZeroRect;
+	NSString *n = [NSString stringWithFormat:@"%ld", (long)self.count];
+	CGFloat w = MAX(18, [n sizeWithAttributes:textAttrs(12, YES, [NSColor whiteColor], NSCenterTextAlignment)].width + 10);
+	CGFloat right = NSMaxX(self.iconRect) - 6 + 18 - (self.copying ? 20 : 0);
+	return NSMakeRect(right - w, NSMinY(self.iconRect) - 6, ceil(w), 18);
+}
 @end
+
+// abgerundetes Rechteck grob als Rechtecke für XShape (Ecken r abgeschnitten)
+static void fkAddRoundedShape(NSMutableArray *rects, NSRect r, CGFloat rad) {
+	if (NSIsEmptyRect(r)) return;
+	CGFloat steps[] = { rad, rad * 0.45, rad * 0.15 };   // Einzug je Stufe von außen nach innen
+	CGFloat h = rad / 3;
+	for (int i = 0; i < 3; i++)
+		[rects addObject:[NSValue valueWithRect:NSMakeRect(NSMinX(r) + steps[i], NSMinY(r) + i * h, NSWidth(r) - 2 * steps[i], NSHeight(r) - 2 * i * h)]];
+	[rects addObject:[NSValue valueWithRect:NSInsetRect(r, 0, rad)]];
+}
 
 // FKBrowserView in einem Fenster finden (das Fenster selbst oder ein Teil davon)
 static FKBrowserView *fkBrowserIn(NSView *v) {
@@ -1741,7 +1836,9 @@ static void fkShapeDragWindow(NSWindow *dw, FKDragImageView *iv) {
 		[flip translateXBy:0 yBy:H];
 		[flip scaleXBy:1 yBy:-1];
 		[flip concat];
+		iv.iconOnly = YES;   // Text im gespiegelten Bitmap-Kontext lag bei Darling eine Zeile versetzt: nur das Symbol aus Pixeln
 		[iv drawRect:[iv bounds]];
+		iv.iconOnly = NO;
 		[NSGraphicsContext restoreGraphicsState];
 		NSMutableArray *rects = [NSMutableArray array];
 		unsigned char *px = [bm bitmapData];
@@ -1753,6 +1850,9 @@ static void fkShapeDragWindow(NSWindow *dw, FKDragImageView *iv) {
 				while (x < W && px[y * bpr + x * 4 + 3] >= 100) x++;
 				if (x > x0) [rects addObject:[NSValue valueWithRect:NSMakeRect(x0, y, x - x0, 1)]];
 			}
+		fkAddRoundedShape(rects, [iv labelRect], 5);
+		fkAddRoundedShape(rects, [iv copyBadgeRect], 9);
+		fkAddRoundedShape(rects, [iv countBadgeRect], 9);
 		[dw performSelector:@selector(clk_setShapeRects:) withObject:rects];
 	}
 }
@@ -1797,29 +1897,51 @@ static void fkRunDrag(FKItemsView *src, NSEvent *ev, NSPoint startInWindow, NSIn
 
 	fk_drop cur = { nil, nil, -1, nil, NO, NO };
 	NSUInteger mods = [ev modifierFlags];
+	NSPoint lastWin = [ev locationInWindow];
+	NSTimeInterval hoverSince = [NSDate timeIntervalSinceReferenceDate];
 	BOOL first = YES;
 	for (;;) {
-		NSEventType t = [ev type];
-		if (t == NSLeftMouseDragged || t == NSFlagsChanged || first) {
-			if (t != NSFlagsChanged) {
-				NSPoint screen = [sw convertBaseToScreen:[ev locationInWindow]];
-				place(screen);
-				if (first) [dw orderFront:nil];
-				first = NO;
-				fk_drop d = fkDropAt(screen, paths, dw);
-				if (d.items != cur.items || d.side != cur.side || d.index != cur.index || (d.dir != cur.dir && ![d.dir isEqualToString:cur.dir])) {
-					fkSetHighlight(&cur, NO);
-					cur = d;
-					fkSetHighlight(&cur, YES);
-				}
+		NSEventType t = ev ? [ev type] : NSLeftMouseDragged;   // ev nil: Zeiger steht still (Federn, Rand-Scrollen)
+		if (t == NSLeftMouseUp) break;
+		if (ev && t != NSFlagsChanged) lastWin = [ev locationInWindow];
+		if (ev) mods = [ev modifierFlags];
+		NSPoint screen = [sw convertBaseToScreen:lastWin];
+		if (t != NSFlagsChanged) {
+			place(screen);
+			if (first) { [dw orderFront:nil]; [dw display]; }   // gleich zeichnen: sonst zeigte das Fenster kurz alten Inhalt
+			first = NO;
+			// Rand-Scrollen in der Ansicht unter dem Zeiger
+			if (cur.items) {
+				NSPoint pi = [cur.items convertPoint:[[cur.items window] convertScreenToBase:screen] fromView:nil];
+				if ([cur.items fkAutoscrollTo:pi]) hoverSince = [NSDate timeIntervalSinceReferenceDate];
 			}
-			mods = [ev modifierFlags];
-			BOOL copying = cur.dir && !cur.app && !cur.trash && fkCopies(paths, cur.dir, mods);
-			if (copying != iv.copying) { iv.copying = copying; fkShapeDragWindow(dw, iv); [iv setNeedsDisplay:YES]; }
-		} else if (t == NSLeftMouseUp) break;
-		ev = [sw nextEventMatchingMask:NSLeftMouseDraggedMask | NSLeftMouseUpMask | NSFlagsChangedMask untilDate:[NSDate distantFuture]
-		                        inMode:NSEventTrackingRunLoopMode dequeue:YES];
-		if (!ev) break;
+			fk_drop d = fkDropAt(screen, paths, dw);
+			if (d.items != cur.items || d.side != cur.side || d.index != cur.index || (d.dir != cur.dir && ![d.dir isEqualToString:cur.dir])) {
+				fkSetHighlight(&cur, NO);
+				cur = d;
+				fkSetHighlight(&cur, YES);
+				hoverSince = [NSDate timeIntervalSinceReferenceDate];
+			}
+			// Federnde Ordner (Finder): kurz über einem Ordner oder Seitenleisten-Eintrag warten öffnet ihn im selben Fenster
+			BOOL springy = cur.dir && !cur.app && !cur.trash && ((cur.items && cur.index >= 0) || cur.side);
+			if (springy && [NSDate timeIntervalSinceReferenceDate] - hoverSince > 0.9) {
+				FKBrowserView *b = cur.items ? cur.items.browser : cur.side.browser;
+				NSString *dir = [cur.dir copy];
+				for (int k = 0; k < 2; k++) {   // zweimal aufblinken wie im Finder
+					fkSetHighlight(&cur, NO); [[b window] displayIfNeeded]; usleep(70000);
+					fkSetHighlight(&cur, YES); [[b window] displayIfNeeded]; usleep(70000);
+				}
+				fkSetHighlight(&cur, NO);
+				[b goTo:dir];
+				cur = fkDropAt(screen, paths, dw);
+				fkSetHighlight(&cur, YES);
+				hoverSince = [NSDate timeIntervalSinceReferenceDate];
+			}
+		}
+		BOOL copying = cur.dir && !cur.app && !cur.trash && fkCopies(paths, cur.dir, mods);
+		if (copying != iv.copying) { iv.copying = copying; fkShapeDragWindow(dw, iv); [dw display]; }
+		ev = [sw nextEventMatchingMask:NSLeftMouseDraggedMask | NSLeftMouseUpMask | NSFlagsChangedMask
+		                     untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05] inMode:NSEventTrackingRunLoopMode dequeue:YES];
 	}
 	fkSetHighlight(&cur, NO);
 
