@@ -336,3 +336,44 @@ Not tested: arm64 (builds only), real hardware, third-party AUv2 plug-ins (only 
 the unit API concurrently, `AudioComponentRegister` with an in-process factory (code path shared with the
 built-ins, no test), files over 2 GB, big-endian or 8-bit files other than via the round trip, the
 `AudioFileOpenWithCallbacks` path, `Seek` with sample-rate conversion.
+
+## 6. CoreMIDI (`macapps/coremidi/`, 2026-11-14)
+
+`macapps/coremidi.sh` builds `CoreMIDI.framework` (install name and version of Apple's, 105 exports) from
+`macapps/coremidi/CoreMIDI.c` and replaces the stub framework from `stubs.sh` (`install.sh` runs it after the stubs).
+There is no MIDI server and no driver: everything happens inside the process, as if only Apple's IAC-style virtual
+endpoints existed.
+
+* Clients (`MIDIClientCreate`, `…WithBlock`) with notifications: creating or disposing a virtual endpoint sends
+  `kMIDIMsgObjectAdded`/`Removed` and `kMIDIMsgSetupChanged` to every client, delivered on the main run loop.
+* Input ports (read proc, read block, receive block with protocol), output ports, `MIDIPortConnectSource`/`Disconnect`.
+* Virtual sources and destinations (all create variants, also with protocol); `MIDIGetNumberOfSources/Destinations`,
+  `MIDIGetSource/Destination` list them in creation order. No devices or entities (`MIDIGetNumberOfDevices` = 0,
+  `MIDIEndpointGetEntity` = `kMIDIObjectNotFound`, as Apple answers for a virtual endpoint).
+* `MIDIReceived(EventList)` goes to every input port connected to the source, `MIDISend(EventList)`/`MIDISendSysex` to
+  the destination's read callback, on a delivery thread of its own (in order; Apple also delivers on a separate thread,
+  and synchronous delivery could deadlock a program that is both source and reader). Time stamps are not waited for.
+* MIDI 1.0 packet lists and UMP event lists are converted in both directions with the packet boundaries kept: MIDI 1.0
+  channel voice as UMP type 2, system messages as type 1, SysEx as type 3, and MIDI 2.0 channel voice (type 4) with the
+  spec's min-center-max scaling (7 to 16 and 32 bit, 14 to 32 bit) for ports and endpoints created with protocol 2.0.
+* `MIDIPacketListInit/Add` and `MIDIEventListInit/Add` follow Apple (same time stamp and no SysEx: appended to the current
+  packet; 4-byte packet alignment on arm64 through the SDK's `MIDIPacketNext`; NULL when the list is full).
+* Properties are a dictionary per object (name, unique ID, protocol, anything set by the program); `displayName` falls
+  back to `name`; `MIDIObjectFindByUniqueID`; errors as Apple's (`kMIDIUnknownProperty`, `kMIDIWrongPropertyType`, …).
+* `CLOKE_MIDI_TRACE=1` logs clients, ports, endpoints and connections.
+
+**Checked.** `macapps/coremidi/mtest.c` (43 lines of output: packet and event lists, notifications, properties, unique IDs,
+error codes, delivery to read procs and receive blocks in MIDI 1.0 and 2.0, sending to destinations) gives the same output
+against Apple's CoreMIDI on the Mac (three runs), against `CoreMIDI.c` compiled for the Mac, and in the arm64 VM against
+the framework (`/Library/ClokeOS/Probe/mtest`). Logic Pro 12.3 in the arm64 VM: the "Error initializing CoreMIDI / MIDI
+Services not available" alert is gone; Logic creates a client, an input and an output port, a virtual source and a virtual
+destination, and opens `Jump.logicx`.
+
+Found on the way: a program that links only CoreFoundation (no Foundation) crashes in Darling's CoreFoundation on arm64
+at the first `CFDictionaryCreateMutable` (even with NULL callbacks); with Foundation linked it works. Mac apps always load
+Foundation, so `mtest` links it; the cause is not investigated.
+
+Not done / untested: MIDI hardware (no USB MIDI class driver in PureDarwin), a MIDI server shared between processes
+(virtual endpoints are only visible inside the process that made them), scheduling by time stamp, `MIDIThruConnection`,
+`MIDISetup`, MIDI-CI and the UMP endpoint APIs, MIDI 2.0 messages other than channel voice when converting down, x86_64 in
+the VM (builds only), playing MIDI into Logic.

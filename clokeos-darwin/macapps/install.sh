@@ -40,6 +40,7 @@ done
 [ -f "$WORK/out/stubgen/imports.json" ] && { "$M/stubs.sh" | tail -1 || true; }
 "$M/coreaudio.sh" | tail -2 | head -1 || echo "CoreAudio-Shim nicht gebaut"
 "$M/audiotoolbox.sh" | tail -2 | head -1 || echo "AudioToolbox-Teilmenge nicht gebaut"
+"$M/coremidi.sh" | tail -1 || echo "CoreMIDI nicht gebaut"
 "$M/accelerate.sh" | tail -2 | head -1 || echo "Accelerate-Teilmenge nicht gebaut"
 "$M/libs.sh" | tail -1 || echo "libsqlite3/libxml2/libbz2/libpcre/libxar nicht gebaut"
 "$M/pkginstall.sh" | tail -1 || echo "clokeos-pkginstall nicht gebaut"

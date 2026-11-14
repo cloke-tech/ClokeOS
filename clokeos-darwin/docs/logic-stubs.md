@@ -44,8 +44,8 @@ Frameworks: Metal, MetalKit, MetalPerformanceShaders, ScreenCaptureKit, StoreKit
 GameController, MultipeerConnectivity, QuickLookUI, PDFKit, GameplayKit, CoreMotion, iTunesLibrary, DiscRecording,
 UniformTypeIdentifiers, CoreML, WebKit, JavaScriptCore, Security, PackageKit, AssetCacheServices, libMobileGestalt,
 Cinematic, AVFoundation, AVFAudio, CoreMedia, CoreVideo, VideoToolbox, MediaToolbox, AVKit, CoreMIDI (33).
-**CoreMIDI is stub only and has to be replaced by a real implementation** (all 54 imports answer -4 or nil).
-Not stubbed because real code exists in `macapps/`: CoreFoundation, Foundation, AppKit, CoreGraphics, CoreAudio, AudioToolbox, Accelerate.
+CoreMIDI was stub only (all 54 imports answered -4 or nil, Logic showed "Error initializing CoreMIDI"); since 2026-11-14 `macapps/coremidi.sh` replaces the stub with a real implementation (`docs/audio-stack.md`, section 6).
+Not stubbed because real code exists in `macapps/`: CoreFoundation, Foundation, AppKit, CoreGraphics, CoreAudio, AudioToolbox, Accelerate, CoreMIDI.
 
 ## Regenerate
 
@@ -102,7 +102,7 @@ Per framework (symbols imported by Logic and the Mac frameworks; functions / con
 | AVFAudio | 24 | 0 | 0 / 13 / 10 / 0 |
 | CoreMedia | 63 | 0 | 52 / 11 / 0 / 0 |
 | CoreVideo | 20 | 0 | 17 / 3 / 0 / 0 |
-| CoreMIDI | 54 | 0 | 40 / 14 / 0 / 0 (**replace later**) |
+| CoreMIDI | 54 | 0 | 40 / 14 / 0 / 0 (replaced by `macapps/coremidi`) |
 | CoreML | 23 | 16 | 0 / 0 / 7 / 0 |
 | StoreKit | 6 | 6 | none |
 | Network | 12 | 12 | none |
