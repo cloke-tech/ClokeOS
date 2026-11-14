@@ -231,3 +231,14 @@ Boolean CFURLResourceIsReachable(CFURLRef url, CFErrorRef *err) {
     clk_bm_err(err, 260);
     return false;
 }
+
+// CoreFoundation von selbst initialisieren. foundation.sh gibt ld zwar -init ___CFInitialize mit, aber Apples neuer
+// Linker legt dafür kein LC_ROUTINES mehr an; __CFInitialize lief deshalb nur, wenn Darlings Foundation es aufrief
+// (NSPlatform_Apportable.m). Programme ohne Foundation fanden einen leeren Standard-Allokator (Zone NULL) und stürzten
+// beim ersten CF-Objekt in malloc_zone_malloc ab. __CFInitialize merkt sich, dass es lief; es muss auf dem
+// Haupt-Thread laufen (sonst HALT), bei einem dlopen aus einem anderen Thread bleibt es beim späteren Aufruf.
+#include <pthread.h>
+extern void __CFInitialize(void);
+__attribute__((constructor)) static void clk_cf_initialize(void) {
+	if (pthread_main_np()) __CFInitialize();
+}

@@ -369,9 +369,14 @@ the framework (`/Library/ClokeOS/Probe/mtest`). Logic Pro 12.3 in the arm64 VM: 
 Services not available" alert is gone; Logic creates a client, an input and an output port, a virtual source and a virtual
 destination, and opens `Jump.logicx`.
 
-Found on the way: a program that links only CoreFoundation (no Foundation) crashes in Darling's CoreFoundation on arm64
-at the first `CFDictionaryCreateMutable` (even with NULL callbacks); with Foundation linked it works. Mac apps always load
-Foundation, so `mtest` links it; the cause is not investigated.
+Found on the way (fixed the same day): a program that links only CoreFoundation (no Foundation) crashed in Darling's
+CoreFoundation at the first CF object. Cause: `foundation.sh` links CF with `-Wl,-init,___CFInitialize`, but Apple's current
+linker writes no `LC_ROUTINES` for it any more (checked with `otool -l`, both architectures), so `__CFInitialize` only ran
+when Darling's Foundation called it (`NSPlatform_Apportable.m`); without Foundation the default allocator had a NULL malloc
+zone and `malloc_zone_malloc` faulted (`CFStringCreateWithCString` returned NULL first). `macapps/cfcompat.m` now calls
+`__CFInitialize` from a constructor (`__mod_init_func`, on the main thread only; the function remembers that it ran, so
+Foundation's call is harmless). Checked in the arm64 VM: a pure-CF program creates strings, arrays and dictionaries, `mtest`
+linked without Foundation gives Apple's output, and the Cocoa app Hallo starts as before.
 
 Not done / untested: MIDI hardware (no USB MIDI class driver in PureDarwin), scheduling by time stamp, `MIDIThruConnection`,
 `MIDISetup`, MIDI-CI and the UMP endpoint APIs, MIDI 2.0 messages other than channel voice when converting down, x86_64 in
