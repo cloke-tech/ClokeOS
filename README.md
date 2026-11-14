@@ -181,6 +181,10 @@ The login shows date and clock over the blurred wallpaper, the accounts with ava
 
 CloakServer itself runs as root, like loginwindow on macOS, and starts apps as the logged-in user, with their rights, home and environment and their own session D-Bus. "Log Out" closes all windows, ends all of the user's processes and returns to the login. Shut down and restart are run by CloakServer as root.
 
+#### Fundus, the Finder of ClokeOS
+
+Fundus 2 is a Mac app in Objective-C on ClokeOS's own AppKit (`macapps/fundus/`, details and plan in [`docs/fundus.md`](clokeos-darwin/docs/fundus.md)): a window without a title bar (traffic lights over the sidebar), Favorites and Locations in the sidebar, icon and list view, Finder-style folder icons, previews of pictures and text files right in the icons, Quick Look with the space bar, the Finder's menus and shortcuts, and five languages. The same browser appears in the Open and Save panels of every Mac app, Logic Pro included. `open` works as on macOS (`open file`, `open -a App`, `open -R file`).
+
 #### Apps as on macOS
 
 ![Launchpad: a search field and the apps in a grid over the blurred wallpaper](clokeos-darwin/screenshots/launchpad.png)

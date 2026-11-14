@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Übersetzungen von Fundus/FundusKit. strings.py <Resources-Ordner> schreibt <lang>.lproj/Localizable.strings
+(XML-Plist, das liest Darlings Foundation sicher). Eine neue Sprache: eine Spalte in T ergänzen."""
+import os, plistlib, sys
+
+LANGS = ['en', 'de', 'fr', 'es', 'it']
+T = {
+    'sidebar.favorites': ['Favorites', 'Favoriten', 'Favoris', 'Favoritos', 'Preferiti'],
+    'sidebar.locations': ['Locations', 'Orte', 'Emplacements', 'Ubicaciones', 'Posizioni'],
+    'sidebar.home': ['Home', 'Benutzerordner', 'Départ', 'Inicio', 'Inizio'],
+    'sidebar.desktop': ['Desktop', 'Schreibtisch', 'Bureau', 'Escritorio', 'Scrivania'],
+    'sidebar.documents': ['Documents', 'Dokumente', 'Documents', 'Documentos', 'Documenti'],
+    'sidebar.downloads': ['Downloads', 'Downloads', 'Téléchargements', 'Descargas', 'Download'],
+    'sidebar.movies': ['Movies', 'Filme', 'Vidéos', 'Películas', 'Filmati'],
+    'sidebar.music': ['Music', 'Musik', 'Musique', 'Música', 'Musica'],
+    'sidebar.pictures': ['Pictures', 'Bilder', 'Images', 'Imágenes', 'Immagini'],
+    'sidebar.public': ['Public', 'Öffentlich', 'Public', 'Público', 'Pubblica'],
+    'sidebar.library': ['Library', 'Library', 'Bibliothèque', 'Biblioteca', 'Libreria'],
+    'sidebar.applications': ['Applications', 'Programme', 'Applications', 'Aplicaciones', 'Applicazioni'],
+    'sidebar.trash': ['Trash', 'Papierkorb', 'Corbeille', 'Papelera', 'Cestino'],
+    'sidebar.root': ['Cloke HD', 'Cloke HD', 'Cloke HD', 'Cloke HD', 'Cloke HD'],
+    'sidebar.volumes': ['Volumes', 'Volumes', 'Volumes', 'Volúmenes', 'Volumi'],
+    'sidebar.nt': ['Windows (C:)', 'Windows (C:)', 'Windows (C:)', 'Windows (C:)', 'Windows (C:)'],
+    'sidebar.tux': ['Linux', 'Linux', 'Linux', 'Linux', 'Linux'],
+    'kind.folder': ['Folder', 'Ordner', 'Dossier', 'Carpeta', 'Cartella'],
+    'kind.app': ['Application', 'Programm', 'Application', 'Aplicación', 'Applicazione'],
+    'kind.image': ['Image', 'Bild', 'Image', 'Imagen', 'Immagine'],
+    'kind.audio': ['Audio', 'Audio', 'Audio', 'Audio', 'Audio'],
+    'kind.video': ['Movie', 'Film', 'Vidéo', 'Película', 'Filmato'],
+    'kind.text': ['Plain Text', 'Reiner Text', 'Texte brut', 'Texto sin formato', 'Testo semplice'],
+    'kind.code': ['Source Code', 'Quellcode', 'Code source', 'Código fuente', 'Codice sorgente'],
+    'kind.pdf': ['PDF Document', 'PDF-Dokument', 'Document PDF', 'Documento PDF', 'Documento PDF'],
+    'kind.archive': ['Archive', 'Archiv', 'Archive', 'Archivo comprimido', 'Archivio'],
+    'kind.diskimage': ['Disk Image', 'Image', 'Image disque', 'Imagen de disco', 'Immagine disco'],
+    'kind.exe': ['Windows Program', 'Windows-Programm', 'Programme Windows', 'Programa de Windows', 'Programma Windows'],
+    'kind.document': ['Document', 'Dokument', 'Document', 'Documento', 'Documento'],
+    'kind.package': ['Package', 'Paket', 'Paquet', 'Paquete', 'Pacchetto'],
+    'kind.alias': ['Alias', 'Alias', 'Alias', 'Alias', 'Alias'],
+    'kind.executable': ['Unix Executable', 'Unix-Programm', 'Exécutable Unix', 'Ejecutable Unix', 'Eseguibile Unix'],
+    'kind.file': ['Document', 'Dokument', 'Document', 'Documento', 'Documento'],
+    'column.name': ['Name', 'Name', 'Nom', 'Nombre', 'Nome'],
+    'column.date': ['Date Modified', 'Änderungsdatum', 'Date de modification', 'Fecha de modificación', 'Data modifica'],
+    'column.size': ['Size', 'Größe', 'Taille', 'Tamaño', 'Dimensione'],
+    'column.kind': ['Kind', 'Art', 'Type', 'Clase', 'Tipo'],
+    'status.empty': ['This folder is empty', 'Dieser Ordner ist leer', 'Ce dossier est vide', 'Esta carpeta está vacía', 'Questa cartella è vuota'],
+    'status.item': ['1 item', '1 Objekt', '1 élément', '1 ítem', '1 elemento'],
+    'status.items': ['%lu items', '%lu Objekte', '%lu éléments', '%lu ítems', '%lu elementi'],
+    'status.selected': ['%lu of %lu selected', '%lu von %lu ausgewählt', '%lu sur %lu sélectionnés', '%lu de %lu seleccionados', '%lu di %lu selezionati'],
+    'status.available': ['%@, %@ available', '%@, %@ verfügbar', '%@, %@ disponibles', '%@, %@ disponibles', '%@, %@ disponibili'],
+    'search.placeholder': ['Search', 'Suchen', 'Rechercher', 'Buscar', 'Cerca'],
+    'newfolder.name': ['untitled folder', 'Neuer Ordner', 'Nouveau dossier', 'carpeta sin título', 'cartella senza titolo'],
+    'menu.about': ['About Fundus', 'Über Fundus', 'À propos de Fundus', 'Acerca de Fundus', 'Informazioni su Fundus'],
+    'menu.emptytrash': ['Empty Trash', 'Papierkorb entleeren', 'Vider la corbeille', 'Vaciar la papelera', 'Svuota il cestino'],
+    'menu.hide': ['Hide Fundus', 'Fundus ausblenden', 'Masquer Fundus', 'Ocultar Fundus', 'Nascondi Fundus'],
+    'menu.quit': ['Quit Fundus', 'Fundus beenden', 'Quitter Fundus', 'Salir de Fundus', 'Esci da Fundus'],
+    'menu.file': ['File', 'Ablage', 'Fichier', 'Archivo', 'File'],
+    'menu.newwindow': ['New Fundus Window', 'Neues Fundus-Fenster', 'Nouvelle fenêtre Fundus', 'Nueva ventana de Fundus', 'Nuova finestra di Fundus'],
+    'menu.newfolder': ['New Folder', 'Neuer Ordner', 'Nouveau dossier', 'Nueva carpeta', 'Nuova cartella'],
+    'menu.open': ['Open', 'Öffnen', 'Ouvrir', 'Abrir', 'Apri'],
+    'menu.close': ['Close Window', 'Fenster schließen', 'Fermer la fenêtre', 'Cerrar ventana', 'Chiudi finestra'],
+    'menu.rename': ['Rename', 'Umbenennen', 'Renommer', 'Renombrar', 'Rinomina'],
+    'menu.duplicate': ['Duplicate', 'Duplizieren', 'Dupliquer', 'Duplicar', 'Duplica'],
+    'menu.trash': ['Move to Trash', 'In den Papierkorb legen', 'Placer dans la corbeille', 'Trasladar a la papelera', 'Sposta nel cestino'],
+    'menu.terminal': ['Open in Terminal', 'Im Terminal öffnen', 'Ouvrir dans Terminal', 'Abrir en Terminal', 'Apri nel Terminale'],
+    'menu.find': ['Find', 'Suchen', 'Rechercher', 'Buscar', 'Trova'],
+    'menu.edit': ['Edit', 'Bearbeiten', 'Édition', 'Edición', 'Composizione'],
+    'menu.cut': ['Cut', 'Ausschneiden', 'Couper', 'Cortar', 'Taglia'],
+    'menu.copy': ['Copy', 'Kopieren', 'Copier', 'Copiar', 'Copia'],
+    'menu.paste': ['Paste Item', 'Objekt einsetzen', 'Coller l’élément', 'Pegar ítem', 'Incolla elemento'],
+    'menu.selectall': ['Select All', 'Alles auswählen', 'Tout sélectionner', 'Seleccionar todo', 'Seleziona tutto'],
+    'menu.view': ['View', 'Darstellung', 'Présentation', 'Visualización', 'Vista'],
+    'menu.asicons': ['as Icons', 'Als Symbole', 'Par icônes', 'Como iconos', 'Come icone'],
+    'menu.aslist': ['as List', 'Als Liste', 'Par liste', 'Como lista', 'Come elenco'],
+    'menu.hidden': ['Show Hidden Files', 'Unsichtbare Dateien zeigen', 'Afficher les fichiers masqués', 'Mostrar archivos ocultos', 'Mostra file nascosti'],
+    'menu.reload': ['Reload', 'Neu laden', 'Actualiser', 'Volver a cargar', 'Ricarica'],
+    'menu.go': ['Go', 'Gehe zu', 'Aller', 'Ir', 'Vai'],
+    'menu.back': ['Back', 'Zurück', 'Précédent', 'Atrás', 'Indietro'],
+    'menu.forward': ['Forward', 'Vorwärts', 'Suivant', 'Adelante', 'Avanti'],
+    'menu.enclosing': ['Enclosing Folder', 'Übergeordneter Ordner', 'Dossier parent', 'Carpeta contenedora', 'Cartella superiore'],
+    'menu.gotofolder': ['Go to Folder…', 'Gehe zum Ordner …', 'Aller au dossier…', 'Ir a la carpeta…', 'Vai alla cartella…'],
+    'menu.window': ['Window', 'Fenster', 'Fenêtre', 'Ventana', 'Finestra'],
+    'menu.minimize': ['Minimize', 'Im Dock ablegen', 'Placer dans le Dock', 'Minimizar', 'Contrai'],
+    'panel.open': ['Open', 'Öffnen', 'Ouvrir', 'Abrir', 'Apri'],
+    'panel.save': ['Save', 'Sichern', 'Enregistrer', 'Guardar', 'Salva'],
+    'panel.saveas': ['Save As:', 'Sichern unter:', 'Enregistrer sous :', 'Guardar como:', 'Salva come:'],
+    'panel.untitled': ['Untitled', 'Ohne Titel', 'Sans titre', 'Sin título', 'Senza titolo'],
+    'panel.cancel': ['Cancel', 'Abbrechen', 'Annuler', 'Cancelar', 'Annulla'],
+    'panel.savebutton': ['Save', 'Sichern', 'Enregistrer', 'Guardar', 'Salva'],
+    'panel.openbutton': ['Open', 'Öffnen', 'Ouvrir', 'Abrir', 'Apri'],
+    'panel.go': ['Go', 'Öffnen', 'Aller', 'Ir', 'Vai'],
+}
+
+def main(res):
+    for i, lang in enumerate(LANGS):
+        d = os.path.join(res, f'{lang}.lproj')
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, 'Localizable.strings'), 'wb') as f:
+            plistlib.dump({k: v[i] for k, v in T.items()}, f)
+    print(len(T), 'Texte in', len(LANGS), 'Sprachen')
+
+if __name__ == '__main__':
+    main(sys.argv[1])

@@ -144,4 +144,6 @@ cat > "$app/Info.plist" <<EOF
 </dict>
 </plist>
 EOF
+# Fundus 2: FundusKit.framework und Fundus.app (ersetzt die Thunar-Hülle aus bundles.py), docs/fundus.md
+"$M/fundus.sh" "$stage" | tail -1 || echo "Fundus nicht gebaut (Thunar bleibt)"
 echo "Mac-Frameworks: $(ls "$fw" | wc -l | tr -d ' ') Frameworks und Hallo.app in der Stage"

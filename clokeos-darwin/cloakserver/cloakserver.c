@@ -270,6 +270,7 @@ static void focus_client(Client *c);
 static void raise_client(Client *c);
 static void close_menu(void);
 static int app_by_ident(const char *id);
+static void open_path(const char *with, const char *path, bool reveal);
 static const char *const *cal_subst(void);
 static cairo_surface_t *bundle_icon(const Bundle *b, int size, const char *const *subst);
 static void gm_focus(Client *c);
@@ -3871,7 +3872,13 @@ static void show_tip(int k) {
   paint_window(tipwin, tip_w, th, paint_tip, NULL);
 }
 
-static void open_trash(void) { spawn("mkdir -p \"$HOME/.Trash\" && exec thunar \"$HOME/.Trash\""); }
+static void open_trash(void) {
+  char t[PATH_MAX];
+  snprintf(t, sizeof t, "%s/.Trash", getenv("HOME") ? getenv("HOME") : "/var/root");
+  if (session) snprintf(t, sizeof t, "%s/.Trash", session->home);
+  mkdir(t, 0700);
+  open_path(NULL, t, false);
+}
 static void cmd_open_trash(long unused) { (void)unused; open_trash(); }
 
 static void dock_click(int k) {
@@ -3915,15 +3922,7 @@ static void cmd_unkeep(long i) {
   draw_dock();
 }
 
-static void cmd_show_in_fundus(long i) {
-  char dir[PATH_MAX], q[PATH_MAX + 64], cmd[PATH_MAX + 80];
-  snprintf(dir, sizeof dir, "%s", apps[i].b.path);
-  char *slash = strrchr(dir, '/');
-  if (slash) *slash = 0;
-  sh_quote(q, sizeof q, dir);
-  snprintf(cmd, sizeof cmd, "thunar %s", q);
-  spawn(cmd);
-}
+static void cmd_show_in_fundus(long i) { open_path(NULL, apps[i].b.path, true); }
 
 static void dock_menu(int k) {
   if (k < 0 || k >= nditems) return;
@@ -4685,10 +4684,77 @@ static void launch_with(int i, const char *arg) {
   char q[2600], a[1200], cmd[3900];
   sh_quote(q, sizeof q, apps[i].b.exec);
   sh_quote(a, sizeof a, arg);
-  snprintf(cmd, sizeof cmd, "%s %s", q, a);
+  snprintf(cmd, sizeof cmd, apps[i].b.macfw ? "%s -NSOpen %s" : "%s %s", q, a);
   apps[i].bounce_t0 = now_s();
   apps[i].pid = spawn_env(cmd, false, apps[i].b.macfw);
   draw_dock();
+}
+
+/* ---- Öffnen wie im Finder (open-Befehl, Fundus, Spotlight, Dock) ---------------------------------------
+ * Programme (.app) starten, Ordner in Fundus zeigen, Dokumente mit ihrem Standardprogramm (gio open, mimeapps.list).
+ * with: Kennung oder Name eines Programms, das den Pfad öffnen soll. reveal: in Fundus zeigen statt öffnen.
+ * Aufträge kommen von /usr/bin/open (cloakserver/open.c) als Eigenschaft _CLOKE_OPEN am Root-Fenster:
+ * Zeilen "with<TAB>flags<TAB>pfad"; CloakServer liest und löscht sie in einem Schritt. */
+static Atom CLOKE_OPEN;
+
+static int app_by_path_or_name(const char *s) {
+  for (int i = 0; i < napps; i++)
+    if (!apps[i].gone && (!strcmp(apps[i].b.path, s) || !strcmp(apps[i].b.ident, s) || !strcasecmp(apps[i].b.name, s))) return i;
+  for (int i = 0; i < napps; i++) {     /* "Notes" für Notes.app */
+    const char *b = strrchr(apps[i].b.path, '/');
+    char n[256];
+    snprintf(n, sizeof n, "%s", b ? b + 1 : apps[i].b.path);
+    char *dot = strrchr(n, '.');
+    if (dot) *dot = 0;
+    if (!apps[i].gone && !strcasecmp(n, s)) return i;
+  }
+  return -1;
+}
+
+static void open_path(const char *with, const char *path, bool reveal) {
+  if (with && *with) {
+    int i = app_by_path_or_name(with);
+    if (i < 0) { warn("open: kein Programm %s", with); return; }
+    if (path && *path) launch_with(i, path); else launch(i);
+    return;
+  }
+  if (!path || !*path) return;
+  struct stat st;
+  if (stat(path, &st) != 0) { warn("open: %s fehlt", path); return; }
+  size_t n = strlen(path);
+  bool isapp = S_ISDIR(st.st_mode) && n > 4 && !strcasecmp(path + n - 4, ".app");
+  if (reveal || (S_ISDIR(st.st_mode) && !isapp)) {
+    if (app_fundus >= 0 && !apps[app_fundus].gone) launch_with(app_fundus, path);
+    return;
+  }
+  if (isapp) {
+    int i = app_by_path_or_name(path);
+    if (i < 0) { add_bundle(path); i = app_by_path_or_name(path); }
+    if (i >= 0) launch(i);
+    return;
+  }
+  char q[PATH_MAX * 2 + 8], cmd[PATH_MAX * 2 + 32];
+  sh_quote(q, sizeof q, path);
+  snprintf(cmd, sizeof cmd, "gio open %s", q);
+  spawn(cmd);
+}
+
+static void open_requests(void) {
+  Atom type; int fmt; unsigned long nitems, after;
+  unsigned char *data = NULL;
+  if (XGetWindowProperty(dpy, root, CLOKE_OPEN, 0, 1 << 20, True, AnyPropertyType, &type, &fmt, &nitems, &after, &data) != Success || !data)
+    return;
+  char *save = NULL;
+  for (char *line = strtok_r((char *)data, "\n", &save); line; line = strtok_r(NULL, "\n", &save)) {
+    char *t1 = strchr(line, '\t'); if (!t1) continue;
+    *t1 = 0;
+    char *t2 = strchr(t1 + 1, '\t'); if (!t2) continue;
+    *t2 = 0;
+    const char *with = strcmp(line, "-") ? line : NULL, *flags = t1 + 1, *path = t2 + 1;
+    if (debug) warn("open: with=%s flags=%s %s", with ? with : "-", flags, path);
+    open_path(with, *path ? path : NULL, strchr(flags, 'R') != NULL);
+  }
+  XFree(data);
 }
 
 static void sp_activate(int i) {
@@ -4713,11 +4779,7 @@ static void sp_activate(int i) {
     break;
   }
   case SR_FILE: {
-    char qp[PATH_MAX * 2];
-    sh_quote(qp, sizeof qp, r.path);
-    char cmd[PATH_MAX * 2 + 40];
-    snprintf(cmd, sizeof cmd, "exec thunar %s", qp);
-    spawn(cmd);
+    open_path(NULL, r.path, false);
     break;
   }
   }
@@ -5178,7 +5240,7 @@ static void click_settings(Client *c, int x, int y) {
     case ST_WALL: set_wallpaper(arg); break;
     case ST_DOCKPOS: set_dock_pos(arg); break;
     case ST_DOCKSIZE: set_dock_size(arg); break;
-    case ST_OPENAPPS: spawn("exec thunar /Applications"); break;
+    case ST_OPENAPPS: open_path(NULL, "/Applications", false); break;
     case ST_LANG: set_language(l10n_code((int)arg)); break;
     case ST_KBD: set_keyboard((int)arg); break;
     case ST_SSH: set_remote_login(arg != 0); break;
@@ -5756,6 +5818,7 @@ static void setup_atoms(void) {
   GTK_WINDOW_OBJECT_PATH = atom("_GTK_WINDOW_OBJECT_PATH");
   CLOKE_MENU = atom("_CLOKE_MENU");
   CLOKE_MENU_ACTIVATE = atom("_CLOKE_MENU_ACTIVATE");
+  CLOKE_OPEN = atom("_CLOKE_OPEN");
 }
 
 static void setup_ewmh(void) {
@@ -6024,6 +6087,10 @@ int main(int argc, char **argv) {
         }
         case ConfigureRequest: on_configure_request(&ev.xconfigurerequest); break;
         case PropertyNotify: {
+          if (ev.xproperty.window == root && ev.xproperty.atom == CLOKE_OPEN && ev.xproperty.state == PropertyNewValue) {
+            open_requests();
+            break;
+          }
           Client *c = find_client(ev.xproperty.window);
           if (c && (ev.xproperty.atom == XA_WM_NAME || ev.xproperty.atom == NET_WM_NAME)) {
             update_title(c);
