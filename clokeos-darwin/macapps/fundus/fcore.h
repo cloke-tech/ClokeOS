@@ -48,7 +48,8 @@ const char *fc_kind_key(fc_kind k);          // Schlüssel für die Übersetzung
 const char *fc_special_path(fc_special s);   // statischer Puffer je Ordner
 const char *fc_special_key(fc_special s);    // "sidebar.home" …
 int fc_is_package(const char *path);         // .app, .bundle, .logicx … als Datei behandeln
-int fc_exists(const char *path, int *is_dir);  // 1 = vorhanden; is_dir (darf NULL sein) = Ordner (Links verfolgt)
+int fc_exists(const char *path, int *is_dir);
+int fc_same_volume(const char *a, const char *b);   // 1 = gleiches Volume (Ziehen: bewegen statt kopieren, wie der Finder)  // 1 = vorhanden; is_dir (darf NULL sein) = Ordner (Links verfolgt)
 
 // Dateioperationen
 int fc_mkdir_unique(const char *dir, const char *base, char *outpath, int outlen);

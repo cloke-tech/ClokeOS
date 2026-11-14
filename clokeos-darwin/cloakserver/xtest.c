@@ -8,6 +8,7 @@
  *   DISPLAY=:0 clokeos-xtest move <x> <y>
  *   DISPLAY=:0 clokeos-xtest key <name> [...]        Tasten (X-Namen: Return, Escape, a, F4, ...)
  *   DISPLAY=:0 clokeos-xtest type <text>             Text tippen (ASCII)
+ *   DISPLAY=:0 clokeos-xtest drag <x1> <y1> <x2> <y2> [alt]   mit gedrückter linker Taste ziehen (alt: mit Wahltaste)
  */
 #include <X11/Xlibint.h>
 #include <X11/XKBlib.h>
@@ -98,6 +99,24 @@ int main(int argc, char **argv) {
       usleep(60000);
       fake(dpy, ButtonRelease, b, 0, 0);
     }
+  } else if (argc >= 6 && !strcmp(argv[1], "drag")) {
+    int x1 = atoi(argv[2]), y1 = atoi(argv[3]), x2 = atoi(argv[4]), y2 = atoi(argv[5]);
+    bool alt = argc > 6 && !strcmp(argv[6], "alt");
+    KeyCode ak = XKeysymToKeycode(dpy, XK_Alt_L);
+    fake(dpy, MotionNotify, False, x1, y1);
+    usleep(150000);
+    fake(dpy, ButtonPress, 1, 0, 0);
+    XFlush(dpy);
+    usleep(200000);
+    if (alt) fake(dpy, KeyPress, ak, 0, 0);
+    for (int i = 1; i <= 30; i++) {
+      fake(dpy, MotionNotify, False, x1 + (x2 - x1) * i / 30, y1 + (y2 - y1) * i / 30);
+      XFlush(dpy);
+      usleep(30000);
+    }
+    usleep(getenv("XTEST_HOLD") ? atoi(getenv("XTEST_HOLD")) * 1000 : 300000);   /* Zeit für ein Bildschirmfoto mitten im Ziehen */
+    fake(dpy, ButtonRelease, 1, 0, 0);
+    if (alt) fake(dpy, KeyRelease, ak, 0, 0);
   } else if (argc >= 3 && !strcmp(argv[1], "key")) {
     for (int i = 2; i < argc; i++) {
       if (strchr(argv[i], '+') && argv[i][strlen(argv[i]) - 1] != '+') {
@@ -111,7 +130,7 @@ int main(int argc, char **argv) {
   } else if (argc >= 3 && !strcmp(argv[1], "type")) {
     for (const char *p = argv[2]; *p; p++) key(dpy, *p == ' ' ? XK_space : (KeySym)(unsigned char)*p);
   } else {
-    fprintf(stderr, "Aufruf: clokeos-xtest click|move <x> <y> [taste] | key <name>... | type <text>\n");
+    fprintf(stderr, "Aufruf: clokeos-xtest click|move <x> <y> [taste] | drag <x1> <y1> <x2> <y2> [alt] | key <name>... | type <text>\n");
     return 2;
   }
   XCloseDisplay(dpy);

@@ -34,6 +34,8 @@ struct CWin {
   Pixmap pm;
   cairo_surface_t *surf;
   Damage dmg;
+  XRectangle *shape; /* Form (XShape, Fensterkoordinaten), NULL = ganzes Rechteck */
+  int nshape;
   CWin *next; /* von unten nach oben */
 };
 
@@ -45,7 +47,7 @@ static Pixmap back_pm;
 static cairo_surface_t *back, *wall_surf;
 static Pixmap wall_surf_pm;
 static cairo_region_t *dirty;
-static int op_composite, op_damage, op_render, op_xfixes;
+static int op_composite, op_damage, op_render, op_xfixes, shape_event = -1;
 static XserverRegion parts; /* geänderte Teile eines Fensters, aus XDamageSubtract */
 
 /* ---------------------------------------------------------------------------------------- */
@@ -62,6 +64,26 @@ static void release(CWin *w) {
   if (w->pm) XFreePixmap(dpy, w->pm);
   w->surf = NULL;
   w->pm = None;
+}
+
+/* Form des Fensters holen: Programme ohne Alphakanal (Darlings X11-Fenster, z. B. ein Ziehbild) schneiden sich mit
+ * XShape zurecht; die Pixel außerhalb der Form sind in der Pixmap undefiniert und dürfen nicht gezeichnet werden. */
+static void fetch_shape(CWin *w) {
+  if (w->shape) XFree(w->shape);
+  w->shape = NULL;
+  w->nshape = 0;
+  if (shape_event < 0) return;
+  int bounding = 0, clip = 0, xb, yb, xc, yc;
+  unsigned wb, hb, wc, hc;
+  if (!XShapeQueryExtents(dpy, w->id, &bounding, &xb, &yb, &wb, &hb, &clip, &xc, &yc, &wc, &hc) || !bounding) return;
+  int n = 0, ord;
+  XRectangle *r = XShapeGetRectangles(dpy, w->id, ShapeBounding, &n, &ord);
+  if (n == 1 && r[0].x <= 0 && r[0].y <= 0 && r[0].width >= w->w && r[0].height >= w->h) {
+    XFree(r);
+    return;
+  }
+  w->shape = r;
+  w->nshape = n;
 }
 
 static void unlink_win(CWin *w) {
@@ -124,7 +146,9 @@ static CWin *add(Window id, Window above) {
   w->vis = wa.visual;
   w->input_only = wa.class == InputOnly;
   insert_above(w, above);
+  if (shape_event >= 0 && !w->input_only) XShapeSelectInput(dpy, id, ShapeNotifyMask);
   if (wa.map_state == IsViewable && !w->input_only) {
+    fetch_shape(w);
     w->mapped = true;
     w->dmg = XDamageCreate(dpy, id, XDamageReportNonEmpty);
     dirty_win(w);
@@ -136,6 +160,7 @@ static CWin *add(Window id, Window above) {
 static void remove_win(CWin *w, bool destroyed) {
   if (w->mapped) dirty_win(w);
   release(w);
+  if (w->shape) XFree(w->shape);
   if (w->dmg && !destroyed) XDamageDestroy(dpy, w->dmg);
   w->dmg = None;
   unlink_win(w);
@@ -160,6 +185,11 @@ bool comp_init(Display *d, int scr, Window r, int sw, int sh) {
     fprintf(stderr, "CloakServer: kein Damage/XFixes, ohne Compositing\n");
     return false;
   }
+  {
+    int sev, serr;
+    if (XShapeQueryExtension(dpy, &sev, &serr)) shape_event = sev;
+  }
+
   XVisualInfo tpl = {.screen = scr, .depth = 32, .class = TrueColor};
   int n = 0;
   XVisualInfo *vi = XGetVisualInfo(dpy, VisualScreenMask | VisualDepthMask | VisualClassMask, &tpl, &n);
@@ -248,6 +278,7 @@ void comp_handle(XEvent *ev) {
   case MapNotify:
     if ((w = find(ev->xmap.window)) && !w->input_only) {
       w->mapped = true;
+      fetch_shape(w);
       release(w);
       if (!w->dmg) w->dmg = XDamageCreate(dpy, w->id, XDamageReportNonEmpty);
       dirty_win(w);
@@ -288,7 +319,13 @@ void comp_handle(XEvent *ev) {
     if (ev->xexpose.window == overlay) dirty_rect(ev->xexpose.x, ev->xexpose.y, ev->xexpose.width, ev->xexpose.height);
     break;
   default:
-    if (ev->type == damage_event + XDamageNotify) {
+    if (shape_event >= 0 && ev->type == shape_event + ShapeNotify) {
+      XShapeEvent *se = (XShapeEvent *)ev;
+      if (se->kind == ShapeBounding && (w = find(se->window))) {
+        if (w->mapped) dirty_win(w);
+        fetch_shape(w);
+      }
+    } else if (ev->type == damage_event + XDamageNotify) {
       XDamageNotifyEvent *de = (XDamageNotifyEvent *)ev;
       XDamageSubtract(dpy, de->damage, None, parts);
       if ((w = find(de->drawable)) && w->mapped) {
@@ -528,6 +565,11 @@ void comp_repaint(void) {
     cairo_transform(cr, &place);
     if (st.kind == WK_FRAME && st.radius > 0) { /* 32-Bit-Fenster haben ihre Ecken selbst */
       rrect(cr, 0, 0, ww, wh, st.radius);
+      cairo_clip(cr);
+    }
+    if (w->shape) {
+      for (int i = 0; i < w->nshape; i++)
+        cairo_rectangle(cr, w->bw + w->shape[i].x, w->bw + w->shape[i].y, w->shape[i].width, w->shape[i].height);
       cairo_clip(cr);
     }
     cairo_set_source_surface(cr, s, 0, 0);

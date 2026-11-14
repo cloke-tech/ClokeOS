@@ -3598,6 +3598,18 @@ static bool menu_by_hover;
  * dem Programm) und fragt deshalb den Zustand der Tasten ab (pending_focus_check in der Hauptschleife). */
 static Client *pending_focus;
 static double pending_focus_t0;
+/* Hat das Programm zwischen Klick und Loslassen etwas gezogen, ruft es -[NSApplication preventWindowOrdering] (macOS);
+ * unser AppKit setzt dann _CLOKE_PREVENT_ORDERING am Fenster (macapps/appkit/ordering.m): kein Anheben beim Loslassen. */
+static bool take_prevent_ordering(Client *c) {
+  Atom a = XInternAtom(dpy, "_CLOKE_PREVENT_ORDERING", False), type;
+  int fmt;
+  unsigned long cnt, after;
+  unsigned char *data = NULL;
+  bool set = XGetWindowProperty(dpy, c->win, a, 0, 1, True, XA_CARDINAL, &type, &fmt, &cnt, &after, &data) == Success &&
+             type == XA_CARDINAL && cnt == 1 && data && *(long *)data;
+  if (data) XFree(data);
+  return set;
+}
 
 static void menubar_open(int i) {
   if (i == MB_SPOT) {
@@ -5314,6 +5326,7 @@ static void on_button_press(XButtonEvent *e) {
       raise_client(gc);
       focus_client(gc);
     } else {
+      take_prevent_ordering(gc); /* alte Marke weg */
       pending_focus = gc; /* erst beim Loslassen */
       pending_focus_t0 = now_s();
     }
@@ -6122,7 +6135,7 @@ int main(int argc, char **argv) {
       unsigned mask = 0;
       XQueryPointer(dpy, root, &rw, &cw, &rx, &ry, &wx, &wy, &mask);
       if (!(mask & (Button1Mask | Button2Mask | Button3Mask)) || now_s() - pending_focus_t0 > 60) {
-        if (client_alive(pending_focus) && !pending_focus->minimized) {
+        if (client_alive(pending_focus) && !pending_focus->minimized && !take_prevent_ordering(pending_focus)) {
           raise_client(pending_focus);
           focus_client(pending_focus);
         }

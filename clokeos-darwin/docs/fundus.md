@@ -97,5 +97,43 @@ FundusCore (`fc_exists`) and uses `UTF8String` paths. Loading a PDF with `NSImag
 reader, so PDFs keep their document icon (no thumbnail, no Quick Look picture). Logic tests ran with the logic session's image,
 whose AppKit is newer than main's; there the bridge was injected as a separate library built from the same source.
 
-Not done yet: drag and drop, column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
+## Look and drag and drop (2026-11-14, second round)
+
+* **Looks like the Finder of macOS 27** (compared side by side on the Mac, light and dark): toolbar with capsules (back/forward
+  with a divider, icon/list switch with the selected view in a darker capsule, new folder, a round search button that opens a
+  search field in a capsule), no line under the toolbar, sidebar in its own slightly darker colour without a border (rows 28 pt,
+  accent-coloured symbols, rounded selection), icon view with 112 pt cells, 64 pt icons and pictures without a white frame, the
+  name in an accent capsule when selected, list view with 20 pt rows, rounded zebra stripes that run to the bottom of the
+  window, column separators and a sort chevron, size right-aligned, dates as "Today at 16:31" / "Heute, 16:31". Path bar and
+  status bar are off by default like in the Finder (View > Show Path Bar ⌥⌘P, Show Status Bar ⌘/). Colours follow light/dark
+  mode of the program (`CLOKEOS_DARK`/`AppleInterfaceStyle`).
+* **Drag and drop** inside Fundus: selected items onto a folder, onto an app (opens them with it), into another Fundus window,
+  or onto a sidebar entry (Trash = move to Trash). Same volume moves, another volume copies, ⌥ always copies (green plus on the
+  drag image, red counter for several items). The target folder or window is highlighted; without a target the drag image slides
+  back. Dropped items are selected in the target window.
+* **Window focus like macOS**: a click into a background window does not bring it forward; it comes forward on mouse release
+  only if nothing was dragged; the target window of a drop is not activated. CloakServer already raised windows only on release
+  (`pending_focus`); now Fundus calls `-[NSApplication preventWindowOrdering]` when a drag starts, which our AppKit
+  (`macapps/appkit/ordering.m`) turns into the property `_CLOKE_PREVENT_ORDERING` on the window, and CloakServer then skips the
+  raise. `ordering.m` also implements `+[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:]` from the X server's
+  stacking order (Darling had neither).
+* **Drag image without black box**: Darling's X11 windows have no alpha channel, so FundusKit draws the drag image into a bitmap
+  and cuts the window to its opaque pixels with XShape (`-[NSWindow clk_setShapeRects:]` in `ordering.m`); CloakServer's
+  compositor now clips every window to its XShape bounding shape (`comp.c`), which also fixes undefined pixels outside a shape.
+* Tested in the arm64 VM: background-window drag into the front window (file moved, source window stayed behind, front window
+  unchanged), ⌥-drag onto a folder in the other window (copied). `clokeos-xtest drag x1 y1 x2 y2 [alt]` drives such tests.
+
+## Scroll bars like macOS (all Mac apps)
+
+`macapps/appkit/overlayscrollers.m` gives Darling's AppKit overlay scroll bars ("Show scroll bars: when scrolling"): content runs
+under the scroll bar, which is invisible until the view scrolls, then a thin rounded knob without track that fades out after
+about a second (wider with a light track while the knob is dragged); an invisible scroll bar does not take clicks.
+`AppleShowScrollBars = Always` or `CLOKE_SCROLLBARS=always` keeps the classic ones. On the way: Darling decided a scroller's
+direction once in `-initWithFrame:`; NSScrollView creates them 15 × 0 points large, so vertical scroll bars thought they were
+horizontal (no knob, the wheel over them did nothing); and the line scroll was 1 point (3 points per wheel step) instead of
+Apple's 10. Checked in Fundus (VM) and in Logic Pro 12.3 (no permanent scroll bars any more, scrolling works; Logic's track
+area is wider than the 1280-pixel VM screen, so its knob could not be seen there).
+
+Not done yet: dragging to other programs, the Dock and the desktop (XDND), spring-loaded folders, rubber-band selection,
+column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
 parent window (panels are modal windows), x86_64 in the VM, the GTK and Windows file dialogs (phase 3).

@@ -331,6 +331,12 @@ int fc_empty_trash(void) {
 	return r;
 }
 
+int fc_same_volume(const char *a, const char *b) {
+	struct stat sa, sb;
+	if (stat(a, &sa) || stat(b, &sb)) return 0;
+	return sa.st_dev == sb.st_dev;
+}
+
 int fc_trash_count(void) { return count_entries(fc_special_path(FC_TRASH)); }
 
 int fc_free_space(const char *path, int64_t *free_bytes, int64_t *total_bytes) {

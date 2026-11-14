@@ -21,6 +21,7 @@ typedef NS_ENUM(NSInteger, FKPurpose) { FKPurposeWindow = 0, FKPurposeOpen = 1, 
 @property (nonatomic, copy, readonly) NSString *directory;
 @property (nonatomic) FKViewMode viewMode;
 @property (nonatomic) BOOL showHidden;
+@property (nonatomic) BOOL showsPathBar, showsStatusBar;   // wie im Finder standardmäßig aus (Darstellung-Menü)
 @property (nonatomic, copy) NSArray *allowedExtensions;   // Panels: andere Dateien grau (nil = alle)
 @property (nonatomic) BOOL canChooseFiles, canChooseDirectories, allowsMultipleSelection;
 - (instancetype)initWithFrame:(NSRect)frame purpose:(FKPurpose)purpose;

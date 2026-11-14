@@ -117,6 +117,8 @@ static NSMenu *submenu(NSMenu *bar, NSString *title) {
 	item(view, L("menu.aslist"), @selector(asList:), @"2", C);
 	[view addItem:[NSMenuItem separatorItem]];
 	item(view, L("menu.hidden"), @selector(toggleHidden:), @".", C | S);
+	item(view, L("menu.pathbar"), @selector(togglePathBar:), @"p", C | O);
+	item(view, L("menu.statusbar"), @selector(toggleStatusBar:), @"/", C);
 	item(view, L("menu.reload"), @selector(reloadView:), @"r", C);
 
 	NSMenu *go = submenu(bar, L("menu.go"));
@@ -153,6 +155,8 @@ static NSMenu *submenu(NSMenu *bar, NSString *title) {
 - (void)asIcons:(id)s { [self cb].viewMode = FKViewModeIcons; }
 - (void)asList:(id)s { [self cb].viewMode = FKViewModeList; }
 - (void)toggleHidden:(id)s { [self cb].showHidden = ![self cb].showHidden; }
+- (void)togglePathBar:(id)s { [self cb].showsPathBar = ![self cb].showsPathBar; }
+- (void)toggleStatusBar:(id)s { [self cb].showsStatusBar = ![self cb].showsStatusBar; }
 - (void)reloadView:(id)s { [[self cb] reload]; }
 - (void)back:(id)s { [[self cb] goBack]; }
 - (void)forward:(id)s { [[self cb] goForward]; }
