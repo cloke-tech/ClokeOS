@@ -3,6 +3,7 @@
 // NSMenu. Dateisystem nur über FundusCore (fcore.h). Siehe docs/fundus.md.
 #import "FundusKit.h"
 #include "fcore.h"
+#include <objc/message.h>
 #include <dlfcn.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -1900,6 +1901,9 @@ static void fkRunDrag(FKItemsView *src, NSEvent *ev, NSPoint startInWindow, NSIn
 	NSPoint lastWin = [ev locationInWindow];
 	NSTimeInterval hoverSince = [NSDate timeIntervalSinceReferenceDate];
 	BOOL first = YES;
+	// Über fremden Fenstern (Dock, andere Programme): XDND im X11-Backend unseres AppKit (macapps/appkit/xdnd.m)
+	BOOL canX = [NSApp respondsToSelector:@selector(clk_xdndUpdateFiles:atScreenPoint:copy:ignoring:)];
+	NSInteger xstate = 0;   // 0 kein fremdes Ziel, 1 lehnt ab, 2 nimmt an
 	for (;;) {
 		NSEventType t = ev ? [ev type] : NSLeftMouseDragged;   // ev nil: Zeiger steht still (Federn, Rand-Scrollen)
 		if (t == NSLeftMouseUp) break;
@@ -1938,13 +1942,33 @@ static void fkRunDrag(FKItemsView *src, NSEvent *ev, NSPoint startInWindow, NSIn
 				hoverSince = [NSDate timeIntervalSinceReferenceDate];
 			}
 		}
-		BOOL copying = cur.dir && !cur.app && !cur.trash && fkCopies(paths, cur.dir, mods);
+		if (canX && !cur.dir) {
+			NSInteger (*upd)(id, SEL, NSArray *, NSPoint, BOOL, NSWindow *) = (NSInteger (*)(id, SEL, NSArray *, NSPoint, BOOL, NSWindow *))objc_msgSend;
+			xstate = upd(NSApp, @selector(clk_xdndUpdateFiles:atScreenPoint:copy:ignoring:), paths, screen, (mods & NSAlternateKeyMask) != 0, dw);
+		} else if (xstate) {
+			[NSApp performSelector:@selector(clk_xdndCancel)];
+			xstate = 0;
+		}
+		BOOL copying = (cur.dir && !cur.app && !cur.trash && fkCopies(paths, cur.dir, mods)) || (xstate == 2 && (mods & NSAlternateKeyMask));
 		if (copying != iv.copying) { iv.copying = copying; fkShapeDragWindow(dw, iv); [dw display]; }
 		ev = [sw nextEventMatchingMask:NSLeftMouseDraggedMask | NSLeftMouseUpMask | NSFlagsChangedMask
 		                     untilDate:[NSDate dateWithTimeIntervalSinceNow:0.05] inMode:NSEventTrackingRunLoopMode dequeue:YES];
 	}
 	fkSetHighlight(&cur, NO);
 
+	if (!cur.dir && xstate == 2) {   // fremdes Ziel hat angenommen: ablegen, das Ziel erledigt den Rest
+		[dw orderOut:nil];
+		BOOL ok = ((BOOL (*)(id, SEL))objc_msgSend)(NSApp, @selector(clk_xdndDrop));
+		TR("xdnd abgelegt: %d", ok);
+		// bewegt das Ziel (Dock-Papierkorb), zeigt die Quelle das neu
+		NSString *srcDir = [paths[0] stringByDeletingLastPathComponent];
+		for (NSWindow *w in [NSApp windows]) {
+			FKBrowserView *b = fkBrowserIn([w contentView]);
+			if (b && [b.directory isEqualToString:srcDir]) [b reload];
+		}
+		return;
+	}
+	if (xstate) [NSApp performSelector:@selector(clk_xdndCancel)];
 	if (!cur.dir) {   // kein Ziel: Ziehbild gleitet zurück
 		NSPoint from = [dw frame].origin;
 		for (int k = 1; k <= 8; k++) {

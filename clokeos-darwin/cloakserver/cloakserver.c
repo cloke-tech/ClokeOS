@@ -5602,7 +5602,201 @@ static void on_configure_request(XConfigureRequestEvent *e) {
   XConfigureWindow(dpy, e->window, e->value_mask, &wc);
 }
 
+/* ---------------------------------------------------------------------------------------- */
+/* Ablegen im Dock (XDND 5): Dateien aus Fundus oder anderen Programmen auf ein Programm-Symbol (damit öffnen, wie bei macOS) */
+/* oder auf den Papierkorb (dorthin bewegen). Fundus spricht XDND über unser AppKit (macapps/appkit/xdnd.m).                  */
+
+/* Fehlersuche: touch /tmp/dnd-trace, dann landen die XDND-Nachrichten in dieser Datei */
+static void dnd_log(const char *fmt, ...) {
+  if (access("/tmp/dnd-trace", F_OK)) return;
+  FILE *f = fopen("/tmp/dnd-trace", "a");
+  if (!f) return;
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(f, fmt, ap);
+  va_end(ap);
+  fputc('\n', f);
+  fclose(f);
+}
+
+static Window dnd_src;
+static bool dnd_uri;
+static int dnd_item = -1;
+static Atom XDND_AWARE, XDND_ENTER, XDND_POSITION, XDND_STATUS, XDND_LEAVE, XDND_DROP, XDND_FINISHED, XDND_SELECTION,
+    XDND_COPY, XDND_MOVE, XDND_TYPELIST, TEXT_URI_LIST, CLOKE_DND;
+
+static void dnd_atoms(void) {
+  if (XDND_AWARE) return;
+  XDND_AWARE = XInternAtom(dpy, "XdndAware", False);
+  XDND_ENTER = XInternAtom(dpy, "XdndEnter", False);
+  XDND_POSITION = XInternAtom(dpy, "XdndPosition", False);
+  XDND_STATUS = XInternAtom(dpy, "XdndStatus", False);
+  XDND_LEAVE = XInternAtom(dpy, "XdndLeave", False);
+  XDND_DROP = XInternAtom(dpy, "XdndDrop", False);
+  XDND_FINISHED = XInternAtom(dpy, "XdndFinished", False);
+  XDND_SELECTION = XInternAtom(dpy, "XdndSelection", False);
+  XDND_COPY = XInternAtom(dpy, "XdndActionCopy", False);
+  XDND_MOVE = XInternAtom(dpy, "XdndActionMove", False);
+  XDND_TYPELIST = XInternAtom(dpy, "XdndTypeList", False);
+  TEXT_URI_LIST = XInternAtom(dpy, "text/uri-list", False);
+  CLOKE_DND = XInternAtom(dpy, "_CLOKE_DND", False);
+}
+
+/* das Dock als XDND-Ziel anmelden (Version 5) */
+static void dnd_register(Window w) {
+  dnd_atoms();
+  long v = 5;
+  XChangeProperty(dpy, w, XDND_AWARE, XA_ATOM, 32, PropModeReplace, (unsigned char *)&v, 1);
+}
+
+static void dnd_reply(Atom type, long l1, long l2, long l4) {
+  XEvent r;
+  memset(&r, 0, sizeof r);
+  r.xclient.type = ClientMessage;
+  r.xclient.window = dnd_src;
+  r.xclient.message_type = type;
+  r.xclient.format = 32;
+  r.xclient.data.l[0] = dock;
+  r.xclient.data.l[1] = l1;
+  r.xclient.data.l[2] = l2;
+  r.xclient.data.l[4] = l4;
+  XSendEvent(dpy, dnd_src, False, NoEventMask, &r);
+  XFlush(dpy);
+}
+
+static void dnd_hover(int k) {
+  if (k == dnd_item) return;
+  dnd_item = k;
+  dock_hover = k;
+  show_tip(k);
+  draw_dock();
+}
+
+static bool dnd_accepts(int k) {
+  if (!dnd_uri || k < 0 || k >= nditems) return false;
+  int i = ditems[k].app;
+  return i == DOCK_TRASH || (i >= 0 && !apps[i].gone && apps[i].b.kind == APP_OK);
+}
+
+static void trash_dir(char *t, size_t n) {
+  snprintf(t, n, "%s/.Trash", session ? session->home : getenv("HOME") ? getenv("HOME") : "/var/root");
+  mkdir(t, 0700);
+}
+
+/* Datei in den Papierkorb: gleicher Name, bei Zusammenstoß "Name 2" usw.; über Volumes hinweg mit /bin/mv */
+static void dnd_trash(const char *path) {
+  char t[PATH_MAX], dst[PATH_MAX];
+  trash_dir(t, sizeof t);
+  const char *base = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
+  snprintf(dst, sizeof dst, "%s/%s", t, base);
+  for (int n = 2; access(dst, F_OK) == 0 && n < 1000; n++) snprintf(dst, sizeof dst, "%s/%s %d", t, base, n);
+  if (rename(path, dst) == 0) return;
+  char *argv[] = {"/bin/mv", (char *)path, dst, NULL};
+  pid_t pid = fork();
+  if (pid == 0) {
+    execv("/bin/mv", argv);
+    _exit(127);
+  }
+  if (pid > 0) waitpid(pid, NULL, 0);
+}
+
+/* file:///Pfad%20mit%20Leerzeichen -> /Pfad mit Leerzeichen */
+static bool uri_to_path(const char *u, size_t len, char *out, size_t n) {
+  if (len < 7 || strncmp(u, "file://", 7)) return false;
+  u += 7, len -= 7;
+  if (len && *u != '/') { /* file://host/pfad */
+    const char *sl = memchr(u, '/', len);
+    if (!sl) return false;
+    len -= sl - u, u = sl;
+  }
+  size_t o = 0;
+  for (size_t i = 0; i < len && o + 1 < n; i++) {
+    if (u[i] == '%' && i + 2 < len) {
+      char hex[3] = {u[i + 1], u[i + 2], 0};
+      out[o++] = (char)strtol(hex, NULL, 16);
+      i += 2;
+    } else out[o++] = u[i];
+  }
+  out[o] = 0;
+  return o > 0;
+}
+
+/* Daten der Quelle sind da (SelectionNotify an das Dock): ausführen und XdndFinished schicken */
+static void dnd_selection(XSelectionEvent *e) {
+  int k = dnd_item;
+  bool ok = false;
+  Atom type;
+  int fmt;
+  unsigned long cnt = 0, after;
+  unsigned char *data = NULL;
+  if (e->property != None && dnd_accepts(k) &&
+      XGetWindowProperty(dpy, dock, CLOKE_DND, 0, 1 << 20, True, AnyPropertyType, &type, &fmt, &cnt, &after, &data) == Success &&
+      data) {
+    int i = ditems[k].app;
+    const char *p = (const char *)data, *end = p + cnt;
+    while (p < end) {
+      const char *nl = memchr(p, '\n', end - p);
+      size_t len = (nl ? nl : end) - p;
+      while (len && (p[len - 1] == '\r' || p[len - 1] == ' ')) len--;
+      char path[PATH_MAX];
+      if (len && *p != '#' && uri_to_path(p, len, path, sizeof path)) {
+        if (i == DOCK_TRASH) dnd_trash(path);
+        else launch_with(i, path);
+        ok = true;
+      }
+      p = nl ? nl + 1 : end;
+    }
+    if (i == DOCK_TRASH) draw_dock(); /* voller Eimer */
+  }
+  if (data) XFree(data);
+  dnd_reply(XDND_FINISHED, ok ? 1 : 0, ok ? (long)(k >= 0 && ditems[k].app == DOCK_TRASH ? XDND_MOVE : XDND_COPY) : None, 0);
+  dnd_hover(-1);
+  dnd_src = None;
+}
+
+static bool dnd_message(XClientMessageEvent *e) {
+  dnd_atoms();
+  dnd_log("dnd: Nachricht %lu von 0x%lx l2=0x%lx uri=%d", (unsigned long)e->message_type, e->data.l[0], e->data.l[2], dnd_uri);
+  if (e->message_type == XDND_ENTER) {
+    dnd_src = (Window)e->data.l[0];
+    dnd_uri = false;
+    if (e->data.l[1] & 1) { /* mehr als drei Typen: XdndTypeList der Quelle */
+      Atom type;
+      int fmt;
+      unsigned long cnt = 0, after;
+      unsigned char *d = NULL;
+      if (XGetWindowProperty(dpy, dnd_src, XDND_TYPELIST, 0, 64, False, XA_ATOM, &type, &fmt, &cnt, &after, &d) == Success && d)
+        for (unsigned long i = 0; i < cnt; i++) dnd_uri |= ((Atom *)d)[i] == TEXT_URI_LIST;
+      if (d) XFree(d);
+    }
+    for (int i = 2; i < 5; i++) dnd_uri |= (Atom)e->data.l[i] == TEXT_URI_LIST;
+  } else if (e->message_type == XDND_POSITION) {
+    dnd_src = (Window)e->data.l[0];
+    int x = (int)((e->data.l[2] >> 16) & 0xffff), y = (int)(e->data.l[2] & 0xffff), wx, wy, ww, wh;
+    dock_window_rect(&wx, &wy, &ww, &wh);
+    int k = dock_item_at(x - wx, y - wy);
+    bool ok = dnd_accepts(k);
+    dnd_log("dnd: Position %d,%d Dock %d,%d -> Symbol %d, nimmt %d", x, y, wx, wy, k, ok);
+    dnd_hover(ok ? k : -1);
+    /* Bit 2: weiter Positionen schicken (Ziele wechseln innerhalb des Docks) */
+    dnd_reply(XDND_STATUS, (ok ? 1 : 0) | 2, 0, ok ? (long)(ditems[k].app == DOCK_TRASH ? XDND_MOVE : XDND_COPY) : None);
+  } else if (e->message_type == XDND_LEAVE) {
+    dnd_hover(-1);
+    dnd_src = None;
+  } else if (e->message_type == XDND_DROP) {
+    dnd_src = (Window)e->data.l[0];
+    if (dnd_accepts(dnd_item))
+      XConvertSelection(dpy, XDND_SELECTION, TEXT_URI_LIST, CLOKE_DND, dock, (Time)e->data.l[2]);
+    else {
+      dnd_reply(XDND_FINISHED, 0, None, 0);
+      dnd_hover(-1);
+    }
+  } else return false;
+  return true;
+}
+
 static void on_client_message(XClientMessageEvent *e) {
+  if (dock && e->window == dock && dnd_message(e)) return;
   Client *c = find_client(e->window);
   if (!c) return;
   if (e->message_type == NET_ACTIVE_WINDOW) restore_client(c);
@@ -6043,6 +6237,7 @@ int main(int argc, char **argv) {
   dock_window_rect(&dwx, &dwy, &dww, &dwh);
   dock = ui_window(dwx, dwy, dww, dwh, ExposureMask | ButtonPressMask | PointerMotionMask | LeaveWindowMask,
                    true, NET_WM_WINDOW_TYPE_DOCK);
+  dnd_register(dock);
   XMapRaised(dpy, menubar);
   if (!recovery) XMapRaised(dpy, dock); /* die Wiederherstellung hat kein Dock */
   XGrabKey(dpy, XKeysymToKeycode(dpy, XK_Tab), Mod1Mask, root, True, GrabModeAsync, GrabModeAsync);
@@ -6119,6 +6314,9 @@ int main(int argc, char **argv) {
         case LeaveNotify: on_leave(&ev.xcrossing); break;
         case Expose: on_expose(&ev.xexpose); break;
         case ClientMessage: on_client_message(&ev.xclient); break;
+        case SelectionNotify:
+          if (ev.xselection.requestor == dock && ev.xselection.selection == XDND_SELECTION) dnd_selection(&ev.xselection);
+          break;
         case KeyPress: on_key(&ev.xkey); break;
         }
       }

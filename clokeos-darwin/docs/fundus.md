@@ -154,5 +154,25 @@ area is wider than the 1280-pixel VM screen, so its knob could not be seen there
     the mirrored bitmap landed one line off in Darling and showed as black letters).
 * Tested in the arm64 VM: rubber band with autoscroll over 60 files, spring-loading a folder and dropping into it.
 
-Not done yet: dragging to other programs, the Dock and the desktop (XDND), column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
+## Dragging out of Fundus: Dock and other programs (XDND, 2026-11-14)
+
+* Items dragged out of a Fundus window go to other programs through the X drag-and-drop protocol (XDND 5,
+  freedesktop.org). `macapps/appkit/xdnd.m` is the source side in our AppKit's X11 backend (Darling had none):
+  `-[NSApplication clk_xdndUpdateFiles:atScreenPoint:copy:ignoring:]` finds the window under the pointer that announces
+  `XdndAware` (skipping the drag image and the program's own windows), sends XdndEnter/Position/Leave, and serves the files as
+  `text/uri-list` when the target asks. `clk_xdndDrop` drops and waits up to 3 s for XdndFinished. Fundus calls it whenever the
+  pointer is not over one of its own windows; ⌥ asks for a copy.
+* **The Dock is an XDND target** (`cloakserver.c`, `dnd_*`): dropping files on an app icon opens them with that app (Mac apps get
+  `-NSOpen`), dropping on the Trash moves them to `~/.Trash` (the bucket turns full). While dragging over the Dock the icon under
+  the pointer is highlighted with its name tag, as on macOS; places that take nothing refuse the drop, and the drag image slides
+  back.
+* Tested in the arm64 VM: a file dragged from Fundus onto the Trash in the Dock (moved to `~/.Trash`, Fundus refreshed, Trash icon
+  full) and onto Notes (Notes started with the file; the Notes app itself does not read files given to it yet).
+* Traps: an X window without `XdndProxy` returned -1 from the property helper, which as a `Window` looked valid, so every message
+  went nowhere; Xlib had often already read XdndStatus from the socket, so Darling's run loop never woke for it: `xdnd.m` drains
+  the queue itself. `CLOKE_XDND_TRACE=1` logs targets and replies of the source; `touch /tmp/dnd-trace` makes CloakServer log the
+  Dock's XDND messages to that file.
+
+Not done yet: dropping into GTK and Windows programs is untested (they should work as XDND targets), dropping *into* Fundus from
+other programs, desktop icons, column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
 parent window (panels are modal windows), x86_64 in the VM, the GTK and Windows file dialogs (phase 3).
