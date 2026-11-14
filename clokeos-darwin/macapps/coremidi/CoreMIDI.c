@@ -4,7 +4,8 @@
 // Programm anlegt, erscheinen wie bei macOS in MIDIGetNumberOfSources/Destinations; MIDIReceived an einer
 // virtuellen Quelle geht an alle Eingangsports, die mit ihr verbunden sind, MIDISend an ein virtuelles Ziel an
 // dessen Lese-Funktion. Zwischen MIDI 1.0 (MIDIPacketList) und UMP (MIDIEventList) wird bei Bedarf umgewandelt.
-// Zustellung sofort und synchron (Zeitstempel in der Zukunft werden nicht verzögert); Geräte und Entities gibt es
+// Mit dem MIDI-Dienst clokemidid (clokemidi-proto.h) sehen sich die virtuellen Endpunkte aller Programme gegenseitig;
+// ohne ihn bleibt alles im Prozess. Zeitstempel in der Zukunft werden nicht abgewartet; Geräte und Entities gibt es
 // keine (MIDIGetNumberOfDevices = 0). Benachrichtigungen (Objekt hinzugefügt/entfernt, Setup geändert) laufen über
 // den Haupt-Runloop. CLOKE_MIDI_TRACE=1 meldet Aufrufe auf stderr.
 #include <CoreMIDI/CoreMIDI.h>
@@ -15,6 +16,12 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <Block.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/uio.h>
+#include <unistd.h>
+#include <errno.h>
+#include "clokemidi-proto.h"
 
 #define EXPORT __attribute__((visibility("default")))
 
@@ -82,6 +89,8 @@ typedef struct Obj {
 	MIDIClientRef client;             // Besitzer (Ports, Endpunkte)
 	CFMutableDictionaryRef props;     // Name, uniqueID, … wie bei Apple als Eigenschaften
 	MIDIProtocolID protocol;          // 0 = MIDI-1.0-Pakete (Proc/ReadBlock), sonst Eventlisten
+	int remote;                       // Stellvertreter für den Endpunkt eines anderen Programms (über clokemidid)
+	SInt32 uid;                       // uniqueID der Endpunkte
 	MIDINotifyProc notify; void *notifyRef; MIDINotifyBlock notifyBlock;   // Client
 	MIDIReadProc read; void *readRef; MIDIReadBlock readBlock; MIDIReceiveBlock recvBlock;   // Eingangsport, Ziel
 	Conn *conns;                      // Eingangsport: verbundene Quellen
@@ -127,7 +136,7 @@ static Obj *mk(int kind, MIDIClientRef client, CFStringRef name) {
 	o->ref = nextRef++; o->kind = kind; o->client = client;
 	o->props = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 	if (name) { CFStringRef c = CFStringCreateCopy(NULL, name); CFDictionarySetValue(o->props, kMIDIPropertyName, c); CFRelease(c); }
-	if (kind == O_SOURCE || kind == O_DEST) setInt(o->props, kMIDIPropertyUniqueID, newUniqueID());
+	if (kind == O_SOURCE || kind == O_DEST) { o->uid = newUniqueID(); setInt(o->props, kMIDIPropertyUniqueID, o->uid); }
 	o->next = objs; objs = o;
 	return o;
 }
@@ -348,6 +357,8 @@ static size_t evtSize(const MIDIEventList *el) {
 	return (size_t)((const Byte *)p - (const Byte *)el) + sizeof(MIDIEventPacket);
 }
 
+static void srvSend(int type, int kind, SInt32 uid, int fmt, const void *p, size_t len);
+
 // ---------------------------------------------------------------- Zustellung
 // Wie bei Apple auf einem eigenen Thread (der "MIDI-Empfangsthread"), in Reihenfolge, damit MIDIReceived/MIDISend
 // sofort zurückkehren und ein Programm, das zugleich Quelle und Empfänger ist, sich nicht selbst blockiert.
@@ -425,12 +436,17 @@ static OSStatus fromSource(MIDIEndpointRef src, const MIDIPacketList *pl, const 
 	pthread_mutex_lock(&lk);
 	Obj *s = find(src);
 	if (!s || s->kind != O_SOURCE) { pthread_mutex_unlock(&lk); return s ? kMIDIWrongEndpointType : kMIDIUnknownEndpoint; }
+	SInt32 uid = s->remote ? 0 : s->uid;
 	int n = 0;
 	for (Obj *o = objs; o; o = o->next) if (o->kind == O_INPORT) for (Conn *c = o->conns; c; c = c->next) if (c->src == src) n++;
 	Target *t = calloc(n + 1, sizeof *t); int k = n;
 	for (Obj *o = objs; o; o = o->next) if (o->kind == O_INPORT) for (Conn *c = o->conns; c; c = c->next) if (c->src == src) t[--k] = fromObj(o, c->refcon);
 	pthread_mutex_unlock(&lk);
 	enqueue(t, n, pl, el);
+	if (uid) {   // eigene Quelle: auch an die Abonnenten in anderen Programmen
+		if (pl) srvSend(CM_DATA, CM_SOURCE, uid, CM_FMT_PACKETS, pl, pktSize(pl));
+		else srvSend(CM_DATA, CM_SOURCE, uid, CM_FMT_EVENTS, el, evtSize(el));
+	}
 	return noErr;
 }
 
@@ -441,15 +457,151 @@ static OSStatus toDest(MIDIPortRef port, MIDIEndpointRef dest, const MIDIPacketL
 	if (!p || (p->kind != O_OUTPORT && p->kind != O_INPORT)) { pthread_mutex_unlock(&lk); return kMIDIInvalidPort; }
 	if (!d) { pthread_mutex_unlock(&lk); return kMIDIUnknownEndpoint; }
 	if (d->kind != O_DEST || p->kind != O_OUTPORT) { pthread_mutex_unlock(&lk); return noErr; }
+	if (d->remote) {             // Ziel eines anderen Programms: über den Dienst
+		SInt32 uid = d->uid;
+		pthread_mutex_unlock(&lk);
+		if (pl) srvSend(CM_SEND, CM_DEST, uid, CM_FMT_PACKETS, pl, pktSize(pl));
+		else srvSend(CM_SEND, CM_DEST, uid, CM_FMT_EVENTS, el, evtSize(el));
+		return noErr;
+	}
 	Target *t = malloc(sizeof *t); *t = fromObj(d, NULL);
 	pthread_mutex_unlock(&lk);
 	enqueue(t, 1, pl, el);
 	return noErr;
 }
 
+// ---------------------------------------------------------------- Verbindung zum MIDI-Dienst
+static int srv = -1, srvTried;
+static pthread_mutex_t slk = PTHREAD_MUTEX_INITIALIZER;
+static void announce(MIDIObjectRef obj, MIDIObjectType type, int added);
+
+static void srvSend(int type, int kind, SInt32 uid, int fmt, const void *p, size_t len) {
+	pthread_mutex_lock(&slk);
+	if (srv >= 0) {
+		cm_hdr h = { (uint32_t)len, (uint16_t)type, (uint16_t)kind, uid, (uint32_t)fmt };
+		struct iovec v[2] = { { &h, sizeof h }, { (void *)p, len } };
+		size_t want = sizeof h + len, done = 0;
+		while (done < want) {   // writev mit Rest
+			ssize_t r = writev(srv, v, len ? 2 : 1);
+			if (r < 0) { if (errno == EINTR) continue; close(srv); srv = -1; break; }
+			done += r;
+			if (done >= want) break;
+			size_t k = r;
+			for (int i = 0; i < 2 && k; i++) { size_t t = k < v[i].iov_len ? k : v[i].iov_len; v[i].iov_base = (char *)v[i].iov_base + t; v[i].iov_len -= t; k -= t; }
+		}
+	}
+	pthread_mutex_unlock(&slk);
+}
+
+static Obj *findUid(SInt32 uid, int kind) { for (Obj *o = objs; o; o = o->next) if (o->kind == kind && o->uid == uid) return o; return NULL; }
+
+static int readFull(int fd, void *b, size_t n) {
+	size_t g = 0;
+	while (g < n) { ssize_t r = read(fd, (char *)b + g, n - g); if (r <= 0) { if (r < 0 && errno == EINTR) continue; return -1; } g += r; }
+	return 0;
+}
+
+// MIDI-Nutzdaten aus dem Dienst als Paket- oder Eventliste (mit free() freigeben)
+static void decode(int fmt, const char *p, size_t len, MIDIPacketList **pl, MIDIEventList **el) {
+	*pl = NULL; *el = NULL;
+	if (fmt == CM_FMT_PACKETS) { *pl = malloc(len + 16); memcpy(*pl, p, len); }
+	else if (fmt == CM_FMT_EVENTS) { *el = malloc(len + 16); memcpy(*el, p, len); }
+	else {
+		size_t sz = len + sizeof(MIDIPacketList) + 16;
+		*pl = malloc(sz); MIDIPacket *pk = MIDIPacketListInit(*pl);
+		if (len) appendPkt(*pl, pk, (Byte *)*pl + sz, 0, (int)len, (const Byte *)p);
+	}
+}
+
+static OSStatus fromSource(MIDIEndpointRef src, const MIDIPacketList *pl, const MIDIEventList *el);
+static void enqueue(Target *t, int n, const MIDIPacketList *pl, const MIDIEventList *el);
+static void disposeLocked(Obj *o, MIDIObjectRef *gone, MIDIObjectType *goneType, int *ng);
+
+static void *srvReader(void *arg) {
+	int fd = (int)(intptr_t)arg;
+	char *buf = malloc(CLOKEMIDI_MAXPAYLOAD + 1);
+	pthread_setname_np("com.clokeos.coremidi.server");
+	for (;;) {
+		cm_hdr h;
+		if (readFull(fd, &h, sizeof h) || h.len > CLOKEMIDI_MAXPAYLOAD || (h.len && readFull(fd, buf, h.len))) break;
+		if (h.type == CM_EP_ADD) {
+			int kind = h.kind == CM_SOURCE ? O_SOURCE : O_DEST;
+			pthread_mutex_lock(&lk);
+			if (findUid(h.uid, O_SOURCE) || findUid(h.uid, O_DEST)) { pthread_mutex_unlock(&lk); continue; }
+			CFStringRef name = CFStringCreateWithBytes(NULL, (const UInt8 *)buf, h.len, kCFStringEncodingUTF8, false);
+			Obj *o = mk(kind, 0, name);
+			if (name) CFRelease(name);
+			o->remote = 1; o->uid = h.uid; setInt(o->props, kMIDIPropertyUniqueID, h.uid);
+			MIDIObjectRef ref = o->ref;
+			pthread_mutex_unlock(&lk);
+			tr("remote %s %d -> %#x", kind == O_SOURCE ? "source" : "destination", (int)h.uid, (unsigned)ref);
+			announce(ref, kind == O_SOURCE ? kMIDIObjectType_Source : kMIDIObjectType_Destination, 1);
+		} else if (h.type == CM_EP_REMOVE) {
+			MIDIObjectRef gone[1]; MIDIObjectType gt[1]; int ng = 0;
+			pthread_mutex_lock(&lk);
+			Obj *o = findUid(h.uid, O_SOURCE); if (!o) o = findUid(h.uid, O_DEST);
+			if (o && o->remote) disposeLocked(o, gone, gt, &ng);
+			pthread_mutex_unlock(&lk);
+			if (ng) announce(gone[0], gt[0], 0);
+		} else if (h.type == CM_DATA) {               // aus einer fremden Quelle, die wir abonniert haben
+			pthread_mutex_lock(&lk); Obj *o = findUid(h.uid, O_SOURCE); MIDIObjectRef ref = o && o->remote ? o->ref : 0; pthread_mutex_unlock(&lk);
+			if (!ref) continue;
+			if (trace && h.fmt == CM_FMT_BYTES && h.len >= 1) tr("MIDI von %d: %02x %02x %02x", (int)h.uid, (Byte)buf[0], h.len > 1 ? (Byte)buf[1] : 0, h.len > 2 ? (Byte)buf[2] : 0);
+			MIDIPacketList *pl; MIDIEventList *el; decode(h.fmt, buf, h.len, &pl, &el);
+			fromSource(ref, pl, el); free(pl); free(el);
+		} else if (h.type == CM_SEND) {               // an eines unserer Ziele
+			pthread_mutex_lock(&lk);
+			Obj *o = findUid(h.uid, O_DEST);
+			Target *t = NULL; if (o && !o->remote) { t = malloc(sizeof *t); *t = fromObj(o, NULL); }
+			pthread_mutex_unlock(&lk);
+			if (!t) continue;
+			MIDIPacketList *pl; MIDIEventList *el; decode(h.fmt, buf, h.len, &pl, &el);
+			enqueue(t, 1, pl, el); free(pl); free(el);
+		}
+	}
+	tr("MIDI-Dienst getrennt");
+	pthread_mutex_lock(&slk); if (srv == fd) { close(srv); srv = -1; } pthread_mutex_unlock(&slk);
+	free(buf);
+	return NULL;
+}
+
+static void srvConnect(void) {
+	pthread_mutex_lock(&slk);
+	if (srvTried) { pthread_mutex_unlock(&slk); return; }
+	srvTried = 1;
+	const char *path = getenv("CLOKE_MIDI_SOCKET"); if (!path) path = CLOKEMIDI_SOCKET;
+	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+	struct sockaddr_un a = { .sun_family = AF_UNIX };
+	strncpy(a.sun_path, path, sizeof a.sun_path - 1);
+	if (fd < 0 || connect(fd, (struct sockaddr *)&a, sizeof a)) {
+		if (fd >= 0) close(fd);
+		pthread_mutex_unlock(&slk);
+		tr("kein MIDI-Dienst an %s, nur im Prozess", path);
+		return;
+	}
+	int on = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+	srv = fd;
+	pthread_mutex_unlock(&slk);
+	pthread_t th; pthread_attr_t at; pthread_attr_init(&at); pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+	pthread_create(&th, &at, srvReader, (void *)(intptr_t)fd);
+	pthread_attr_destroy(&at);
+	tr("mit MIDI-Dienst %s verbunden", path);
+}
+
+// Abo für eine fremde Quelle, solange irgendein Eingangsport mit ihr verbunden ist (unter lk aufrufen)
+static int subscribers(MIDIEndpointRef src) {
+	int n = 0;
+	for (Obj *o = objs; o; o = o->next) if (o->kind == O_INPORT) for (Conn *c = o->conns; c; c = c->next) if (c->src == src) n++;
+	return n;
+}
+
+static size_t pktSize(const MIDIPacketList *pl);
+static size_t evtSize(const MIDIEventList *el);
+
 // ---------------------------------------------------------------- Clients
 static OSStatus clientCreate(CFStringRef name, MIDINotifyProc proc, void *ref, MIDINotifyBlock blk, MIDIClientRef *out) {
 	if (!out) return kMIDIInvalidClient;
+	srvConnect();
 	pthread_mutex_lock(&lk);
 	Obj *o = mk(O_CLIENT, 0, name);
 	o->notify = proc; o->notifyRef = ref; o->notifyBlock = blk ? Block_copy(blk) : NULL;
@@ -466,6 +618,7 @@ EXPORT OSStatus MIDIClientCreateWithBlock(CFStringRef name, MIDIClientRef *outCl
 }
 
 static void disposeLocked(Obj *o, MIDIObjectRef *gone, MIDIObjectType *goneType, int *ng) {
+	if ((o->kind == O_SOURCE || o->kind == O_DEST) && !o->remote) srvSend(CM_REMOVE, 0, o->uid, 0, NULL, 0);
 	if (o->kind == O_SOURCE || o->kind == O_DEST) {
 		gone[*ng] = o->ref; goneType[*ng] = o->kind == O_SOURCE ? kMIDIObjectType_Source : kMIDIObjectType_Destination; (*ng)++;
 		// Verbindungen von Eingangsports zu dieser Quelle lösen
@@ -518,7 +671,12 @@ EXPORT OSStatus MIDIPortDispose(MIDIPortRef port) {
 	pthread_mutex_lock(&lk);
 	Obj *o = find(port);
 	if (!o || (o->kind != O_INPORT && o->kind != O_OUTPORT)) { pthread_mutex_unlock(&lk); return kMIDIInvalidPort; }
-	unlink_obj(o); freeObj(o);
+	unlink_obj(o);
+	for (Conn *c = o->conns; c; c = c->next) {
+		Obj *s = find(c->src);
+		if (s && s->remote && subscribers(c->src) == 0) srvSend(CM_UNSUB, CM_SOURCE, s->uid, 0, NULL, 0);
+	}
+	freeObj(o);
 	pthread_mutex_unlock(&lk);
 	return noErr;
 }
@@ -530,7 +688,9 @@ EXPORT OSStatus MIDIPortConnectSource(MIDIPortRef port, MIDIEndpointRef source, 
 	else if (!s) r = kMIDIUnknownEndpoint;
 	else if (s->kind != O_SOURCE) r = kMIDIWrongEndpointType;
 	else {
+		int first = s->remote && subscribers(source) == 0;
 		Conn *c = calloc(1, sizeof *c); c->src = source; c->refcon = connRefCon; c->next = p->conns; p->conns = c;
+		if (first) srvSend(CM_SUB, CM_SOURCE, s->uid, 0, NULL, 0);
 	}
 	pthread_mutex_unlock(&lk);
 	tr("MIDIPortConnectSource %#x %#x -> %d", (unsigned)port, (unsigned)source, (int)r);
@@ -542,6 +702,8 @@ EXPORT OSStatus MIDIPortDisconnectSource(MIDIPortRef port, MIDIEndpointRef sourc
 	OSStatus r = kMIDINoConnection;
 	if (!p || p->kind != O_INPORT) r = kMIDIInvalidPort;
 	else for (Conn **c = &p->conns; *c; c = &(*c)->next) if ((*c)->src == source) { Conn *x = *c; *c = x->next; free(x); r = noErr; break; }
+	Obj *s = r == noErr ? find(source) : NULL;
+	if (s && s->remote && subscribers(source) == 0) srvSend(CM_UNSUB, CM_SOURCE, s->uid, 0, NULL, 0);
 	pthread_mutex_unlock(&lk);
 	return r;
 }
@@ -559,7 +721,12 @@ static OSStatus endpointCreate(MIDIClientRef client, CFStringRef name, int kind,
 	if (proto) setInt(o->props, kMIDIPropertyProtocolID, proto);
 	*out = o->ref;
 	pthread_mutex_unlock(&lk);
+	SInt32 uid = o->uid;
 	tr("virtual %s -> %#x", kind == O_SOURCE ? "source" : "destination", (unsigned)*out);
+	if (name) {
+		char nb[256] = ""; CFStringGetCString(name, nb, sizeof nb, kCFStringEncodingUTF8);
+		srvSend(CM_ADD, kind == O_SOURCE ? CM_SOURCE : CM_DEST, uid, 0, nb, strlen(nb));
+	} else srvSend(CM_ADD, kind == O_SOURCE ? CM_SOURCE : CM_DEST, uid, 0, NULL, 0);
 	announce(*out, kind == O_SOURCE ? kMIDIObjectType_Source : kMIDIObjectType_Destination, 1);
 	return noErr;
 }
@@ -583,6 +750,7 @@ EXPORT OSStatus MIDIEndpointDispose(MIDIEndpointRef endpt) {
 	pthread_mutex_lock(&lk);
 	Obj *o = find(endpt);
 	if (!o || (o->kind != O_SOURCE && o->kind != O_DEST)) { pthread_mutex_unlock(&lk); return kMIDIUnknownEndpoint; }
+	if (o->remote) { pthread_mutex_unlock(&lk); return kMIDINotPermitted; }
 	disposeLocked(o, gone, gt, &ng);
 	pthread_mutex_unlock(&lk);
 	if (ng) announce(gone[0], gt[0], 0);
@@ -637,12 +805,15 @@ EXPORT OSStatus MIDISendEventList(MIDIPortRef port, MIDIEndpointRef dest, const 
 	if (!evtlist) return paramErr;
 	return toDest(port, dest, NULL, evtlist);
 }
+static int isRemote(MIDIObjectRef r) { pthread_mutex_lock(&lk); Obj *o = find(r); int x = o && o->remote; pthread_mutex_unlock(&lk); return x; }
 EXPORT OSStatus MIDIReceived(MIDIEndpointRef src, const MIDIPacketList *pktlist) {
 	if (!pktlist) return paramErr;
+	if (isRemote(src)) return kMIDINotPermitted;
 	return fromSource(src, pktlist, NULL);
 }
 EXPORT OSStatus MIDIReceivedEventList(MIDIEndpointRef src, const MIDIEventList *evtlist) {
 	if (!evtlist) return paramErr;
+	if (isRemote(src)) return kMIDINotPermitted;
 	return fromSource(src, NULL, evtlist);
 }
 EXPORT OSStatus MIDISendSysex(MIDISysexSendRequest *req) {

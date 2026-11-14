@@ -1,6 +1,6 @@
 #!/bin/bash
 # CoreMIDI für ClokeOS: baut macapps/coremidi/CoreMIDI.c als CoreMIDI.framework (ersetzt das Stub-Framework aus
-# stubs.sh) und das Prüfprogramm mtest (gegen Apples SDK gelinkt, Ausgabe muss der von Apples CoreMIDI gleichen).
+# stubs.sh), den MIDI-Dienst clokemidid (usr/libexec) und das Prüfprogramm mtest (gegen Apples SDK gelinkt, Ausgabe muss der von Apples CoreMIDI gleichen).
 #
 #   macapps/coremidi.sh                         x86_64, nach ~/ClokeOS-work/out/macapps/root/
 #   CLOKEOS_ARCH=arm64 macapps/coremidi.sh      arm64, nach ~/ClokeOS-work/out/macapps-arm64/root/
@@ -23,7 +23,7 @@ fwdir="/Library/ClokeOS/MacFrameworks"
 
 d="$root$fwdir/CoreMIDI.framework"
 rm -rf "$d"; mkdir -p "$d/Versions/A/Resources"
-clang -target "$TARGET" -isysroot "$SDK" -O2 -g0 -fblocks -fvisibility=hidden -Wno-deprecated-declarations -Wno-availability \
+clang -target "$TARGET" -isysroot "$SDK" -O2 -g0 -fblocks -fvisibility=hidden -Wno-deprecated-declarations -Wno-availability -Wno-nonnull \
   ${ARCHCC[@]+"${ARCHCC[@]}"} -dynamiclib -nostdlib \
   -Wl,-platform_version,macos,11.0,11.5 -Wl,-syslibroot,"$pd" \
   ${CLOKE_ARCH:+$([ "$CLOKE_ARCH" = arm64 ] && echo -Wl,-no_fixup_chains)} \
@@ -44,6 +44,12 @@ cat > "$d/Versions/A/Resources/Info.plist" <<'PL'
 </dict></plist>
 PL
 ln -s A "$d/Versions/Current"; ln -s Versions/Current/CoreMIDI "$d/CoreMIDI"; ln -s Versions/Current/Resources "$d/Resources"
+
+# Der MIDI-Dienst (verbindet die virtuellen Endpunkte aller Programme), gegen PureDarwins libSystem
+mkdir -p "$root/usr/libexec"
+clang -target "$TARGET" -isysroot "$SDK" -std=gnu11 -O2 -Wall ${ARCHCC[@]+"${ARCHCC[@]}"} -nostdlib \
+  -Wl,-platform_version,macos,11.0,11.5 -Wl,-no_fixup_chains -o "$root/usr/libexec/clokemidid" "$M/coremidi/clokemidid.c" \
+  "$pd/usr/lib/libSystem.B.dylib"
 
 # Prüfprogramm gegen Apples SDK (wie ein Mac-Programm), zur Laufzeit gilt unser Framework
 p="$root/Library/ClokeOS/Probe"; mkdir -p "$p"

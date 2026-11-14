@@ -11,6 +11,7 @@
 #include <glib/gstdio.h>
 #include <gtk/gtk.h>
 #include <math.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -919,13 +920,231 @@ static void run_activity(void) {
   gtk_main();
 }
 
+
+/* ---- MIDI-Tastatur ----------------------------------------------------------------------------------- */
+/* Zwei Oktaven zum Spielen mit Maus oder Computertastatur (A W S E D F T G Y H U J K O L P wie "Musical Typing"
+ * in Logic, Z/X Oktave, C/V Anschlag). Die Noten gehen als virtuelle MIDI-Quelle "ClokeOS Keyboard" über den
+ * MIDI-Dienst clokemidid (macapps/coremidi/clokemidi-proto.h) an alle Programme, die sie abonnieren. */
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
+#include "clokemidi-proto.h"
+
+typedef struct {
+  GtkWidget *area, *status, *octlabel, *vel;
+  int fd, octave, uid, down[128], mousenote;
+} Kbd;
+
+static void kbd_send(Kbd *k, const unsigned char *b, int n) {
+  if (k->fd < 0) return;
+  cm_hdr h = { (uint32_t)n, CM_DATA, CM_SOURCE, k->uid, CM_FMT_BYTES };
+  unsigned char m[sizeof h + 8];
+  memcpy(m, &h, sizeof h); memcpy(m + sizeof h, b, n);
+  if (write(k->fd, m, sizeof h + n) != (ssize_t)(sizeof h + n)) { close(k->fd); k->fd = -1; }
+}
+
+static void kbd_status(Kbd *k) {
+  gtk_label_set_text(GTK_LABEL(k->status), k->fd >= 0 ? T("Connected to the MIDI service as “ClokeOS Keyboard”",
+                                                          "Mit dem MIDI-Dienst verbunden als „ClokeOS Keyboard“")
+                                                     : T("MIDI service not running (clokemidid)", "MIDI-Dienst läuft nicht (clokemidid)"));
+}
+
+static gboolean kbd_connect(gpointer data) {
+  Kbd *k = data;
+  if (k->fd >= 0) return G_SOURCE_CONTINUE;
+  int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  struct sockaddr_un a = { .sun_family = AF_UNIX };
+  const char *path = g_getenv("CLOKE_MIDI_SOCKET");
+  g_strlcpy(a.sun_path, path ? path : CLOKEMIDI_SOCKET, sizeof a.sun_path);
+  if (fd >= 0 && connect(fd, (struct sockaddr *)&a, sizeof a) == 0) {
+    int on = 1; setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, sizeof on);
+    k->fd = fd;
+    const char *name = "ClokeOS Keyboard";
+    cm_hdr h = { (uint32_t)strlen(name), CM_ADD, CM_SOURCE, k->uid, 0 };
+    if (write(fd, &h, sizeof h) != sizeof h || write(fd, name, strlen(name)) != (ssize_t)strlen(name)) { close(fd); k->fd = -1; }
+  } else if (fd >= 0) close(fd);
+  kbd_status(k);
+  return G_SOURCE_CONTINUE;
+}
+
+/* Lage der Tasten: 14 weiße Tasten, schwarze dazwischen (relativ zur Fläche) */
+static const int kbd_white[7] = { 0, 2, 4, 5, 7, 9, 11 };
+static int kbd_is_black(int n) { int m = n % 12; return m == 1 || m == 3 || m == 6 || m == 8 || m == 10; }
+
+static void kbd_note(Kbd *k, int note, int on) {
+  if (note < 0 || note > 127 || k->down[note] == on) return;
+  k->down[note] = on;
+  int vel = (int)gtk_range_get_value(GTK_RANGE(k->vel));
+  unsigned char b[3] = { (unsigned char)(on ? 0x90 : 0x80), (unsigned char)note, (unsigned char)(on ? vel : 0) };
+  kbd_send(k, b, 3);
+  gtk_widget_queue_draw(k->area);
+}
+
+static int kbd_hit(Kbd *k, double x, double y) {
+  int w = gtk_widget_get_allocated_width(k->area), h = gtk_widget_get_allocated_height(k->area);
+  double ww = w / 14.0;
+  int base = 12 * (k->octave + 1);
+  if (y < h * 0.62) {            /* zuerst schwarze Tasten */
+    for (int i = 0; i < 14; i++) {
+      int n = base + 12 * (i / 7) + kbd_white[i % 7] + 1;
+      if (!kbd_is_black(n)) continue;
+      double bx = (i + 1) * ww - ww * 0.3;
+      if (x >= bx && x < bx + ww * 0.6) return n;
+    }
+  }
+  int i = (int)(x / ww); if (i < 0) i = 0; if (i > 13) i = 13;
+  return base + 12 * (i / 7) + kbd_white[i % 7];
+}
+
+static gboolean kbd_draw(GtkWidget *w, cairo_t *cr, gpointer data) {
+  Kbd *k = data;
+  int W = gtk_widget_get_allocated_width(w), H = gtk_widget_get_allocated_height(w);
+  double ww = W / 14.0;
+  int base = 12 * (k->octave + 1);
+  for (int i = 0; i < 14; i++) {
+    int n = base + 12 * (i / 7) + kbd_white[i % 7];
+    double x = i * ww + 1, r = 6;
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, x + ww - 2 - r, H - r - 1, r, 0, M_PI / 2);
+    cairo_arc(cr, x + r, H - r - 1, r, M_PI / 2, M_PI);
+    cairo_line_to(cr, x, 0); cairo_line_to(cr, x + ww - 2, 0); cairo_close_path(cr);
+    if (k->down[n]) cairo_set_source_rgb(cr, 0.70, 0.62, 1.0); else cairo_set_source_rgb(cr, 0.98, 0.98, 0.99);
+    cairo_fill_preserve(cr);
+    cairo_set_source_rgba(cr, 0, 0, 0, 0.18); cairo_set_line_width(cr, 1); cairo_stroke(cr);
+    if (n % 12 == 0) {
+      char lab[8]; g_snprintf(lab, sizeof lab, "C%d", n / 12 - 1);
+      cairo_set_source_rgba(cr, 0, 0, 0, 0.45); cairo_select_font_face(cr, "Cloke Sans", 0, 0); cairo_set_font_size(cr, 11);
+      cairo_text_extents_t te; cairo_text_extents(cr, lab, &te);
+      cairo_move_to(cr, x + (ww - 2 - te.width) / 2, H - 10); cairo_show_text(cr, lab);
+    }
+  }
+  for (int i = 0; i < 14; i++) {
+    int n = base + 12 * (i / 7) + kbd_white[i % 7] + 1;
+    if (!kbd_is_black(n) || i == 13) continue;
+    double bx = (i + 1) * ww - ww * 0.3, bw = ww * 0.6, bh = H * 0.62, r = 4;
+    cairo_new_sub_path(cr);
+    cairo_arc(cr, bx + bw - r, bh - r, r, 0, M_PI / 2);
+    cairo_arc(cr, bx + r, bh - r, r, M_PI / 2, M_PI);
+    cairo_line_to(cr, bx, 0); cairo_line_to(cr, bx + bw, 0); cairo_close_path(cr);
+    cairo_pattern_t *g = cairo_pattern_create_linear(0, 0, 0, bh);
+    if (k->down[n]) { cairo_pattern_add_color_stop_rgb(g, 0, 0.55, 0.42, 1.0); cairo_pattern_add_color_stop_rgb(g, 1, 0.35, 0.22, 0.85); }
+    else { cairo_pattern_add_color_stop_rgb(g, 0, 0.20, 0.17, 0.27); cairo_pattern_add_color_stop_rgb(g, 1, 0.06, 0.05, 0.10); }
+    cairo_set_source(cr, g); cairo_fill(cr); cairo_pattern_destroy(g);
+  }
+  return FALSE;
+}
+
+static gboolean kbd_press(GtkWidget *w, GdkEventButton *e, gpointer data) {
+  Kbd *k = data;
+  if (e->button != 1) return FALSE;
+  k->mousenote = kbd_hit(k, e->x, e->y);
+  kbd_note(k, k->mousenote, 1);
+  return TRUE;
+}
+static gboolean kbd_release(GtkWidget *w, GdkEventButton *e, gpointer data) {
+  Kbd *k = data;
+  if (k->mousenote >= 0) kbd_note(k, k->mousenote, 0);
+  k->mousenote = -1;
+  return TRUE;
+}
+static gboolean kbd_motion(GtkWidget *w, GdkEventMotion *e, gpointer data) {
+  Kbd *k = data;
+  if (k->mousenote < 0 || !(e->state & GDK_BUTTON1_MASK)) return FALSE;
+  int n = kbd_hit(k, e->x, e->y);
+  if (n != k->mousenote) { kbd_note(k, k->mousenote, 0); k->mousenote = n; kbd_note(k, n, 1); }
+  return TRUE;
+}
+
+static void kbd_octave(Kbd *k, int d) {
+  int o = k->octave + d;
+  if (o < 0 || o > 7) return;
+  for (int n = 0; n < 128; n++) if (k->down[n]) kbd_note(k, n, 0);
+  k->octave = o;
+  char t[32]; g_snprintf(t, sizeof t, "C%d – B%d", o, o + 1);
+  gtk_label_set_text(GTK_LABEL(k->octlabel), t);
+  gtk_widget_queue_draw(k->area);
+}
+static void kbd_oct_down(GtkButton *b, gpointer d) { kbd_octave(d, -1); }
+static void kbd_oct_up(GtkButton *b, gpointer d) { kbd_octave(d, 1); }
+
+static int kbd_keynote(Kbd *k, guint kv) {
+  static const char map[] = "awsedftgyhujkolp;";   /* C C# D D# E F F# G G# A A# B C C# D D# E */
+  const char *p = kv < 128 ? strchr(map, (int)g_ascii_tolower((gchar)kv)) : NULL;
+  if (!p || !*p) return -1;
+  return 12 * (k->octave + 1) + (int)(p - map);
+}
+static gboolean kbd_key(GtkWidget *w, GdkEventKey *e, gpointer data) {
+  Kbd *k = data;
+  if (e->state & (GDK_CONTROL_MASK | GDK_MOD1_MASK | GDK_META_MASK)) return FALSE;
+  int on = e->type == GDK_KEY_PRESS;
+  if (on && (e->keyval == 'z' || e->keyval == 'Z')) { kbd_octave(k, -1); return TRUE; }
+  if (on && (e->keyval == 'x' || e->keyval == 'X')) { kbd_octave(k, 1); return TRUE; }
+  if (on && (e->keyval == 'c' || e->keyval == 'C')) { gtk_range_set_value(GTK_RANGE(k->vel), gtk_range_get_value(GTK_RANGE(k->vel)) - 16); return TRUE; }
+  if (on && (e->keyval == 'v' || e->keyval == 'V')) { gtk_range_set_value(GTK_RANGE(k->vel), gtk_range_get_value(GTK_RANGE(k->vel)) + 16); return TRUE; }
+  int n = kbd_keynote(k, e->keyval);
+  if (n < 0) return FALSE;
+  kbd_note(k, n, on);   /* Tastenwiederholung: kbd_note sendet nur bei Wechsel */
+  return TRUE;
+}
+
+static void run_keyboard(void) {
+  Kbd *k = g_new0(Kbd, 1);
+  k->fd = -1; k->octave = 3; k->mousenote = -1;
+  k->uid = (int)(g_random_int() | 0x10000000u);
+  signal(SIGPIPE, SIG_IGN);
+  signal(SIGSYS, SIG_IGN);   /* arm64: kein SysV-Shm, Cairos XShm-Versuch soll scheitern statt das Programm zu beenden */
+  GtkWidget *win = new_window("com.clokeos.miditastatur", T("MIDI Keyboard", "MIDI-Tastatur"), 760, 250, FALSE);
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 8);
+  gtk_container_set_border_width(GTK_CONTAINER(box), 12);
+  GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
+  GtkWidget *down = gtk_button_new_with_label("−"), *up = gtk_button_new_with_label("+");
+  k->octlabel = gtk_label_new("");
+  gtk_widget_set_size_request(k->octlabel, 80, -1);
+  gtk_box_pack_start(GTK_BOX(bar), gtk_label_new(T("Octave", "Oktave")), FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), down, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), k->octlabel, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), up, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), gtk_label_new(T("Velocity", "Anschlag")), FALSE, FALSE, 12);
+  k->vel = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 1, 127, 1);
+  gtk_range_set_value(GTK_RANGE(k->vel), 100);
+  gtk_widget_set_size_request(k->vel, 160, -1);
+  gtk_box_pack_start(GTK_BOX(bar), k->vel, FALSE, FALSE, 0);
+  k->status = gtk_label_new("");
+  gtk_label_set_xalign(GTK_LABEL(k->status), 1);
+  gtk_style_context_add_class(gtk_widget_get_style_context(k->status), "dim-label");
+  gtk_box_pack_end(GTK_BOX(bar), k->status, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), bar, FALSE, FALSE, 0);
+  k->area = gtk_drawing_area_new();
+  gtk_widget_set_size_request(k->area, 560, 150);
+  gtk_widget_add_events(k->area, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_BUTTON1_MOTION_MASK);
+  g_signal_connect(k->area, "draw", G_CALLBACK(kbd_draw), k);
+  g_signal_connect(k->area, "button-press-event", G_CALLBACK(kbd_press), k);
+  g_signal_connect(k->area, "button-release-event", G_CALLBACK(kbd_release), k);
+  g_signal_connect(k->area, "motion-notify-event", G_CALLBACK(kbd_motion), k);
+  gtk_box_pack_start(GTK_BOX(box), k->area, TRUE, TRUE, 0);
+  GtkWidget *hint = gtk_label_new(T("Keys A W S E D F T G Y H U J K: notes · Z/X: octave · C/V: velocity",
+                                    "Tasten A W S E D F T G Y H U J K: Noten · Z/X: Oktave · C/V: Anschlag"));
+  gtk_style_context_add_class(gtk_widget_get_style_context(hint), "dim-label");
+  gtk_box_pack_start(GTK_BOX(box), hint, FALSE, FALSE, 0);
+  g_signal_connect(down, "clicked", G_CALLBACK(kbd_oct_down), k);
+  g_signal_connect(up, "clicked", G_CALLBACK(kbd_oct_up), k);
+  g_signal_connect(win, "key-press-event", G_CALLBACK(kbd_key), k);
+  g_signal_connect(win, "key-release-event", G_CALLBACK(kbd_key), k);
+  gtk_container_add(GTK_CONTAINER(win), box);
+  kbd_octave(k, 0);
+  kbd_connect(k);
+  g_timeout_add_seconds(2, kbd_connect, k);
+  gtk_widget_show_all(win);
+  gtk_main();
+}
+
 int main(int argc, char **argv) {
   char *lang = NULL;
   de = g_file_get_contents("/etc/clokeos-language", &lang, NULL, NULL) && g_str_has_prefix(lang, "de");
   if (lang && strlen(lang) >= 2) g_strlcpy(lang2, lang, 3);
   g_free(lang);
   if (argc < 2) {
-    g_printerr("usage: clokeapps notes|calc|calendar|activity\n");
+    g_printerr("usage: clokeapps notes|calc|calendar|activity|keyboard\n");
     return 2;
   }
   gtk_init(&argc, &argv);
@@ -934,6 +1153,7 @@ int main(int argc, char **argv) {
   else if (!strcmp(argv[1], "calc")) run_calc();
   else if (!strcmp(argv[1], "calendar")) run_calendar();
   else if (!strcmp(argv[1], "activity")) run_activity();
+  else if (!strcmp(argv[1], "keyboard")) run_keyboard();
   else {
     g_printerr("unknown app %s\n", argv[1]);
     return 2;

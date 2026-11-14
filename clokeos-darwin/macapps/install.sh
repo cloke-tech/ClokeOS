@@ -106,6 +106,7 @@ fi
 for l in libsqlite3.dylib libxml2.2.dylib libxml2.dylib libbz2.1.0.dylib libbz2.dylib libpcre.0.dylib libpcre.dylib libxar.1.dylib libxar.dylib; do
   [ -e "$rootdir/usr/lib/$l" ] && { mkdir -p "$stage/usr/lib"; cp -P "$rootdir/usr/lib/$l" "$stage/usr/lib/"; }
 done
+[ -f "$rootdir/usr/libexec/clokemidid" ] && { mkdir -p "$stage/usr/libexec"; cp "$rootdir/usr/libexec/clokemidid" "$stage/usr/libexec/"; }   # MIDI-Dienst (coremidi.sh)
 [ -f "$rootdir/usr/sbin/clokeos-pkginstall" ] && { mkdir -p "$stage/usr/sbin"; cp "$rootdir/usr/sbin/clokeos-pkginstall" "$stage/usr/sbin/"; }
 
 # MacLibs: PureDarwins /usr/lib/libCoreFoundation.dylib und libFoundation.dylib definieren dieselben Klassen wie Darlings Frameworks

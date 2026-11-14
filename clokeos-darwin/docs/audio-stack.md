@@ -373,7 +373,41 @@ Found on the way: a program that links only CoreFoundation (no Foundation) crash
 at the first `CFDictionaryCreateMutable` (even with NULL callbacks); with Foundation linked it works. Mac apps always load
 Foundation, so `mtest` links it; the cause is not investigated.
 
-Not done / untested: MIDI hardware (no USB MIDI class driver in PureDarwin), a MIDI server shared between processes
-(virtual endpoints are only visible inside the process that made them), scheduling by time stamp, `MIDIThruConnection`,
+Not done / untested: MIDI hardware (no USB MIDI class driver in PureDarwin), scheduling by time stamp, `MIDIThruConnection`,
 `MIDISetup`, MIDI-CI and the UMP endpoint APIs, MIDI 2.0 messages other than channel voice when converting down, x86_64 in
-the VM (builds only), playing MIDI into Logic.
+the VM (builds only).
+
+### MIDI between programs: `clokemidid` and the MIDI Keyboard (2026-11-14)
+
+macOS has a MIDI server that makes the virtual endpoints of one program visible to all others. ClokeOS has
+`clokemidid` (`macapps/coremidi/clokemidid.c`, built by `coremidi.sh` into `/usr/libexec`, launchd job
+`com.clokeos.midiserver`, socket `/var/run/clokemidi.sock`, mode 0666). The protocol is in
+`macapps/coremidi/clokemidi-proto.h`: a fixed header (length, type, kind, unique ID, format) plus payload; endpoints are
+addressed by their MIDI unique ID. Messages: ADD/REMOVE an own endpoint, SUB/UNSUB a foreign source, DATA (MIDI from an own
+source, fanned out to subscribers), SEND (MIDI to a foreign destination, forwarded to its owner), EP_ADD/EP_REMOVE (the
+service announces endpoints of other programs; all existing ones when a program connects). Payload formats: raw MIDI 1.0
+bytes, `MIDIPacketList` or `MIDIEventList`.
+
+CoreMIDI connects at the first `MIDIClientCreate` (`CLOKE_MIDI_SOCKET` overrides the path; without the service everything
+stays in the process as before). Own virtual endpoints are registered; foreign ones appear as proxy sources and
+destinations with the usual notifications, so `MIDIGetSource`/`MIDIGetDestination` list them. Connecting an input port to a
+foreign source subscribes (once per source), `MIDISend` to a foreign destination goes through the service, `MIDIReceived`
+on an own source also goes to the subscribers in other programs; `MIDIReceived` on a foreign source and disposing it answer
+`kMIDINotPermitted`. A reader thread per process takes the service's messages.
+
+**MIDI Keyboard** (`clokeapps keyboard`, `/System/Applications/Utilities/MIDIKeyboard.app`, icon
+`cloakserver/icons/midikeyboard.svg`): two octaves to play with the mouse (also gliding over keys) or the computer keyboard
+(A W S E D F T G Y H U J K O L P like Logic's Musical Typing, Z/X octave, C/V velocity), octave buttons and a velocity slider.
+It speaks the protocol directly (GTK program, no CoreMIDI) and registers the source "ClokeOS Keyboard". It ignores SIGSYS:
+on arm64 PureDarwin has no SysV shared memory and Cairo's XShm attempt otherwise killed the program.
+
+**Checked.** On the Mac: two processes over `clokemidid` (virtual source in one, input port in the other; `MIDISend` to a
+destination in the other process; raw bytes from a protocol-only client) all arrive; `mtest` still matches Apple. In the arm64
+VM with Logic Pro 12.3: `clokemidid` starts at boot; Logic finds "ClokeOS Keyboard" as soon as the keyboard starts and
+connects its input port to it by itself; eight held keys (C major scale, QMP key events with 450 ms hold) arrive in Logic as
+note on/off, the meters of the selected track ("Bright Synth Strings") and of the output move, and the CoreAudio shim's output
+file (`CLOKE_CA_DEVICE`) has 7.5 s of sound (peaks about 0.2) exactly while playing and silence before and after.
+
+Not checked: x86_64, recording the notes into a region, several programs sending at once, latency (delivery is immediate but
+goes through two sockets and the receive thread), MIDI out from Logic to another program, the Keyboard app from Launchpad as
+the guest user (started from the console in the test).

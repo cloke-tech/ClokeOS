@@ -33,7 +33,7 @@ d="$stage/System/Library/CoreServices/ClokeApps"
 mkdir -p "$d"
 clang -target "$target" -isysroot "$sysroot" -DPLATFORM_MacOSX=1 -fno-stack-check -std=gnu11 -O2 -D_FORTIFY_SOURCE=0 -Wall -Wextra \
   -Wno-unused-parameter -ffile-prefix-map="$HERE/"= -nostdlib -L"$sysroot/libs" \
-  -Wl,-platform_version,macos,11.0,11.5 -Wl,-no_fixup_chains "${inc[@]}" \
+  -Wl,-platform_version,macos,11.0,11.5 -Wl,-no_fixup_chains "${inc[@]}" -I"$HERE/macapps/coremidi" \
   -o "$d/clokeapps" "$HERE/apps/clokeapps.c" \
   -lgtk-3 -lgdk-3 -lgdk_pixbuf-2.0 -lgio-2.0 -lgobject-2.0 -lglib-2.0 -lpango-1.0 -lcairo -lSystem
 echo "Fertig: clokeapps für $CLOKE_ARCH"
