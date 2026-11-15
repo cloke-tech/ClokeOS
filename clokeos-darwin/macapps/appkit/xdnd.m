@@ -9,7 +9,14 @@
  *   -clk_xdndAction                                    vom Ziel gewählte Aktion: 0 kopieren, 1 bewegen, 2 andere
  * Quelle ist ein eigenes, unsichtbares X-Fenster; die Antworten des Ziels (XdndStatus, XdndFinished) und die Anfrage nach den Daten
  * (SelectionRequest auf XdndSelection, text/uri-list) fängt ein Einschub vor -[X11Display postXEvent:] ab.
- * Ziele: CloakServers Dock (Programm = damit öffnen, Papierkorb), GTK- und andere X-Programme. */
+ * Ziele: CloakServers Dock (Programm = damit öffnen, Papierkorb), GTK- und andere X-Programme.
+ *
+ * Ziel (Ablegen aus anderen Programmen in dieses): -[NSWindow clk_setXdndHandler:] meldet das X-Fenster als XdndAware an. Der
+ * Handler bekommt (Punkte in Bildschirmkoordinaten von Cocoa, Ursprung unten links):
+ *   -(NSInteger)clk_xdndOverScreenPoint:(NSPoint)p copy:(BOOL)c   0 = hier nicht, 1 = kopieren, 2 = bewegen, 3 = anderes (öffnen)
+ *   -(void)clk_xdndExited
+ *   -(BOOL)clk_xdndDropFiles:(NSArray *)paths atScreenPoint:(NSPoint)p copy:(BOOL)c
+ * Die Dateien holt die Erweiterung selbst (XConvertSelection auf XdndSelection, text/uri-list) und antwortet mit XdndFinished. */
 #import <AppKit/AppKit.h>
 #import <objc/runtime.h>
 #import "X11Display.h"
@@ -35,7 +42,24 @@ static BOOL waiting, pending, finished;
 static int last_x = -1, last_y = -1;
 static Atom want_action;
 static NSData *uri_data;
+@interface NSObject (ClokeXdndHandler)
+- (NSInteger)clk_xdndOverScreenPoint:(NSPoint)p copy:(BOOL)c;
+- (void)clk_xdndExited;
+- (BOOL)clk_xdndDropFiles:(NSArray *)paths atScreenPoint:(NSPoint)p copy:(BOOL)c;
+@end
+
 static IMP o_post;
+static char k_handler;
+/* Zielseite: aktuelle Quelle und ihr Fenster */
+static Window in_src;
+static NSWindow *in_win;
+static BOOL in_uri;
+static int in_version;
+static NSInteger in_answer;
+static NSPoint in_pt;
+static Atom in_action;
+static Window xwin_of(NSWindow *w);
+static BOOL setup(void);
 
 static void atoms(void) {
     if (A_aware) return;
@@ -140,7 +164,122 @@ static void leave(void) {
 }
 
 /* Einschub vor Darlings Ereignisverteilung: Antworten des Ziels und die Datenanfrage */
+static NSWindow *nswindow_for(X11Display *d, Window w) {
+    id xw = [d windowForID: w];
+    if (![xw isKindOfClass: [X11Window class]]) return nil;
+    id del = [(X11Window *)xw delegate];
+    return [del isKindOfClass: [NSWindow class]] ? del : nil;
+}
+
+static void in_reply(Atom type, long l1, long l2, long l4) {
+    XEvent r;
+    memset(&r, 0, sizeof r);
+    r.xclient.type = ClientMessage;
+    r.xclient.window = in_src;
+    r.xclient.message_type = type;
+    r.xclient.format = 32;
+    r.xclient.data.l[0] = xwin_of(in_win);
+    r.xclient.data.l[1] = l1;
+    r.xclient.data.l[2] = l2;
+    r.xclient.data.l[4] = l4;
+    XSendEvent(dpy, in_src, False, NoEventMask, &r);
+    XFlush(dpy);
+}
+
+/* file:///a%20b -> /a b */
+static NSArray *paths_from_uris(const char *p, unsigned long n) {
+    NSMutableArray *out = [NSMutableArray array];
+    const char *end = p + n;
+    while (p < end) {
+        const char *nl = memchr(p, '\n', end - p);
+        size_t len = (nl ? nl : end) - p;
+        while (len && (p[len - 1] == '\r' || p[len - 1] == ' ' || p[len - 1] == 0)) len--;
+        if (len > 7 && !strncmp(p, "file://", 7)) {
+            const char *u = p + 7, *ue = p + len;
+            if (u < ue && *u != '/') { const char *sl = memchr(u, '/', ue - u); u = sl ? sl : ue; }
+            NSMutableData *d = [NSMutableData data];
+            for (; u < ue; u++) {
+                char c = *u;
+                if (c == '%' && ue - u > 2) { char h[3] = { u[1], u[2], 0 }; c = (char)strtol(h, NULL, 16); u += 2; }
+                [d appendBytes: &c length: 1];
+            }
+            NSString *s = [[[NSString alloc] initWithData: d encoding: NSUTF8StringEncoding] autorelease];
+            if ([s length]) [out addObject: s];
+        }
+        p = nl ? nl + 1 : end;
+    }
+    return out;
+}
+
+static NSPoint screen_point(long packed) {
+    int x = (int)((packed >> 16) & 0xffff), y = (int)(packed & 0xffff);
+    return NSMakePoint(x, DisplayHeight(dpy, DefaultScreen(dpy)) - y);
+}
+
+static BOOL target_message(X11Display *d, XClientMessageEvent *e) {
+    if (e->message_type != A_enter && e->message_type != A_position && e->message_type != A_leave && e->message_type != A_drop)
+        return NO;
+    NSWindow *w = nswindow_for(d, e->window);
+    id h = w ? objc_getAssociatedObject(w, &k_handler) : nil;
+    if (getenv("CLOKE_XDND_TRACE")) fprintf(stderr, "[xdnd] Nachricht %lu an 0x%lx, Fenster %p, Handler %p\n",
+                                            (unsigned long)e->message_type, (unsigned long)e->window, w, h);
+    if (!h) return NO;
+    if (e->message_type == A_enter) {
+        in_src = (Window)e->data.l[0];
+        in_win = w;
+        in_version = (int)((unsigned long)e->data.l[1] >> 24);
+        in_uri = NO;
+        if (e->data.l[1] & 1) {
+            Atom t; int f; unsigned long n = 0, after; unsigned char *data = NULL;
+            if (XGetWindowProperty(dpy, in_src, A_type_list, 0, 64, False, XA_ATOM, &t, &f, &n, &after, &data) == Success && data)
+                for (unsigned long i = 0; i < n; i++) in_uri |= ((Atom *)data)[i] == A_uri;
+            if (data) XFree(data);
+        }
+        for (int i = 2; i < 5; i++) in_uri |= (Atom)e->data.l[i] == A_uri;
+        in_answer = 0;
+    } else if (e->message_type == A_position) {
+        in_src = (Window)e->data.l[0];
+        in_win = w;
+        in_pt = screen_point(e->data.l[2]);
+        in_action = (Atom)e->data.l[4];
+        in_answer = in_uri ? [h clk_xdndOverScreenPoint: in_pt copy: in_action == A_copy] : 0;
+        Atom act = in_answer == 1 ? A_copy : in_answer == 2 ? A_move : in_answer == 3 ? A_copy : None;
+        in_reply(A_status, (in_answer ? 1 : 0) | 2, 0, act);
+    } else if (e->message_type == A_leave) {
+        [h clk_xdndExited];
+        in_src = None;
+    } else {   /* Drop: Dateien holen, ablegen, XdndFinished */
+        in_src = (Window)e->data.l[0];
+        BOOL ok = NO;
+        if (in_answer) {
+            Atom prop = XInternAtom(dpy, "_CLOKE_XDND_IN", False);
+            Window me = xwin_of(w);
+            XConvertSelection(dpy, A_selection, A_uri, prop, me, in_version >= 1 ? (Time)e->data.l[2] : CurrentTime);
+            XFlush(dpy);
+            XEvent n;
+            BOOL got = NO;
+            for (int i = 0; i < 200 && !got; i++) {   /* bis 2 s */
+                if (XCheckTypedWindowEvent(dpy, me, SelectionNotify, &n)) got = YES;
+                else usleep(10000);
+            }
+            if (got && n.xselection.property != None) {
+                Atom t; int f; unsigned long cnt = 0, after; unsigned char *data = NULL;
+                if (XGetWindowProperty(dpy, me, prop, 0, 1 << 20, True, AnyPropertyType, &t, &f, &cnt, &after, &data) == Success && data)
+                    ok = [h clk_xdndDropFiles: paths_from_uris((const char *)data, cnt) atScreenPoint: in_pt copy: in_action == A_copy];
+                if (data) XFree(data);
+            }
+        }
+        [h clk_xdndExited];
+        Atom act = !ok ? None : in_answer == 2 ? A_move : A_copy;
+        in_reply(A_finished, ok ? 1 : 0, act, 0);
+        in_src = None;
+        in_answer = 0;
+    }
+    return YES;
+}
+
 static void x_post(id self, SEL _cmd, XEvent *ev) {
+    if (ev->type == ClientMessage && target_message((X11Display *)self, &ev->xclient)) return;
     if (src_win && ev->xany.window == src_win) {
         if (ev->type == ClientMessage && ev->xclient.message_type == A_status && (Window)ev->xclient.data.l[0] == target) {
             status = (ev->xclient.data.l[1] & 1) ? 2 : 1;
@@ -221,6 +360,32 @@ static BOOL setup(void) {
     o_post = method_setImplementation(class_getInstanceMethod([X11Display class], @selector(postXEvent:)), (IMP)x_post);
     return YES;
 }
+
+static Window xwin_of(NSWindow *w) {
+    id pw = [w respondsToSelector: @selector(platformWindow)] ? [w performSelector: @selector(platformWindow)] : nil;
+    return [pw isKindOfClass: [X11Window class]] ? [(X11Window *)pw windowHandle] : None;
+}
+
+@interface NSWindow (ClokeXdnd)
+- (void)clk_setXdndHandler:(id)h;
+@end
+@implementation NSWindow (ClokeXdnd)
+- (void)clk_publishXdnd {
+    Window xw = xwin_of(self);
+    if (!xw || !setup()) {   /* X-Fenster gibt es erst nach dem ersten Zeigen */
+        [self performSelector: @selector(clk_publishXdnd) withObject: nil afterDelay: 0.3];
+        return;
+    }
+    long v = 5;
+    if (getenv("CLOKE_XDND_TRACE")) fprintf(stderr, "[xdnd] Ziel angemeldet: 0x%lx\n", (unsigned long)xw);
+    XChangeProperty(dpy, xw, A_aware, XA_ATOM, 32, PropModeReplace, (unsigned char *)&v, 1);
+    XFlush(dpy);
+}
+- (void)clk_setXdndHandler:(id)h {
+    objc_setAssociatedObject(self, &k_handler, h, OBJC_ASSOCIATION_ASSIGN);   /* der Handler lebt im Fenster */
+    if (h) [self clk_publishXdnd];
+}
+@end
 
 @interface NSApplication (ClokeXdnd)
 @end

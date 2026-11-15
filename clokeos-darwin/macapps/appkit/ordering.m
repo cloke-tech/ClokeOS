@@ -8,7 +8,8 @@
  *
  * +[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:] (Darling: nicht umgesetzt): oberstes Fenster dieses
  * Programms an einem Bildschirmpunkt, nach der echten Stapelreihenfolge des X-Servers (CloakServers Rahmen liegen
- * direkt unter root). Liegt dort ein Fenster eines anderen Programms, ist das Ergebnis 0. Ziehziele brauchen das,
+ * direkt unter root). Liegt dort ein Fenster eines anderen Programms, ist das Ergebnis 0; fremde override-redirect-Fenster
+ * (Ziehbild eines anderen Programms beim Ablegen hierher, Menüs) zählen nicht. Ziehziele brauchen das,
  * Darlings -orderedWindows ist nicht geordnet.
  *
  * -[NSWindow clk_setShapeRects:] (eigene Erweiterung): Darlings X11-Fenster haben keinen Alphakanal, ein durchsichtiges
@@ -73,6 +74,7 @@ static NSInteger ck_windowNumberAtPoint(id self, SEL _cmd, NSPoint pt, NSInteger
         if (x < a.x || y < a.y || x >= a.x + a.width + 2 * a.border_width || y >= a.y + a.height + 2 * a.border_width) continue;
         NSWindow *w = ck_ownWindow(d, dpy, kids[i], 0);
         if (w && [w ignoresMouseEvents]) continue;   /* Ziehbild und Ähnliches */
+        if (!w && a.override_redirect) continue;     /* fremdes Ziehbild, Menü, Namensschild: verdeckt kein Ablageziel */
         if (skipping) {
             if (w && [w windowNumber] == below) skipping = NO;
             continue;

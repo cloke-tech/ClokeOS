@@ -173,6 +173,19 @@ area is wider than the 1280-pixel VM screen, so its knob could not be seen there
   the queue itself. `CLOKE_XDND_TRACE=1` logs targets and replies of the source; `touch /tmp/dnd-trace` makes CloakServer log the
   Dock's XDND messages to that file.
 
-Not done yet: dropping into GTK and Windows programs is untested (they should work as XDND targets), dropping *into* Fundus from
-other programs, desktop icons, column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
+## Dropping into Fundus from other programs (XDND target, 2026-11-15)
+
+* Fundus windows are XDND targets: files dragged from another program (another Fundus process, GTK programs, anything that
+  speaks XDND with `text/uri-list`) land in the folder, sidebar entry or app under the pointer, with the same highlight and
+  rules as inside Fundus (same volume moves, other volume copies, a source asking for copy copies, Trash moves there, an app opens
+  them). The target window is not activated, as on macOS.
+* `macapps/appkit/xdnd.m` holds the target side for every Mac app: `-[NSWindow clk_setXdndHandler:]` announces `XdndAware` (once the
+  X window exists) and passes XdndPosition/Leave/Drop to a handler; on drop it fetches the URI list from `XdndSelection` itself and
+  answers XdndFinished. FKBrowserView registers itself in `-viewDidMoveToWindow` (not in Open/Save panels).
+* Fix on the way (`ordering.m`): `windowNumberAtPoint:` treated another program's override-redirect window as covering, so the
+  source's drag image under the pointer hid every drop target; such windows (drag images, menus, tooltips) are skipped now.
+* Tested in the arm64 VM with two Fundus processes: a file dragged from one into the other's window (moved, target highlighted
+  and not raised, source refreshed).
+
+Not done yet: GTK and Windows programs as sources or targets are untested, desktop icons, column view, Get Info, tabs, undo, copy progress, PDF/video thumbnails, sheets attached to the
 parent window (panels are modal windows), x86_64 in the VM, the GTK and Windows file dialogs (phase 3).

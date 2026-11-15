@@ -1113,6 +1113,12 @@ static BOOL gClipboardCut;
 
 // ------------------------------------------------------------------------------------------------ Browser
 @implementation FKBrowserView
+// Fundus-Fenster nehmen Dateien aus anderen Programmen an (XDND, macapps/appkit/xdnd.m); Panels nicht
+- (void)viewDidMoveToWindow {
+	[super viewDidMoveToWindow];
+	if ([self window] && _purpose == FKPurposeWindow && [[self window] respondsToSelector:@selector(clk_setXdndHandler:)])
+		[[self window] performSelector:@selector(clk_setXdndHandler:) withObject:self];
+}
 
 - (BOOL)isFlipped { return YES; }
 
@@ -1767,6 +1773,7 @@ typedef struct {
 	__unsafe_unretained NSString *dir;   // Zielordner (nil = kein Ziel)
 	BOOL app, trash;
 } fk_drop;
+static BOOL fkPerformDrop(fk_drop cur, NSArray *paths, BOOL copying);
 
 static void fkSetHighlight(fk_drop *d, BOOL on) {
 	if (d->items) {
@@ -1982,24 +1989,30 @@ static void fkRunDrag(FKItemsView *src, NSEvent *ev, NSPoint startInWindow, NSIn
 	}
 	[dw orderOut:nil];
 
+	fkPerformDrop(cur, paths, !cur.trash && fkCopies(paths, cur.dir, mods));
+}
+
+// Ablegen ausführen (eigenes Ziehen und Ablage aus anderen Programmen): Programm = damit öffnen, Papierkorb, sonst kopieren/bewegen.
+// Danach alle Fenster mit Quelle oder Ziel neu lesen und im Zielfenster die abgelegten Einträge auswählen, ohne es zu aktivieren.
+static BOOL fkPerformDrop(fk_drop cur, NSArray *paths, BOOL copying) {
 	NSMutableArray *results = [NSMutableArray array];
 	if (cur.app) {
 		NSString *bid = fkBundleID(cur.dir);
 		for (NSString *p in paths) fc_open([p UTF8String], [bid UTF8String]);
-		return;
+		return [paths count] > 0;
 	}
-	BOOL copying = !cur.trash && fkCopies(paths, cur.dir, mods);
 	NSMutableSet *dirs = [NSMutableSet setWithObject:cur.dir];
+	BOOL any = NO;
 	for (NSString *p in paths) {
 		char out[PATH_MAX] = "";
 		int err = cur.trash ? fc_trash([p UTF8String])
 		        : copying ? fc_copy([p UTF8String], [cur.dir UTF8String], out, sizeof out)
 		                  : fc_move([p UTF8String], [cur.dir UTF8String], out, sizeof out);
 		if (err) { NSBeep(); TR("ablegen %s: %s", [p UTF8String], strerror(err)); continue; }
+		any = YES;
 		[dirs addObject:[p stringByDeletingLastPathComponent]];
 		if (*out) [results addObject:[NSString stringWithUTF8String:out]];
 	}
-	// alle Fenster mit Quelle oder Ziel neu lesen; im Zielfenster die abgelegten Einträge auswählen, ohne es zu aktivieren
 	for (NSWindow *w in [NSApp windows]) {
 		FKBrowserView *b = fkBrowserIn([w contentView]);
 		if (!b || ![dirs containsObject:b.directory]) continue;
@@ -2009,4 +2022,36 @@ static void fkRunDrag(FKItemsView *src, NSEvent *ev, NSPoint startInWindow, NSIn
 			for (NSString *p in results) [b selectPath:p];
 		}
 	}
+	return any;
 }
+
+// ------------------------------------------------------------------------------------------------ Ablage aus anderen Programmen
+// XDND-Ziel über unser AppKit (macapps/appkit/xdnd.m): dieselben Ziele und Hervorhebungen wie beim Ziehen in Fundus selbst.
+// Wie im Finder: auf demselben Volume bewegen, sonst kopieren; verlangt die Quelle Kopieren (⌥), immer kopieren.
+static fk_drop gIn = { nil, nil, -1, nil, NO, NO };
+
+@implementation FKBrowserView (ClokeXdndTarget)
+- (NSInteger)clk_xdndOverScreenPoint:(NSPoint)p copy:(BOOL)c {
+	fk_drop d = fkDropAt(p, @[], nil);
+	if (d.items != gIn.items || d.side != gIn.side || d.index != gIn.index || (d.dir != gIn.dir && ![d.dir isEqualToString:gIn.dir])) {
+		fkSetHighlight(&gIn, NO);
+		gIn = d;
+		fkSetHighlight(&gIn, YES);
+		[[self window] displayIfNeeded];
+	}
+	if (!d.dir) return 0;
+	if (d.app) return 3;
+	return d.trash ? 2 : c ? 1 : 2;   // ob wirklich bewegt wird, entscheidet beim Ablegen das Volume
+}
+- (void)clk_xdndExited {
+	fkSetHighlight(&gIn, NO);
+	gIn = (fk_drop){ nil, nil, -1, nil, NO, NO };
+	[[self window] displayIfNeeded];
+}
+- (BOOL)clk_xdndDropFiles:(NSArray *)paths atScreenPoint:(NSPoint)p copy:(BOOL)c {
+	fk_drop d = fkDropAt(p, paths, nil);   // jetzt mit den Pfaden: nicht in den eigenen Ordner
+	if (!d.dir || ![paths count]) return NO;
+	TR("xdnd: %lu Datei(en) nach %s", (unsigned long)[paths count], [d.dir UTF8String]);
+	return fkPerformDrop(d, paths, !d.trash && (c || fkCopies(paths, d.dir, 0)));
+}
+@end
