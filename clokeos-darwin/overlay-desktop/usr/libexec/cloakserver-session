@@ -64,6 +64,10 @@ if [[ -x /usr/libexec/clokeos-diag && -x /bin/xfce4-terminal ]]; then
   fi
 fi
 cs=/System/Library/CoreServices/CloakServer/CloakServer
+# Ohne Compositor (Schatten, Glas): Boot-Arg cloke_comp=0 oder clokeos-compositor aus (zum Vergleichen, wie flüssig
+# Fenster ohne ihn laufen; Software-Zeichnen bei 1920x1080 ist teuer)
+csargs=()
+[[ -e /var/tmp/clokeos-nocomp || $bootargs == *cloke_comp=0* ]] && csargs=(--compositor aus)
 # dbus-run-session statt dbus-launch: PureDarwins dbus-launch startet auf arm64 nicht.
-[[ -x /bin/dbus-run-session ]] && exec /bin/dbus-run-session -- $cs
-exec $cs
+[[ -x /bin/dbus-run-session ]] && exec /bin/dbus-run-session -- $cs $csargs
+exec $cs $csargs

@@ -32,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "clokeos_fb.h"
@@ -64,6 +65,9 @@ typedef struct {
   void *shadow;
   DamagePtr damage;
   unsigned long flips, flipWaits;
+  /* Messung für clokeos-diag (alle 10 s, wenn sich etwas tut) */
+  double periodStart, lastFlip, copyMs, waitMs, maxGap;
+  unsigned long periodFlips, periodBytes;
   CreateScreenResourcesProcPtr CreateScreenResources;
   ScreenBlockHandlerProcPtr BlockHandler;
   CloseScreenProcPtr CloseScreen;
@@ -136,7 +140,15 @@ static Bool CIOpen(ScrnInfoPtr pScrn, CIPtr p) {
 
 /* ---- Kopieren und Umschalten --------------------------------------------------------------------- */
 
-static void CICopy(ScrnInfoPtr pScrn, CIPtr p, uint8_t *dst, RegionPtr region) {
+static double CINow(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
+/* gibt die Zahl der kopierten Bytes zurück */
+static unsigned long CICopy(ScrnInfoPtr pScrn, CIPtr p, uint8_t *dst, RegionPtr region) {
+  unsigned long bytes = 0;
   int n = RegionNumRects(region);
   BoxPtr b = RegionRects(region);
   for (; n--; b++) {
@@ -148,7 +160,9 @@ static void CICopy(ScrnInfoPtr pScrn, CIPtr p, uint8_t *dst, RegionPtr region) {
       size_t off = (size_t)y * p->stride + (size_t)x1 * 4;
       memcpy(dst + off, (uint8_t *)p->shadow + off, w);
     }
+    bytes += w * (size_t)(y2 - y1);
   }
+  return bytes;
 }
 
 static void CIBlockHandler(ScreenPtr pScreen, void *timeout) {
@@ -169,13 +183,29 @@ static void CIBlockHandler(ScreenPtr pScreen, void *timeout) {
   }
   /* Der Puffer, in den jetzt kopiert wird, war beim vorigen Umschalten der angezeigte: warten, bis die
    * Anzeige wirklich auf den anderen gewechselt hat (meist schon geschehen) */
+  double t0 = CINow();
   uint32_t other = 1 - p->back;
   if (ioctl(p->ctl, CLOKEOS_FB_WAIT, &other) != 0) p->flipWaits++;
+  double t1 = CINow();
   RegionRec both;
   RegionNull(&both);
   RegionUnion(&both, dmg, &p->prev);
-  CICopy(pScrn, p, (uint8_t *)(uintptr_t)p->vram + p->info.buf_offset[p->back], &both);
+  p->periodBytes += CICopy(pScrn, p, (uint8_t *)(uintptr_t)p->vram + p->info.buf_offset[p->back], &both);
   RegionUninit(&both);
+  double t2 = CINow();
+  p->waitMs += (t1 - t0) * 1e3, p->copyMs += (t2 - t1) * 1e3;
+  if (p->lastFlip && t2 - p->lastFlip > p->maxGap) p->maxGap = t2 - p->lastFlip;
+  p->lastFlip = t2;
+  p->periodFlips++;
+  if (!p->periodStart) p->periodStart = t2;
+  if (t2 - p->periodStart >= 10) {
+    double secs = t2 - p->periodStart;
+    xf86DrvMsg(pScrn->scrnIndex, X_INFO,
+               "perf: %.1f flips/s, copy %.2f ms, wait %.2f ms per flip, %.1f MB/s, longest gap %.0f ms\n",
+               p->periodFlips / secs, p->copyMs / p->periodFlips, p->waitMs / p->periodFlips,
+               p->periodBytes / secs / 1e6, p->maxGap * 1e3);
+    p->periodStart = t2, p->periodFlips = 0, p->periodBytes = 0, p->copyMs = p->waitMs = p->maxGap = 0;
+  }
   uint32_t b = p->back;
   if (ioctl(p->ctl, CLOKEOS_FB_FLIP, &b) == 0) {
     p->flips++;

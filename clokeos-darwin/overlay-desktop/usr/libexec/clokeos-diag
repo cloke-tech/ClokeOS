@@ -46,7 +46,10 @@ else
   print "Display: no /dev/clokeos_gfx (ClokeIntelGfx not attached); GOP framebuffer: $(ioreg -r -c IOFramebuffer -d 1 -w 0 2>/dev/null | grep -o "<class [A-Za-z]*" | sort -u | tr "\n" " ")"
 fi
 print "Xorg display driver:"
-grep -E 'clokeintel\(0\)|PDGOP: selected|Using config file' /var/log/Xorg.0.log 2>/dev/null | tail -5 | cut -c1-148
+grep -E 'clokeintel\(0\)|PDGOP: selected|Using config file' /var/log/Xorg.0.log 2>/dev/null | grep -v perf: | tail -3 | cut -c1-148
+cat /var/log/Xorg.0.log.old /var/log/Xorg.0.log 2>/dev/null | grep -E 'clokeintel\(0\): perf' | tail -8 | sed 's/^.*perf: /  perf: /' | cut -c1-148
+grep -h 'clokeos-compositor' /var/log/cloakserver.log 2>/dev/null | tail -2
+ps axo pcpu,time,command 2>/dev/null | grep -E '[X]org |[C]loakServer/CloakServer' | cut -c1-90
 dmesg 2>/dev/null | grep -E 'ClokeIntelFB' | tail -4 | cut -c1-148
 # Neustarts der Oberfläche (launchd startet cloakserver-start neu, wenn CloakServer oder Xorg endet) und was davor stand
 print "Desktop restarts: $(grep -c 'Xorg startet' /var/log/cloakserver.log 2>/dev/null) starts of Xorg; last lines before a restart:"

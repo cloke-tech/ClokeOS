@@ -456,7 +456,13 @@ void ClokeI2CHID::report(const uint8_t *r, unsigned n) {
   uint64_t now = nowMs();
   if (buttons != lastRaw && btnLog < 120) {
     btnLog++;
-    LOG("btn %u->%u at %llu ms%s", lastRaw, buttons, (unsigned long long)now, releasePending ? " (release pending)" : "");
+    /* Rohbytes dazu: sind die kurzen "losgelassen"-Meldungen echte Berichte oder leere Lesevorgänge? */
+    char hex[3 * 16 + 1];
+    unsigned m = n < 16 ? n : 16;
+    for (unsigned i = 0; i < m; i++) snprintf(hex + 3 * i, 4, "%02x ", r[i]);
+    hex[m ? 3 * m - 1 : 0] = 0;
+    LOG("btn %u->%u at %llu ms%s [%s] dup %u", lastRaw, buttons, (unsigned long long)now,
+        releasePending ? " (release pending)" : "", hex, dupRun);
   }
   lastRaw = buttons;
   if (releasePending) {

@@ -1,0 +1,12 @@
+#!/bin/zsh
+# Compositor von CloakServer (Schatten, Glas, Animationen) ein- oder ausschalten; die Oberfläche startet dafür neu
+# (gut 10 Sekunden schwarz). Gilt bis zum nächsten Neustart des Rechners.
+#   clokeos-compositor aus | an
+case $1 in
+  aus) : > /var/tmp/clokeos-nocomp ;;
+  an) rm -f /var/tmp/clokeos-nocomp ;;
+  *) print -u2 "usage: clokeos-compositor aus|an"; exit 2 ;;
+esac
+print "clokeos-compositor $1: $(date '+%H:%M:%S')" >> /var/log/cloakserver.log
+pid=$(ps axo pid,command | awk '$2 ~ /CloakServer\/CloakServer$/ {print $1; exit}')
+[[ -n $pid ]] && kill $pid
