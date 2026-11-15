@@ -56,8 +56,10 @@ awk '/Xorg startet/ { if (seen) for (i = n - 8; i < n; i++) if (i >= 0) print " 
 grep -a -h -E 'X-Fehler|Abbruch|abort|Segmentation|Bus error|Fatal|fatal|SIGSEGV|SIGABRT|terminated|exited' /var/log/cloakserver.log 2>/dev/null |
   grep -v -E 'xkbcomp|not fatal' | tail -6 | cut -c1-148
 ls -t /Library/Logs/DiagnosticReports/*.crash /var/db/diagnostics/*.crash 2>/dev/null | head -3
+print "Touchpad buttons (ClokeI2CHID, raw changes and suppressed bounces):"
+dmesg 2>/dev/null | grep -E 'ClokeI2CHID: (btn|bounce)' | tail -30 | sed 's/^\[ *[0-9.]*\]: ClokeI2CHID: //' | paste -sd' ' - | fold -w 148
 print "Kernel (ClokePS2, ClokeI2CHID, PS/2, HID):"
-dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx' | tail -16 | cut -c1-148
+dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx|ClokeI2CHID: (btn|bounce)' | tail -16 | cut -c1-148
 print "Disk and USB errors:"
 dmesg 2>/dev/null | grep -i -E 'nvme|I/O error|timed out|timeout|abort|xhci.*(error|fail|stall)|usb.*(error|fail|stall|reset)' | grep -v -E 'armed|checkpoint' | tail -8 | cut -c1-148
 print "Installer log:"

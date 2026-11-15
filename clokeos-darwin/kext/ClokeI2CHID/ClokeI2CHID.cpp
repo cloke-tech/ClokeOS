@@ -239,6 +239,14 @@ class ClokeI2CHID : public IOService {
   Field btn[3], fx, fy, fwheel;
   uint8_t *rbuf = nullptr;
   uint8_t lastButtons = 0;
+  /* Entprellen: Loslassen erst nach kDebounceMs weitergeben; kommt vorher wieder "gedrückt", war es Prellen
+   * (am HP wurden aus Klick + Ziehen Doppelklicks: Fenster maximiert, mehrere Fenster geöffnet) */
+  enum { kDebounceMs = 35 };
+  bool releasePending = false;
+  uint8_t pendingButtons = 0;
+  uint64_t releaseAtMs = 0;
+  unsigned btnLog = 0, bounces = 0;
+  uint8_t lastRaw = 0; /* zuletzt gemeldete Tasten (vor dem Entprellen), nur fürs Protokoll */
   uint8_t lastRep[64] = {};
   unsigned lastLen = 0, dupRun = 0;
   uint32_t abrtSrc = 0; /* IC_TX_ABRT_SOURCE des letzten Abbruchs; Bit 0: Adresse ohne ACK */
@@ -252,6 +260,12 @@ class ClokeI2CHID : public IOService {
   bool parseReportDescriptor(const uint8_t *d, unsigned n);
   void poll(IOTimerEventSource *);
   void report(const uint8_t *r, unsigned n);
+  void emit(int dx, int dy, int dz, uint8_t buttons);
+  static uint64_t nowMs() {
+    uint64_t ns = 0;
+    absolutetime_to_nanoseconds(mach_absolute_time(), &ns);
+    return ns / 1000000;
+  }
 
 public:
   bool start(IOService *provider) override;
@@ -439,8 +453,40 @@ void ClokeI2CHID::report(const uint8_t *r, unsigned n) {
   uint8_t buttons = 0;
   for (int k = 0; k < 3; k++)
     if (field(r, n, btn[k])) buttons |= (uint8_t)(1 << k);
+  uint64_t now = nowMs();
+  if (buttons != lastRaw && btnLog < 120) {
+    btnLog++;
+    LOG("btn %u->%u at %llu ms%s", lastRaw, buttons, (unsigned long long)now, releasePending ? " (release pending)" : "");
+  }
+  lastRaw = buttons;
+  if (releasePending) {
+    if (buttons == lastButtons) { /* nach dem Loslassen gleich wieder gedrückt: Prellen, beides verwerfen */
+      releasePending = false;
+      bounces++;
+      LOG("bounce suppressed (%u so far)", bounces);
+    } else if (buttons != pendingButtons) {
+      releasePending = false; /* andere Taste: das Loslassen sofort ausgeben, dann weiter */
+      lastButtons = pendingButtons;
+      emit(0, 0, 0, pendingButtons);
+    }
+  }
+  if (!releasePending && (lastButtons & ~buttons)) { /* Taste losgelassen: erst später weitergeben */
+    releasePending = true;
+    pendingButtons = buttons;
+    releaseAtMs = now + kDebounceMs;
+    if (dx || dy || dz) emit(dx, dy, dz, lastButtons);
+    return;
+  }
+  if (releasePending) { /* wartet noch: Bewegung mit den alten Tasten */
+    if (dx || dy || dz) emit(dx, dy, dz, lastButtons);
+    return;
+  }
   if (!dx && !dy && !dz && buttons == lastButtons) return;
   lastButtons = buttons;
+  emit(dx, dy, dz, buttons);
+}
+
+void ClokeI2CHID::emit(int dx, int dy, int dz, uint8_t buttons) {
   do {
     int sx = dx > 127 ? 127 : dx < -127 ? -127 : dx, sy = dy > 127 ? 127 : dy < -127 ? -127 : dy;
     int sz = dz > 127 ? 127 : dz < -127 ? -127 : dz;
@@ -469,6 +515,12 @@ void ClokeI2CHID::poll(IOTimerEventSource *) {
     }
   } else
     readErrors++;
+  /* aufgeschobenes Loslassen ausgeben */
+  if (releasePending && nowMs() >= releaseAtMs) {
+    releasePending = false;
+    lastButtons = pendingButtons;
+    emit(0, 0, 0, pendingButtons);
+  }
   if (++polls == 3000)
     LOG("after 30 s: %u reports (%u mouse), %u read errors", reports, mouseReports, readErrors);
   timer->setTimeoutMS(10);
