@@ -13,9 +13,9 @@
  *   - Kernel-Konsole (setConsoleInfo) und /dev/fb0 zeigen danach auf den neuen Speicher.
  *
  * Der Treiber ist ein IOFramebuffer und gewinnt auf Intel-Grafik gegen IOGOPFramebuffer (höherer
- * IOProbeScore, dieselbe Match-Kategorie). Ist er abgeschaltet (Boot-Arg cloke_fb=0, Standard bis zum
- * Test auf dem HP) oder klappt die Übernahme nicht, gibt er auf, bevor er IOFramebuffer startet, und
- * IOKit nimmt wie bisher IOGOPFramebuffer.
+ * IOProbeScore, dieselbe Match-Kategorie). Ist er abgeschaltet (Boot-Arg cloke_fb=0) oder klappt die
+ * Übernahme nicht, gibt er auf, bevor er IOFramebuffer startet, und IOKit nimmt wie bisher
+ * IOGOPFramebuffer. Auf dem HP 15s (Alder Lake) seit 15.11.2026 getestet und Standard.
  *
  * Danach (2c/2d): Modusliste, Skalierer, Hardware-Cursor, vollständiges Modesetting.
  */
@@ -126,7 +126,7 @@ static bool fb0Node(void *, void *, IOService *, IONotifier *) {
 /* ---- Übernahme ------------------------------------------------------------------------------------ */
 
 IOService *ClokeIntelFB::probe(IOService *provider, SInt32 *score) {
-  if (!lkpi_bootarg("cloke_fb", 0) || !lkpi_bootarg("cloke_gfx", 1)) return nullptr;
+  if (!lkpi_bootarg("cloke_fb", 1) || !lkpi_bootarg("cloke_gfx", 1)) return nullptr;
   IOPCIDevice *p = (IOPCIDevice *)provider;
   u16 vendor = p->extendedConfigRead16(PCI_VENDOR_ID), device = p->extendedConfigRead16(PCI_DEVICE_ID);
   if (vendor != 0x8086) return nullptr;

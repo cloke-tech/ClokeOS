@@ -159,7 +159,7 @@ Lake laptop's firmware leaves it (`c++ -std=c++17 -I.. igfx_test.cpp`).
 | Step | Content | Model |
 |---|---|---|
 | 2a ✔ (tested on the HP) | Readout, backlight, AUX, own scanout via GGTT | i915 `intel_display` readout, `intel_backlight.c` (cnp), `intel_dp_aux.c` |
-| 2b (code, HP test pending) | **`ClokeIntelFB`**: an `IOFramebuffer` in the same kext (score 3000, beats IOGOPFramebuffer on Intel Gen12/13, opt-in with boot-arg `cloke_fb=1` until tested): own framebuffer in system memory mapped at GGTT 16 MB (inside the CPU aperture), takes over the current picture, flips plane 1, verifies `PLANE_SURFLIVE`, moves the kernel console and `/dev/fb0` to it; Xorg (PDGOP matches any `IOFramebuffer`) maps it unchanged; on any failure it gives up before `IOFramebuffer::start`, and IOKit falls back to IOGOPFramebuffer (checked in QEMU). Still to do: hardware cursor, vblank flips | |
+| 2b ✔ (tested on the HP, default) | **`ClokeIntelFB`**: an `IOFramebuffer` in the same kext (score 3000, beats IOGOPFramebuffer on Intel Gen12/13; boot-arg `cloke_fb=0` turns it off): own framebuffer in system memory mapped at GGTT 16 MB (inside the CPU aperture), takes over the current picture, flips plane 1, verifies `PLANE_SURFLIVE`, moves the kernel console and `/dev/fb0` to it; Xorg (PDGOP matches any `IOFramebuffer`) maps it unchanged; on any failure it gives up before `IOFramebuffer::start`, and IOKit falls back to IOGOPFramebuffer (checked in QEMU). Still to do: hardware cursor, vblank flips | |
 | 2b (rest) | **ClokeIntelGfx becomes the IOFramebuffer** (subclass, higher score than IOGOPFramebuffer, falls back to it on failure): framebuffer in own GGTT memory, hardware cursor plane (cursor A `CUR_CTL`), page flips on vblank, `/dev/fb0` compatible so `puredarwingop` keeps working | Apple's IOFramebuffer model, PD `IOGOPFramebuffer` |
 | 2c | **Mode list and resolution change at runtime**: EDID over AUX-I2C, VBT from the ACPI OpRegion (`ASLS` in PCI config 0xFC), scaled modes through the pipe scaler (`PS_CTRL`, no link retraining needed on eDP), Xorg driver that reads modes from the kext (RandR) | i915 `intel_panel.c`, `skl_scaler.c`; lil |
 | 2d | **Full modeset**: disable pipe/transcoder/DDI, combo-PHY DPLL programming, DP link training, panel power sequencing; external outputs (HDMI/DP over Type-C needs TC-PHY + PMC handshake) | i915 `intel_ddi.c`, `intel_dpll_mgr.c`, `intel_dp_link_training.c`; lil's Kaby Lake code (`IOIntelFramebuffer`) for the IOKit shape |
@@ -189,8 +189,13 @@ Two stick tests on 2026-11-15 (2.8 live stick with the new loader, kernel and ra
 | **Own scanout** | **works**: 8 MB of system memory (first page at 0x2a2050000) mapped at GGTT 0xfc000000, plane 1 switched, `PLANE_SURFLIVE` = 0xfc000000, colour bars visible for 3 s, then back to the GOP surface |
 | Keyboard | arrow keys did not work: CloakServer loaded the XKB keymap with `xfree86` key codes while `puredarwininput` sends evdev codes; fixed (`evdev+aliases(qwerty)`, `inet(evdev)`), arrows work on the HP |
 
-So on this laptop ClokeOS now drives the display engine itself for scanout and backlight. Next is step 2b:
-`ClokeIntelGfx` becomes the IOFramebuffer with its own framebuffer in the GGTT.
+Third test (step 2b, `cloke_fb=1`): `display@2` 8086:46a8 is driven by **`ClokeIntelFB`** instead of IOGOPFramebuffer,
+plane 1 scans out ClokeOS' own framebuffer at GGTT `0x01000000`, Xorg opened `ClokeIntelFB` through PDGOP, desktop,
+pointer and windows looked and behaved as before (user's check). Since then the driver is on by default.
+
+So on this laptop ClokeOS drives the display engine itself: its own framebuffer, scanout and backlight; the firmware's
+framebuffer is no longer used once the driver has started. Next: hardware cursor and vblank page flips (2b rest),
+then the mode list and scaler (2c).
 
 ---
 
