@@ -4084,7 +4084,10 @@ static void set_remote_login(bool on) {
 /* Sprache umstellen (Systemeinstellungen, Einrichtungsassistent): CloakServer wechselt sofort,
  * die Namen der Programme kommen neu aus ihren Paketen, neue Programme starten mit dem neuen LANG */
 /* Tastaturbelegung: wie macOS für das ganze System. xkbcomp setzt sie über XKB für alle Programme. Ohne
- * Auswahl folgt sie der Sprache (KEYBOARD_FILE fehlt). */
+ * Auswahl folgt sie der Sprache (KEYBOARD_FILE fehlt).
+ * Tastencodes evdev, nicht xfree86: puredarwininput meldet jede Taste als Linux-Tastencode + 8 (USB über
+ * usbToEvdev, PS/2 über ClokePS2). Buchstaben liegen in beiden Tabellen gleich, Pfeile, Pos1/Ende,
+ * Bild auf/ab, Einfg/Entf und das Ziffernfeld nicht: mit xfree86 kamen sie als falsche Tasten an. */
 #define KEYBOARD_FILE "/etc/clokeos-keyboard"
 static const struct { const char *code, *title; } KBD[] = {
     {"us", "U.S."}, {"gb", "British"}, {"de", "Deutsch"}, {"fr", "Français"}, {"es", "Español"}, {"it", "Italiano"},
@@ -4097,8 +4100,8 @@ static void apply_keyboard(void) {
   FILE *f = fopen("/tmp/clokeos-xkb.src", "w");
   if (!f) return;
   fprintf(f,
-          "xkb_keymap {\n xkb_keycodes { include \"xfree86+aliases(qwerty)\" };\n xkb_types { include \"complete\" };\n"
-          " xkb_compat { include \"complete\" };\n xkb_symbols { include \"pc+%s%s+inet(pc105)\" };\n};\n",
+          "xkb_keymap {\n xkb_keycodes { include \"evdev+aliases(qwerty)\" };\n xkb_types { include \"complete\" };\n"
+          " xkb_compat { include \"complete\" };\n xkb_symbols { include \"pc+%s%s+inet(evdev)\" };\n};\n",
           kbd_cur, !strcmp(kbd_cur, "ru") ? "+us:2+group(alt_shift_toggle)" : "");
   fclose(f);
   char cmd[200];
