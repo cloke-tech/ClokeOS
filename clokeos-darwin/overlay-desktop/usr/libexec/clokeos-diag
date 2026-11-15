@@ -45,6 +45,9 @@ if [[ -e /dev/clokeos_gfx ]]; then
 else
   print "Display: no /dev/clokeos_gfx (ClokeIntelGfx not attached); GOP framebuffer: $(ioreg -r -c IOFramebuffer -d 1 -w 0 2>/dev/null | grep -o "<class [A-Za-z]*" | sort -u | tr "\n" " ")"
 fi
+print "Xorg display driver:"
+grep -E 'clokeintel\(0\)|PDGOP: selected|Using config file' /var/log/Xorg.0.log 2>/dev/null | tail -5 | cut -c1-148
+dmesg 2>/dev/null | grep -E 'ClokeIntelFB' | tail -4 | cut -c1-148
 print "Kernel (ClokePS2, ClokeI2CHID, PS/2, HID):"
 dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx' | tail -16 | cut -c1-148
 print "Disk and USB errors:"

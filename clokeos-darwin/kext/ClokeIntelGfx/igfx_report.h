@@ -54,6 +54,10 @@ static inline void igfx_report(struct igfx_text *t, igfx_read_fn rd, void *c, co
     if (info->display_ver >= 12)
       igfx_printf(t, "  PSR: %s, PSR2: %s\n", (rd(c, TRANS_PSR_CTL(p)) & (1u << 31)) ? "on" : "off",
                   (rd(c, TRANS_PSR2_CTL(p)) & (1u << 31)) ? "on" : "off");
+    if (info->display_ver >= 11)
+      igfx_printf(t, "  DDB: plane 1 0x%08x cursor 0x%08x; WM0 plane 0x%08x cursor 0x%08x; CUR_CTL 0x%08x\n",
+                  rd(c, PLANE_BUF_CFG(p)), rd(c, CUR_BUF_CFG(p)), rd(c, PLANE_WM(p, 0)), rd(c, CUR_WM(p, 0)),
+                  rd(c, CUR_CTL(p)));
     if (m.plane_on)
       igfx_printf(t, "  plane 1: %ux%u, stride %u bytes, tiling %u, surface 0x%08x, PLANE_CTL 0x%08x\n", m.plane_w,
                   m.plane_h, m.stride_bytes, m.tiling, m.surf, m.plane_ctl);
@@ -64,6 +68,8 @@ static inline void igfx_report(struct igfx_text *t, igfx_read_fn rd, void *c, co
     uint32_t v = rd(c, DDI_BUF_CTL(port));
     if (v & DDI_BUF_CTL_ENABLE) igfx_printf(t, "DDI %c: on (DDI_BUF_CTL 0x%08x)\n", 'A' + port, v);
   }
+  if (info->display_ver >= 11)
+    igfx_printf(t, "DBUF_CTL S0 0x%08x S1 0x%08x\n", rd(c, DBUF_CTL_S0), rd(c, DBUF_CTL_S1));
   uint32_t pps = rd(c, PP_STATUS), ppc = rd(c, PP_CONTROL);
   igfx_printf(t, "panel power: %s, backlight enable %s (PP_STATUS 0x%08x PP_CONTROL 0x%08x)\n",
               (pps & PP_ON) ? "on" : "off", (ppc & PP_CONTROL_BACKLIGHT) ? "on" : "off", pps, ppc);

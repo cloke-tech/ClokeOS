@@ -10,7 +10,10 @@
  *     PDGOP, Speicher-Typ kIOFBVRAMMemory) wie bisher abbilden kann,
  *   - das aktuelle Bild wird hineinkopiert, dann zeigt Ebene 1 der aktiven Pipe darauf (PLANE_SURF),
  *     geprüft über PLANE_SURFLIVE,
- *   - Kernel-Konsole (setConsoleInfo) und /dev/fb0 zeigen danach auf den neuen Speicher.
+ *   - Kernel-Konsole (setConsoleInfo) und /dev/fb0 zeigen danach auf den neuen Speicher,
+ *   - ein zweiter Bildspeicher direkt dahinter (Doppelpufferung): Xorg (xdriver/clokeintel) zeichnet in
+ *     den verdeckten und schaltet über /dev/clokeos_fb um (clokeos_fb.h); PLANE_SURF wird erst im
+ *     nächsten Vblank übernommen, das Bild reißt nicht.
  *
  * Der Treiber ist ein IOFramebuffer und gewinnt auf Intel-Grafik gegen IOGOPFramebuffer (höherer
  * IOProbeScore, dieselbe Match-Kategorie). Ist er abgeschaltet (Boot-Arg cloke_fb=0) oder klappt die
@@ -21,6 +24,7 @@
  */
 #include "cloke_lkpi.h"
 #include "igfx_regs.h"
+#include "clokeos_fb.h"
 
 #include <IOKit/IOPlatformExpert.h>
 #include <IOKit/graphics/IOFramebuffer.h>
@@ -52,7 +56,9 @@ public:
   }
   IOReturn setDisplayMode(IODisplayModeID, IOIndex) override { return kIOReturnSuccess; }
   IODeviceMemory *getApertureRange(IOPixelAperture) override { return IODeviceMemory::withRange(aperture, fbSize); }
-  IODeviceMemory *getVRAMRange() override { return getApertureRange(kIOFBSystemAperture); }
+  /* beide Puffer: der Xorg-Treiber clokeintel bildet den ganzen Bereich ab; puredarwingop nimmt nur den Anfang
+   * (Puffer 0, der angezeigt bleibt, solange niemand umschaltet) */
+  IODeviceMemory *getVRAMRange() override { return IODeviceMemory::withRange(aperture, slot * nbuf); }
   IOReturn getInformationForDisplayMode(IODisplayModeID, IODisplayModeInformation *info) override;
   /* wie IOGOPFramebuffer */
   UInt64 getPixelFormatsForDisplayMode(IODisplayModeID, IOIndex) override { return (UInt64)(uintptr_t)getPixelFormats(); }
@@ -68,9 +74,10 @@ private:
   struct pci_dev pdev;
   struct lkpi_iomap mmio, gtt, fbmap;
   struct igfx_info info;
-  IOBufferMemoryDescriptor *buf;
+  IOBufferMemoryDescriptor *bufs[2];
   u64 *savedPte;
-  u64 pages, fbSize, aperture;
+  u64 pages, fbSize, aperture, slot, ptePages;
+  unsigned nbuf, shown;
   u32 oldSurf, width, height, stride, refreshMilli;
   unsigned pipe;
   bool flipped;
@@ -80,6 +87,15 @@ private:
   static u32 rdThunk(void *self, u32 reg) { return ((ClokeIntelFB *)self)->rd(reg); }
   bool takeOver();
   void giveBack();
+
+public:
+  /* /dev/clokeos_fb */
+  void fillInfo(struct clokeos_fb_info *fi);
+  int flip(u32 index);
+  int waitShown(u32 index);
+
+private:
+  u32 gpuAddr(unsigned i) const { return (u32)(kGpuAddr + i * slot); }
   void ggttFlush() {
     wr(GFX_FLSH_CNTL, 1);
     (void)rd(GFX_FLSH_CNTL);
@@ -91,22 +107,32 @@ OSDefineMetaClassAndStructors(ClokeIntelFB, IOFramebuffer)
 /* ---- /dev/fb0 (wie IOGOPFramebuffer: nur schreiben, ab Offset) ----------------------------------- */
 
 static volatile u8 *gFb;
+static ClokeIntelFB *gFbDrv;
+static void *gCtlNode;
 static size_t gFbSize;
 static int gFbMajor = -1;
 static void *gFbNode;
 static IONotifier *gFbNotifier;
 
-static int fb0_open(dev_t, int, int, proc_t) { return gFb ? 0 : ENXIO; }
+static int fb0_open(dev_t dev, int, int, proc_t) { return (minor((uint32_t)dev) == 1 ? gFbDrv != nullptr : gFb != nullptr) ? 0 : ENXIO; }
 static int fb0_close(dev_t, int, int, proc_t) { return 0; }
-static int fb0_write(dev_t, struct uio *uio, int) {
-  if (!gFb) return ENXIO;
+static int fb0_write(dev_t dev, struct uio *uio, int) {
+  if (!gFb || minor((uint32_t)dev) != 0) return ENXIO;
   off_t off = uio_offset(uio);
   if (off < 0 || (u64)off >= gFbSize) return ENOSPC;
   size_t n = lkpi_min(gFbSize - (size_t)off, (size_t)uio_resid(uio));
   return uiomove((char *)(gFb + off), (int)n, uio);
 }
 static int fb0_rw(dev_t, struct uio *, int) { return ENODEV; }
-static int fb0_ioctl(dev_t, u_long, caddr_t, int, proc_t) { return ENOTTY; }
+static int fb0_ioctl(dev_t dev, u_long cmd, caddr_t data, int, proc_t) {
+  if (minor((uint32_t)dev) != 1 || !gFbDrv) return ENOTTY;
+  switch (cmd) {
+  case CLOKEOS_FB_GET_INFO: gFbDrv->fillInfo((struct clokeos_fb_info *)data); return 0;
+  case CLOKEOS_FB_FLIP: return gFbDrv->flip(*(u32 *)data);
+  case CLOKEOS_FB_WAIT: return gFbDrv->waitShown(*(u32 *)data);
+  default: return ENOTTY;
+  }
+}
 static int fb0_stop(struct tty *, int) { return 0; }
 static int fb0_reset(int) { return 0; }
 static int fb0_select(dev_t, int, void *, proc_t) { return 1; }
@@ -118,8 +144,11 @@ static bool fb0Node(void *, void *, IOService *, IONotifier *) {
   if (gFbMajor >= 0) return true;
   gFbMajor = cdevsw_add(-1, &gFbCdev);
   /* cloakserver-start wartet auf /dev/fb0, bevor es Xorg startet */
-  if (gFbMajor >= 0) gFbNode = devfs_make_node(makedev((uint32_t)gFbMajor, 0), DEVFS_CHAR, 0, 0, 0666, "fb0");
-  IOLog("ClokeIntelFB: /dev/fb0 %s\n", gFbNode ? "ready" : "failed");
+  if (gFbMajor >= 0) {
+    gFbNode = devfs_make_node(makedev((uint32_t)gFbMajor, 0), DEVFS_CHAR, 0, 0, 0666, "fb0");
+    gCtlNode = devfs_make_node(makedev((uint32_t)gFbMajor, 1), DEVFS_CHAR, 0, 0, 0666, "clokeos_fb");
+  }
+  IOLog("ClokeIntelFB: /dev/fb0 %s, /dev/clokeos_fb %s\n", gFbNode ? "ready" : "failed", gCtlNode ? "ready" : "failed");
   return true;
 }
 
@@ -156,64 +185,80 @@ bool ClokeIntelFB::takeOver() {
   pages = fbSize >> 12;
   oldSurf = rd(PLANE_SURF(pipe));
   u64 gopStart = oldSurf & ~0xfffull;
-  if ((u64)kGpuAddr < gopStart + fbSize && (u64)kGpuAddr + fbSize > gopStart) {
+  u64 span = 2 * ((fbSize + 0xfffff) & ~0xfffffull); /* höchstens zwei Puffer */
+  if ((u64)kGpuAddr < gopStart + fbSize && (u64)kGpuAddr + span > gopStart) {
     LOG("firmware framebuffer at GGTT 0x%llx overlaps ours, giving up", (unsigned long long)gopStart);
     return false;
   }
   u64 ggtt = igfx_ggtt_size(pdev.pci->extendedConfigRead16(PCI_GMCH_CTRL));
-  if (ggtt < (u64)kGpuAddr + fbSize) return false;
   aperture = pdev.bar[2].start + kGpuAddr;
+
+  /* Zwei Puffer, je auf 1 MB gerundet (Ebenen brauchen 256-KB-Ausrichtung); mit cloke_fb=2 nur einer */
+  slot = (fbSize + 0xfffff) & ~0xfffffull;
+  nbuf = lkpi_bootarg("cloke_fb", 1) == 2 ? 1 : 2;
+  if (ggtt < (u64)kGpuAddr + slot * nbuf) return false;
+  ptePages = (slot * nbuf) >> 12;
 
   /* GGTT-Einträge für unseren Bereich abbilden und sichern */
   u64 pteOff = GGTT_OFFSET_IN_BAR0 + ((u64)kGpuAddr >> 12) * 8;
-  if (lkpi_ioremap(&gtt, pdev.bar[0].start + pteOff, (pages * 8 + 0xfff) & ~0xfffull)) return false;
+  if (lkpi_ioremap(&gtt, pdev.bar[0].start + pteOff, (ptePages * 8 + 0xfff) & ~0xfffull)) return false;
   volatile u64 *pte = (volatile u64 *)gtt.base;
-  savedPte = (u64 *)kzalloc(pages * 8);
-  buf = IOBufferMemoryDescriptor::withOptions(kIODirectionInOut, fbSize, PAGE_SIZE);
-  if (!savedPte || !buf || buf->prepare() != kIOReturnSuccess) {
-    LOG("no memory for %llu bytes", (unsigned long long)fbSize);
-    return false;
-  }
-  for (u64 i = 0; i < pages; i++) savedPte[i] = pte[i];
+  savedPte = (u64 *)kzalloc(ptePages * 8);
+  if (!savedPte) return false;
+  for (u64 i = 0; i < ptePages; i++) savedPte[i] = pte[i];
 
   /* Das aktuelle Bild (Logo) übernehmen: aus der Aperture der Firmware lesen, über die gecachte
    * Abbildung schreiben, dann aus dem Cache in den Speicher schieben (die Anzeige liest am Cache vorbei) */
   struct lkpi_iomap gop;
-  u8 *dst = (u8 *)buf->getBytesNoCopy();
-  if (!lkpi_ioremap(&gop, pdev.bar[2].start + gopStart, fbSize)) {
-    for (u64 o = 0; o < fbSize; o += 8) *(u64 *)(dst + o) = *(volatile u64 *)(gop.base + o);
-    lkpi_iounmap(&gop);
-  } else {
-    bzero(dst, fbSize);
-  }
-  for (u64 o = 0; o < fbSize; o += 64) __builtin_ia32_clflush(dst + o);
-  __builtin_ia32_mfence();
-
-  for (u64 i = 0; i < pages; i++) {
-    IOByteCount len = 0;
-    addr64_t phys = buf->getPhysicalSegment(i << 12, &len, kIOMemoryMapperNone);
-    if (!phys) {
-      LOG("no physical address for page %llu", (unsigned long long)i);
-      for (u64 k = 0; k < i; k++) pte[k] = savedPte[k];
-      ggttFlush();
+  bool haveGop = !lkpi_ioremap(&gop, pdev.bar[2].start + gopStart, fbSize);
+  for (unsigned b = 0; b < nbuf; b++) {
+    bufs[b] = IOBufferMemoryDescriptor::withOptions(kIODirectionInOut, fbSize, PAGE_SIZE);
+    if (!bufs[b] || bufs[b]->prepare() != kIOReturnSuccess) {
+      LOG("no memory for framebuffer %u (%llu bytes)", b, (unsigned long long)fbSize);
+      OSSafeReleaseNULL(bufs[b]);
+      if (haveGop) lkpi_iounmap(&gop);
       return false;
     }
-    pte[i] = igfx_ggtt_pte(phys);
+    u8 *dst = (u8 *)bufs[b]->getBytesNoCopy();
+    if (haveGop)
+      for (u64 o = 0; o < fbSize; o += 8) *(u64 *)(dst + o) = b ? *(u64 *)((u8 *)bufs[0]->getBytesNoCopy() + o)
+                                                                 : *(volatile u64 *)(gop.base + o);
+    else
+      bzero(dst, fbSize);
+    for (u64 o = 0; o < fbSize; o += 64) __builtin_ia32_clflush(dst + o);
   }
-  (void)pte[pages - 1];
+  if (haveGop) lkpi_iounmap(&gop);
+  __builtin_ia32_mfence();
+
+  for (unsigned b = 0; b < nbuf; b++) {
+    u64 first = (slot * b) >> 12;
+    for (u64 i = 0; i < pages; i++) {
+      IOByteCount len = 0;
+      addr64_t phys = bufs[b]->getPhysicalSegment(i << 12, &len, kIOMemoryMapperNone);
+      if (!phys) {
+        LOG("no physical address for page %llu of buffer %u", (unsigned long long)i, b);
+        for (u64 k = 0; k < ptePages; k++) pte[k] = savedPte[k];
+        ggttFlush();
+        return false;
+      }
+      pte[first + i] = igfx_ggtt_pte(phys);
+    }
+  }
+  (void)pte[ptePages - 1];
   ggttFlush();
 
   /* Umschalten mit dem nächsten Bildwechsel, prüfen, ob die Anzeige wirklich von uns liest */
-  wr(PLANE_SURF(pipe), (u32)kGpuAddr | (oldSurf & 0xfff));
+  wr(PLANE_SURF(pipe), gpuAddr(0) | (oldSurf & 0xfff));
   u32 live = 0;
-  if (wait_for(((live = rd(PLANE_SURFLIVE(pipe))) & ~0xfffu) == (u32)kGpuAddr, 200)) {
+  if (wait_for(((live = rd(PLANE_SURFLIVE(pipe))) & ~0xfffu) == gpuAddr(0), 200)) {
     LOG("PLANE_SURFLIVE stayed 0x%08x, back to the firmware framebuffer", live);
     wr(PLANE_SURF(pipe), oldSurf);
-    for (u64 i = 0; i < pages; i++) pte[i] = savedPte[i];
+    for (u64 i = 0; i < ptePages; i++) pte[i] = savedPte[i];
     ggttFlush();
     return false;
   }
   flipped = true;
+  shown = 0;
 
   /* CPU-Sicht für /dev/fb0: die Aperture an unserer GGTT-Adresse, Write-Combining */
   IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(aperture, fbSize, kIODirectionInOut);
@@ -229,8 +274,8 @@ bool ClokeIntelFB::takeOver() {
   IOSleep(500);
   u64 dt = ktime_get_ns() - t0;
   refreshMilli = dt ? (u32)((u64)(rd(PIPE_FRMCOUNT(pipe)) - a) * 1000000000000ull / dt) : 60000;
-  LOG("pipe %c scans out own framebuffer: %ux%u stride %u, GGTT 0x%x, aperture 0x%llx, %llu pages", 'A' + pipe,
-      width, height, stride, (unsigned)kGpuAddr, (unsigned long long)aperture, (unsigned long long)pages);
+  LOG("pipe %c scans out own framebuffer: %ux%u stride %u, %u buffers at GGTT 0x%x (+0x%llx), aperture 0x%llx", 'A' + pipe,
+      width, height, stride, nbuf, (unsigned)kGpuAddr, (unsigned long long)slot, (unsigned long long)aperture);
   return true;
 }
 
@@ -239,16 +284,18 @@ void ClokeIntelFB::giveBack() {
     wr(PLANE_SURF(pipe), oldSurf);
     wait_for((rd(PLANE_SURFLIVE(pipe)) & ~0xfffu) == (oldSurf & ~0xfffu), 200);
     volatile u64 *pte = (volatile u64 *)gtt.base;
-    for (u64 i = 0; i < pages; i++) pte[i] = savedPte[i];
+    for (u64 i = 0; i < ptePages; i++) pte[i] = savedPte[i];
     ggttFlush();
     flipped = false;
   }
+  if (gFbDrv == this) gFbDrv = nullptr;
   gFb = nullptr;
   OSSafeReleaseNULL(fbmap.map);
-  if (buf) {
-    buf->complete();
-    OSSafeReleaseNULL(buf);
-  }
+  for (unsigned b = 0; b < 2; b++)
+    if (bufs[b]) {
+      bufs[b]->complete();
+      OSSafeReleaseNULL(bufs[b]);
+    }
   if (savedPte) kfree(savedPte), savedPte = nullptr;
   lkpi_iounmap(&gtt);
   lkpi_iounmap(&mmio);
@@ -281,7 +328,8 @@ bool ClokeIntelFB::start(IOService *provider) {
     c.v_scale = kPEScaleFactor1x;
     pe->setConsoleInfo(&c, (unsigned int)c.v_display);
   }
-  setProperty("ClokeIntelFB", "own framebuffer in GGTT");
+  setProperty("ClokeIntelFB", nbuf == 2 ? "own framebuffer in GGTT, double buffered" : "own framebuffer in GGTT");
+  gFbDrv = this;
   if (!gFbNotifier)
     gFbNotifier = IOService::addMatchingNotification(gIOPublishNotification, IOService::resourceMatching("IOBSD"), fb0Node,
                                                      nullptr, nullptr, 0);
@@ -319,4 +367,36 @@ IOReturn ClokeIntelFB::getPixelInformation(IODisplayModeID mode, IOIndex depth, 
   pi->componentCount = 3;
   pi->bitsPerComponent = 8;
   return kIOReturnSuccess;
+}
+
+/* ---- /dev/clokeos_fb ------------------------------------------------------------------------------ */
+
+void ClokeIntelFB::fillInfo(struct clokeos_fb_info *fi) {
+  bzero(fi, sizeof(*fi));
+  fi->version = CLOKEOS_FB_VERSION;
+  fi->width = width;
+  fi->height = height;
+  fi->stride = stride;
+  fi->nbuf = nbuf;
+  fi->shown = shown;
+  for (unsigned b = 0; b < nbuf; b++) fi->buf_offset[b] = slot * b;
+  fi->vram_size = slot * nbuf;
+  fi->refresh_mhz = refreshMilli;
+}
+
+int ClokeIntelFB::flip(u32 index) {
+  if (index >= nbuf || !flipped) return EINVAL;
+  /* PLANE_SURF ist doppelt gepuffert: die Anzeige nimmt die Adresse im nächsten Vblank */
+  wr(PLANE_SURF(pipe), gpuAddr(index) | (oldSurf & 0xfff));
+  shown = index;
+  return 0;
+}
+
+int ClokeIntelFB::waitShown(u32 index) {
+  if (index >= nbuf || !flipped) return EINVAL;
+  for (int i = 0; i < 50; i++) {
+    if ((rd(PLANE_SURFLIVE(pipe)) & ~0xfffu) == gpuAddr(index)) return 0;
+    IOSleep(1);
+  }
+  return ETIMEDOUT;
 }

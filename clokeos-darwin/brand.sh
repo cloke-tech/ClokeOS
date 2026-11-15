@@ -62,6 +62,8 @@ if [ "$CLOKE_FLAVOR" = desktop ]; then
   # Eigene Kernel-Treiber (kext/build.sh; RavynHDAudio ersetzt PureDarwins Kext): ins System, damit pd-rebuild-kc sie mit einbaut; der
   # Kernel Collection selbst kommt unten in die EFI-Partition
   if [ "$CLOKE_ARCH" = x86_64 ]; then
+    # Eigener Xorg-Treiber für ClokeIntelFB (Doppelpufferung); cloakserver-xorg nimmt ihn, wenn /dev/clokeos_fb da ist
+    "$HERE/xdriver/build.sh" "$tmp/stage/usr/lib/xorg/modules/drivers" | tail -1
     "$HERE/kext/build.sh" | tail -1
     mkdir -p "$tmp/stage/System/Library/Extensions" "$tmp/stage/usr/sbin"
     cp -R "$WORK"/out/kexts/*.kext "$tmp/stage/System/Library/Extensions/"

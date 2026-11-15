@@ -3,4 +3,12 @@
 # PureDarwins Tastatur- und Maustreiber können kein poll, Xorg kreist sonst mit voller Last
 # (siehe cloakserver/xpoll.c).
 [[ -r /usr/lib/libclokeos-xpoll.dylib ]] && export DYLD_INSERT_LIBRARIES=/usr/lib/libclokeos-xpoll.dylib
+# Mit ClokeOS' eigenem Framebuffer-Treiber (kext/ClokeIntelGfx, /dev/clokeos_fb) zeichnet Xorg über den Treiber
+# clokeintel doppelt gepuffert (xdriver/clokeintel), sonst über PureDarwins puredarwingop.
+# Boot-Arg cloke_xdrv=0 erzwingt puredarwingop, cloke_xdrv=1 clokeintel (auch ohne /dev/clokeos_fb, zum Testen).
+xdrv=$(sysctl -n kern.bootargs 2>/dev/null | tr ' ' '\n' | sed -n 's/^cloke_xdrv=//p')
+if [[ -r /usr/lib/xorg/modules/drivers/clokeintel_drv.so && -r /etc/X11/xorg-clokeintel.conf && $xdrv != 0 ]] &&
+   [[ -e /dev/clokeos_fb || $xdrv == 1 ]]; then
+  set -- "$@" -config xorg-clokeintel.conf
+fi
 exec /bin/Xorg "$@"

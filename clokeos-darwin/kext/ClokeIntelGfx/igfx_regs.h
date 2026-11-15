@@ -92,6 +92,17 @@ static inline struct igfx_info igfx_identify(uint16_t did) {
 #define DP_AUX_CH_DATA(ch, i) (0x64014u + 0x100u * (ch) + 4u * (i))
 /* Stromversorgung der Anzeige-Bereiche */
 #define PWR_WELL_CTL2 0x45404u
+/* Display-Puffer (DDB) und Watermarks (SKL+): jede Ebene braucht einen Bereich im DDB und Watermarks,
+ * sonst liest sie zu spät (Unterlauf). Für den Hardware-Cursor erst auslesen, was die Firmware vergeben hat. */
+#define CUR_CTL(p) (0x70080u + 0x1000u * (p))
+#define CUR_BASE(p) (0x70084u + 0x1000u * (p))
+#define CUR_POS(p) (0x70088u + 0x1000u * (p))
+#define CUR_BUF_CFG(p) (0x7017Cu + 0x1000u * (p))
+#define CUR_WM(p, l) (0x70140u + 0x1000u * (p) + 4u * (l))
+#define PLANE_BUF_CFG(p) (0x7027Cu + 0x1000u * (p))
+#define PLANE_WM(p, l) (0x70240u + 0x1000u * (p) + 4u * (l))
+#define DBUF_CTL_S0 0x45008u
+#define DBUF_CTL_S1 0x44FE8u
 /* Panel Self Refresh (Gen12: je Transcoder); steht er an, holt die Anzeige keine neuen Bilder */
 #define TRANS_PSR_CTL(t) (0x60800u + 0x1000u * (t))
 #define TRANS_PSR2_CTL(t) (0x60900u + 0x1000u * (t))
