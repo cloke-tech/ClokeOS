@@ -184,6 +184,13 @@ struct PtpState {
   uint64_t touchStart = 0;
   int64_t moved = 0;
   int32_t fracX = 0, fracY = 0, scrollAcc = 0; /* Reste in 1/256 Bildpunkt bzw. Geräteeinheiten */
+  /* Hybrid-Meldung (weniger Finger-Felder als Finger, z. B. HP 15s: eines): die Finger eines Bildes kommen in
+   * mehreren Berichten, der erste trägt die Gesamtzahl. Hier gesammelt, bis alle da sind. */
+  struct {
+    int32_t cid, x, y;
+  } frame[PTP_MAX_FINGERS];
+  int frameHave = 0, frameWant = 0, frameSeen = 0;
+  bool frameBtn = false;
 };
 
 /* Ein Touchpad-Bericht r (hinter der Report-ID), n Bytes */
@@ -199,22 +206,38 @@ static inline void ptp_input(PtpState *S, const PtpLayout *L, const uint8_t *r, 
     S->lastScan = sc, S->haveScan = true;
   }
   int32_t cnt = L->count.off >= 0 ? ptp_get(r, n, L->count) : -1;
-  if (cnt == 0 && L->count.off >= 0) {
-    /* Hybrid-Bericht (Fortsetzung mit weiteren Fingern): nur die ersten Finger auswerten */
+  bool btnNow = L->button.off >= 0 && ptp_get(r, n, L->button);
+  /* Ein Bericht mit Anzahl > 0 (oder ohne Anzahl-Feld) beginnt ein Bild; Anzahl 0 ist bei offenem Bild die
+   * Fortsetzung (Hybrid), sonst "alle Finger weg" */
+  if (cnt != 0) {
+    S->frameHave = S->frameSeen = 0;
+    S->frameWant = cnt > 0 ? cnt : 0;
+    S->frameBtn = btnNow;
+  } else if (!S->frameWant) {
+    S->frameHave = S->frameSeen = 0;
+    S->frameBtn = btnNow;
+  } else
+    S->frameBtn = S->frameBtn || btnNow;
+  /* Finger-Felder dieses Berichts: belegt sind höchstens so viele, wie im Bild noch fehlen */
+  int slots = L->fingers;
+  if (S->frameWant && S->frameWant - S->frameSeen < slots) slots = S->frameWant - S->frameSeen;
+  for (int f = 0; f < slots; f++) {
+    S->frameSeen++;
+    bool tip = L->tip[f].off >= 0 ? ptp_get(r, n, L->tip[f]) != 0 : true;
+    if (!tip || S->frameHave >= PTP_MAX_FINGERS) continue;
+    S->frame[S->frameHave].cid = L->cid[f].off >= 0 ? ptp_get(r, n, L->cid[f]) : f;
+    S->frame[S->frameHave].x = ptp_get(r, n, L->x[f]);
+    S->frame[S->frameHave].y = ptp_get(r, n, L->y[f]);
+    S->frameHave++;
   }
+  if (S->frameWant && S->frameSeen < S->frameWant) return; /* weitere Berichte dieses Bildes folgen */
+  S->frameWant = 0;
   struct {
     int32_t cid, x, y;
   } cur[PTP_MAX_FINGERS];
-  int nc = 0;
-  for (int f = 0; f < L->fingers; f++) {
-    bool tip = L->tip[f].off >= 0 ? ptp_get(r, n, L->tip[f]) != 0 : true;
-    if (!tip) continue;
-    cur[nc].cid = L->cid[f].off >= 0 ? ptp_get(r, n, L->cid[f]) : f;
-    cur[nc].x = ptp_get(r, n, L->x[f]);
-    cur[nc].y = ptp_get(r, n, L->y[f]);
-    nc++;
-  }
-  bool btn = L->button.off >= 0 && ptp_get(r, n, L->button);
+  int nc = S->frameHave;
+  for (int i = 0; i < nc; i++) cur[i].cid = S->frame[i].cid, cur[i].x = S->frame[i].x, cur[i].y = S->frame[i].y;
+  bool btn = S->frameBtn;
   int32_t lmaxX = L->x[0].lmax > 0 ? L->x[0].lmax : 4000, lmaxY = L->y[0].lmax > 0 ? L->y[0].lmax : 3000;
 
   /* Bewegung je Finger gegenüber dem vorigen Bericht; der Finger mit der größten Bewegung führt */
@@ -255,10 +278,9 @@ static inline void ptp_input(PtpState *S, const PtpLayout *L, const uint8_t *r, 
     while (S->scrollAcc <= -step) wheel--, S->scrollAcc += step;
   } else if (best > 0) {
     S->scrollAcc = 0;
-    /* ganze Breite des Touchpads = 1,6 Bildschirmbreiten (1920), schnelle Bewegung bis doppelt so weit */
-    int32_t speed = best * 256 / (lmaxX / 60 > 0 ? lmaxX / 60 : 1);
-    int32_t accel = 256 + (speed > 256 ? (speed - 256 > 256 ? 256 : speed - 256) : 0);
-    int64_t gx = (int64_t)mdx * 3072 * accel / lmaxX, gy = (int64_t)mdy * 3072 * accel / lmaxX;
+    /* ganze Breite des Touchpads = eine Bildschirmbreite (1920); beschleunigt wird nur von Xorg (sonst doppelt,
+     * am HP "wie auf Eis") */
+    int64_t gx = (int64_t)mdx * 1920 * 256 / lmaxX, gy = (int64_t)mdy * 1920 * 256 / lmaxX;
     S->fracX += (int32_t)gx, S->fracY += (int32_t)gy;
     outDx = S->fracX / 256, outDy = S->fracY / 256;
     S->fracX -= outDx * 256, S->fracY -= outDy * 256;

@@ -99,7 +99,7 @@ int main() {
     assert(evs.back().b == 1); /* bleibt links, auch mit zweitem Finger */
   }
   printf("drag with pressed clickpad: %d px for 100 units\n", moved);
-  assert(moved > 150);
+  assert(moved > 100 && moved < 200); /* ganze Breite = eine Bildschirmbreite */
   r = rep(0, xa, ya, 500, 0, false);
   ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 1200, emit, nullptr);
   assert(evs.back().b == 0);
@@ -120,5 +120,41 @@ int main() {
   r = rep(2, xr, yr, 900, 2, true);
   ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 3000, emit, nullptr);
   assert(evs.back().b == 2);
+  /* Hybrid wie am HP: ein Finger-Feld je Bericht; zwei Finger kommen in zwei Berichten (Anzahl 2, dann 0) */
+  {
+    std::vector<uint8_t> h = {0x05, 0x0D, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x03};
+    h.insert(h.end(), finger, finger + sizeof finger);
+    const uint8_t t2[] = {0x05, 0x0D, 0x27, 0xFF, 0xFF, 0x00, 0x00, 0x75, 0x10, 0x95, 0x01, 0x09, 0x56, 0x81, 0x02,
+                          0x09, 0x54, 0x25, 0x7F, 0x75, 0x08, 0x81, 0x02, 0x05, 0x09, 0x09, 0x01, 0x25, 0x01, 0x75,
+                          0x01, 0x95, 0x01, 0x81, 0x02, 0x95, 0x07, 0x81, 0x03, 0xC0,
+                          0x05, 0x0D, 0x09, 0x0E, 0xA1, 0x01, 0x85, 0x04, 0x09, 0x52, 0x15, 0x00, 0x25, 0x0A,
+                          0x75, 0x08, 0x95, 0x01, 0xB1, 0x02, 0xC0};
+    h.insert(h.end(), t2, t2 + sizeof t2);
+    PtpLayout H;
+    assert(ptp_parse(h.data(), (unsigned)h.size(), &H) && H.fingers == 1 && H.scan.off == 48);
+    PtpState T;
+    evs.clear();
+    auto one = [&](int cid, int x, int y, int scan, int cnt, bool tip) {
+      std::vector<uint8_t> r(10, 0);
+      r[0] = tip ? 3 : 1, r[1] = (uint8_t)cid, r[2] = (uint8_t)x, r[3] = (uint8_t)(x >> 8), r[4] = (uint8_t)y,
+      r[5] = (uint8_t)(y >> 8), r[6] = (uint8_t)scan, r[7] = (uint8_t)(scan >> 8), r[8] = (uint8_t)cnt;
+      ptp_input(&T, &H, r.data(), 10, 5000 + scan, emit, nullptr);
+    };
+    /* zwei Finger nach oben: rollen, kein Zeiger */
+    for (int k = 0; k < 8; k++) {
+      one(0, 500, 700 - 25 * k, 10 + 2 * k, 2, true);
+      one(1, 800, 700 - 25 * k, 11 + 2 * k, 0, true);
+    }
+    int w = 0;
+    for (auto &e : evs) w += e.w, assert(e.dx == 0 && e.dy == 0);
+    printf("hybrid two-finger scroll: wheel %d\n", w);
+    assert(w < 0);
+    /* Finger hebt ab: Anzahl 1, Tip 0 -> Bild fertig, keine Finger */
+    one(0, 0, 0, 60, 0, false); /* alle Finger weg (Anzahl 0) */
+    evs.clear();
+    one(0, 500, 500, 100, 1, true);
+    one(0, 500, 500, 140, 1, false);
+    assert(evs.size() == 2 && evs[0].b == 1 && evs[1].b == 0); /* als Antippen erkannt */
+  }
   puts("ptp_test: ok");
 }

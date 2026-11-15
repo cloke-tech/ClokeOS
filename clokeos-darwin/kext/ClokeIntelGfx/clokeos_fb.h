@@ -31,5 +31,7 @@ struct clokeos_fb_info {
 #define CLOKEOS_FB_FLIP _IOW('C', 2, uint32_t)
 /* Warten, bis der vorgemerkte Puffer wirklich angezeigt wird (höchstens 50 ms); 0 = angezeigt */
 #define CLOKEOS_FB_WAIT _IOWR('C', 3, uint32_t)
+/* ohne zu warten: 0 = Puffer wird angezeigt, EBUSY = noch nicht */
+#define CLOKEOS_FB_SHOWN _IOWR('C', 4, uint32_t)
 
 #endif

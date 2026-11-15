@@ -25,6 +25,7 @@
 #include "micmap.h"
 #include "mipointer.h"
 #include "colormapst.h"
+#include "os.h"
 
 #include <IOKit/IOKitLib.h>
 #include <errno.h>
@@ -119,8 +120,13 @@ static Bool CIOpen(ScrnInfoPtr pScrn, CIPtr p) {
     xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "%u bpp, only 32 supported\n", pi.bitsPerPixel);
     return FALSE;
   }
-  if (IOConnectMapMemory64(p->connect, kCIVRAMMemory, mach_task_self(), &p->vram, &p->vramSize, kIOMapAnywhere) !=
-      KERN_SUCCESS)
+  /* Write-Combining: ohne Angabe bildet IOKit Gerätespeicher ungecacht ab, jedes Pixel ein eigener Bus-Zugriff
+   * (am HP 8 MB/s, 35 ms je Bild). Mit WC werden Schreibzugriffe gesammelt (GB/s). Lesen ist dort langsam, der
+   * Treiber liest nur aus dem Schattenpuffer. */
+  if (IOConnectMapMemory64(p->connect, kCIVRAMMemory, mach_task_self(), &p->vram, &p->vramSize,
+                           kIOMapAnywhere | kIOMapWriteCombineCache) != KERN_SUCCESS &&
+      IOConnectMapMemory64(p->connect, kCIVRAMMemory, mach_task_self(), &p->vram, &p->vramSize, kIOMapAnywhere) !=
+          KERN_SUCCESS)
     return FALSE;
   p->width = pi.activeWidth, p->height = pi.activeHeight, p->stride = pi.bytesPerRow;
 
@@ -185,7 +191,13 @@ static void CIBlockHandler(ScreenPtr pScreen, void *timeout) {
    * Anzeige wirklich auf den anderen gewechselt hat (meist schon geschehen) */
   double t0 = CINow();
   uint32_t other = 1 - p->back;
-  if (ioctl(p->ctl, CLOKEOS_FB_WAIT, &other) != 0) p->flipWaits++;
+  /* Ist der vorige Wechsel noch nicht durch (der Puffer, in den jetzt kopiert würde, ist noch sichtbar), nicht
+   * blockieren: Änderung liegen lassen und in 2 ms wieder nachsehen; X bearbeitet unterdessen Eingaben */
+  if (ioctl(p->ctl, CLOKEOS_FB_SHOWN, &other) != 0) {
+    p->flipWaits++;
+    AdjustWaitForDelay(timeout, 2);
+    return;
+  }
   double t1 = CINow();
   RegionRec both;
   RegionNull(&both);
@@ -212,7 +224,7 @@ static void CIBlockHandler(ScreenPtr pScreen, void *timeout) {
     p->back = 1 - p->back;
     /* für clokeos-diag: läuft das Umschalten, und wie oft musste gewartet werden? */
     if (p->flips == 1 || p->flips == 100 || p->flips % 1000 == 0)
-      xf86DrvMsg(pScrn->scrnIndex, X_INFO, "%lu flips, %lu waits that timed out\n", p->flips, p->flipWaits);
+      xf86DrvMsg(pScrn->scrnIndex, X_INFO, "%lu flips, %lu deferred (previous flip still pending)\n", p->flips, p->flipWaits);
   }
   RegionCopy(&p->prev, dmg);
   DamageEmpty(p->damage);
@@ -242,7 +254,7 @@ static Bool CICreateScreenResources(ScreenPtr pScreen) {
 static Bool CICloseScreen(ScreenPtr pScreen) {
   ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
   CIPtr p = CIGet(pScrn);
-  xf86DrvMsg(pScrn->scrnIndex, X_INFO, "%lu flips, %lu waits that timed out\n", p->flips, p->flipWaits);
+  xf86DrvMsg(pScrn->scrnIndex, X_INFO, "%lu flips, %lu deferred (previous flip still pending)\n", p->flips, p->flipWaits);
   if (p->damage) {
     DamageUnregister(p->damage);
     DamageDestroy(p->damage);

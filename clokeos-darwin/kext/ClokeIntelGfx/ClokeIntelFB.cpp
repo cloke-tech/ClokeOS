@@ -93,6 +93,7 @@ public:
   void fillInfo(struct clokeos_fb_info *fi);
   int flip(u32 index);
   int waitShown(u32 index);
+  bool isShown(u32 index) { return index < nbuf && flipped && (rd(PLANE_SURFLIVE(pipe)) & ~0xfffu) == gpuAddr(index); }
 
 private:
   u32 gpuAddr(unsigned i) const { return (u32)(kGpuAddr + i * slot); }
@@ -130,6 +131,7 @@ static int fb0_ioctl(dev_t dev, u_long cmd, caddr_t data, int, proc_t) {
   case CLOKEOS_FB_GET_INFO: gFbDrv->fillInfo((struct clokeos_fb_info *)data); return 0;
   case CLOKEOS_FB_FLIP: return gFbDrv->flip(*(u32 *)data);
   case CLOKEOS_FB_WAIT: return gFbDrv->waitShown(*(u32 *)data);
+  case CLOKEOS_FB_SHOWN: return gFbDrv->isShown(*(u32 *)data) ? 0 : EBUSY;
   default: return ENOTTY;
   }
 }
