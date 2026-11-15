@@ -158,7 +158,7 @@ Lake laptop's firmware leaves it (`c++ -std=c++17 -I.. igfx_test.cpp`).
 
 | Step | Content | Model |
 |---|---|---|
-| 2a ✔ (code) | Readout, backlight, AUX, own scanout via GGTT | i915 `intel_display` readout, `intel_backlight.c` (cnp), `intel_dp_aux.c` |
+| 2a ✔ (tested on the HP) | Readout, backlight, AUX, own scanout via GGTT | i915 `intel_display` readout, `intel_backlight.c` (cnp), `intel_dp_aux.c` |
 | 2b | **ClokeIntelGfx becomes the IOFramebuffer** (subclass, higher score than IOGOPFramebuffer, falls back to it on failure): framebuffer in own GGTT memory, hardware cursor plane (cursor A `CUR_CTL`), page flips on vblank, `/dev/fb0` compatible so `puredarwingop` keeps working | Apple's IOFramebuffer model, PD `IOGOPFramebuffer` |
 | 2c | **Mode list and resolution change at runtime**: EDID over AUX-I2C, VBT from the ACPI OpRegion (`ASLS` in PCI config 0xFC), scaled modes through the pipe scaler (`PS_CTRL`, no link retraining needed on eDP), Xorg driver that reads modes from the kext (RandR) | i915 `intel_panel.c`, `skl_scaler.c`; lil |
 | 2d | **Full modeset**: disable pipe/transcoder/DDI, combo-PHY DPLL programming, DP link training, panel power sequencing; external outputs (HDMI/DP over Type-C needs TC-PHY + PMC handshake) | i915 `intel_ddi.c`, `intel_dpll_mgr.c`, `intel_dp_link_training.c`; lil's Kaby Lake code (`IOIntelFramebuffer`) for the IOKit shape |
@@ -172,7 +172,24 @@ Each step can be tested on the HP from the stick with the result in `diag.txt`, 
 
 ### What actually ran on the laptop
 
-_To be filled in after the stick test (`ClokeOS-2.8-gfx-test1.img`)._
+Two stick tests on 2026-11-15 (2.8 live stick with the new loader, kernel and ramdisk tools; results read from
+`\ClokeOS\gop.txt`, `edid.bin` and `diag.txt`):
+
+| What | Result on the HP 15s-fq5655ng |
+|---|---|
+| GOP | 5 modes (1920×1080, 640×480, 800×600, 1024×768, 1280×1024), all BGRX; firmware leaves mode 0 = **1920×1080 native**; framebuffer at **0x4000000000** (above 4 GB, BAR2 aperture), 0x7e9000 bytes |
+| EDID | panel vendor `CMN` (0x0dae), product 0x153b; native 1920×1080, 152.82 MHz (60 Hz); a second detailed timing at 101.89 MHz (40 Hz, low refresh) |
+| Driver match | `ClokeIntelGfx` attaches next to `IOGOPFramebuffer` on `display@2` 8086:46a8, `/dev/clokeos_gfx` present |
+| Readout | pipe A 1920×1080, total 2250×1132, eDP on DDI A in DP mode at **6 bpc**, plane 1 linear, stride 7680, GGTT surface 0; pipes B–D off; PSR and PSR2 off; panel power and backlight enable on |
+| Refresh | measured 57.7 Hz on both boots (pixel clock ~147 MHz), EDID says 60 Hz – open: either GOP programs a lower clock or PureDarwin's time base is ~4 % off; to be checked against the DPLL registers |
+| Backlight | PCH PWM controller 0, frequency value 96000; **`clokeos-brightness 30` / `100` works** |
+| eDP DPCD | DPCD 1.1, 2.7 Gbit/s, 2 lanes, enhanced framing; eDP caps `0x701 = 0` → no AUX brightness, PWM is the right path |
+| GGTT | GMCH_CTRL 0xfec1 → 4 GB GGTT; unused entries are firmware leftovers (0x3fd23fd23fd23fd2), not a scratch page – the first test refused that range, the second one does not |
+| **Own scanout** | **works**: 8 MB of system memory (first page at 0x2a2050000) mapped at GGTT 0xfc000000, plane 1 switched, `PLANE_SURFLIVE` = 0xfc000000, colour bars visible for 3 s, then back to the GOP surface |
+| Keyboard | arrow keys did not work: CloakServer loaded the XKB keymap with `xfree86` key codes while `puredarwininput` sends evdev codes; fixed (`evdev+aliases(qwerty)`, `inet(evdev)`), arrows work on the HP |
+
+So on this laptop ClokeOS now drives the display engine itself for scanout and backlight. Next is step 2b:
+`ClokeIntelGfx` becomes the IOFramebuffer with its own framebuffer in the GGTT.
 
 ---
 
