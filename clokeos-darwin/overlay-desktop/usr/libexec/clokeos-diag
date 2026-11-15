@@ -48,6 +48,14 @@ fi
 print "Xorg display driver:"
 grep -E 'clokeintel\(0\)|PDGOP: selected|Using config file' /var/log/Xorg.0.log 2>/dev/null | tail -5 | cut -c1-148
 dmesg 2>/dev/null | grep -E 'ClokeIntelFB' | tail -4 | cut -c1-148
+# Neustarts der Oberfläche (launchd startet cloakserver-start neu, wenn CloakServer oder Xorg endet) und was davor stand
+print "Desktop restarts: $(grep -c 'Xorg startet' /var/log/cloakserver.log 2>/dev/null) starts of Xorg; last lines before a restart:"
+awk '/Xorg startet/ { if (seen) for (i = n - 8; i < n; i++) if (i >= 0) print "  " r[i % 8]; seen = 1; n = 0; next }
+     !/Reserved|Released|AllocNewConnection/ { r[n % 8] = $0; n++ }' \
+  /var/log/cloakserver.log 2>/dev/null | tail -16 | cut -c1-148
+grep -a -h -E 'X-Fehler|Abbruch|abort|Segmentation|Bus error|Fatal|fatal|SIGSEGV|SIGABRT|terminated|exited' /var/log/cloakserver.log 2>/dev/null |
+  grep -v -E 'xkbcomp|not fatal' | tail -6 | cut -c1-148
+ls -t /Library/Logs/DiagnosticReports/*.crash /var/db/diagnostics/*.crash 2>/dev/null | head -3
 print "Kernel (ClokePS2, ClokeI2CHID, PS/2, HID):"
 dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx' | tail -16 | cut -c1-148
 print "Disk and USB errors:"
