@@ -27,6 +27,7 @@
 #include <IOKit/IOWorkLoop.h>
 #include <pexpert/pexpert.h>
 #include "ClokeTrace.h"
+#include "ptp.h"
 
 extern "C" {
 #include <miscfs/devfs/devfs.h>
@@ -234,14 +235,24 @@ class ClokeI2CHID : public IOService {
   IOTimerEventSource *timer = nullptr;
 
   uint8_t addr = 0;
-  uint16_t inputReg = 0, cmdReg = 0, maxInput = 0;
+  uint16_t inputReg = 0, cmdReg = 0, dataReg = 0, maxInput = 0;
+  /* Touchpad-Modus (ptp.h); ohne ihn der Maus-Modus der Firmware */
+  PtpLayout ptp;
+  PtpState ptpState;
+  bool ptpOn = false;
+  unsigned ptpReports = 0;
+  bool setFeature(uint8_t id, const uint8_t *data, unsigned len);
+  int getFeatureByte(uint8_t id, unsigned len, unsigned byteIndex);
+  static void ptpEmit(void *self, int dx, int dy, int wheel, uint8_t buttons) {
+    ((ClokeI2CHID *)self)->emit(dx, dy, wheel, buttons);
+  }
   uint8_t mouseId = 0; /* Report-ID der Maus-Sammlung, 0 = ohne IDs */
   Field btn[3], fx, fy, fwheel;
   uint8_t *rbuf = nullptr;
   uint8_t lastButtons = 0;
   /* Entprellen: Loslassen erst nach kDebounceMs weitergeben; kommt vorher wieder "gedrückt", war es Prellen
    * (am HP wurden aus Klick + Ziehen Doppelklicks: Fenster maximiert, mehrere Fenster geöffnet) */
-  enum { kDebounceMs = 35 };
+  enum { kDebounceMs = 80 }; /* am HP waren die falschen Lücken bis 46 ms lang */
   bool releasePending = false;
   uint8_t pendingButtons = 0;
   uint64_t releaseAtMs = 0;
@@ -332,6 +343,7 @@ bool ClokeI2CHID::probe(uint8_t a, uint16_t descReg) {
   inputReg = (uint16_t)(d[8] | d[9] << 8);
   maxInput = (uint16_t)(d[10] | d[11] << 8);
   cmdReg = (uint16_t)(d[16] | d[17] << 8);
+  dataReg = (uint16_t)(d[18] | d[19] << 8);
   uint16_t vid = (uint16_t)(d[20] | d[21] << 8), pid = (uint16_t)(d[22] | d[23] << 8);
   LOG("HID device at 0x%02x (descriptor register 0x%04x): vendor %04x product %04x, report descriptor %u bytes",
       a, descReg, vid, pid, repLen);
@@ -348,6 +360,13 @@ bool ClokeI2CHID::probe(uint8_t a, uint16_t descReg) {
   uint8_t *rep = (uint8_t *)IOMalloc(repLen);
   uint8_t rr[2] = {(uint8_t)repReg, (uint8_t)(repReg >> 8)};
   bool ok = rep && xfer(a, rr, 2, rep, repLen) && parseReportDescriptor(rep, repLen);
+  if (ok && ptp_parse(rep, repLen, &ptp))
+    LOG("touchpad collection: report %u, %d fingers, X max %d Y max %d, scan %s, button %s; input mode in feature %u "
+        "(%u bytes), switches in feature %u",
+        ptp.inId, ptp.fingers, (int)ptp.x[0].lmax, (int)ptp.y[0].lmax, ptp.scan.off >= 0 ? "yes" : "no",
+        ptp.button.off >= 0 ? "yes" : "no", ptp.featId, ptp.featBytes, ptp.swId);
+  else if (ok)
+    LOG("no precision touchpad collection: staying in mouse mode");
   if (rep) IOFree(rep, repLen);
   if (!ok) {
     LOG("no mouse collection in the report descriptor");
@@ -356,7 +375,55 @@ bool ClokeI2CHID::probe(uint8_t a, uint16_t descReg) {
   rbuf = (uint8_t *)IOMalloc(maxInput);
   /* die Antwort auf RESET (Länge 0) abholen */
   if (rbuf) xfer(a, nullptr, 0, rbuf, maxInput);
+  /* Touchpad-Modus einschalten (Boot-Arg cloke_ptp=0: Maus-Modus der Firmware behalten) */
+  uint32_t wantPtp = 1;
+  PE_parse_boot_argn("cloke_ptp", &wantPtp, sizeof wantPtp);
+  if (rbuf && wantPtp && ptp.ok() && ptp.featBytes && ptp.featBytes <= 32) {
+    uint8_t fb[32];
+    ptp_mode_report(&ptp, fb);
+    bool sent = setFeature(ptp.featId, fb, ptp.featBytes);
+    if (sent && ptp.swId && ptp.swId != ptp.featId && ptp.swBytes && ptp.swBytes <= 32) {
+      uint8_t sb[32];
+      ptp_switch_report(&ptp, sb);
+      setFeature(ptp.swId, sb, ptp.swBytes);
+    }
+    int mode = sent ? getFeatureByte(ptp.featId, ptp.featBytes, (unsigned)ptp.mode.off / 8) : -1;
+    ptpOn = sent;
+    LOG("touchpad mode %s (input mode read back: %d)", sent ? "on" : "FAILED, mouse mode", mode);
+  }
   return rbuf != nullptr;
+}
+
+/* HID over I²C: SET_REPORT (Feature) über Befehls- und Datenregister */
+bool ClokeI2CHID::setFeature(uint8_t id, const uint8_t *data, unsigned len) {
+  uint8_t m[48];
+  unsigned k = 0;
+  if (len > 32 || !dataReg) return false;
+  m[k++] = (uint8_t)cmdReg, m[k++] = (uint8_t)(cmdReg >> 8);
+  if (id < 15) m[k++] = (uint8_t)(0x30 | id), m[k++] = 0x03;
+  else m[k++] = 0x3f, m[k++] = 0x03, m[k++] = id;
+  m[k++] = (uint8_t)dataReg, m[k++] = (uint8_t)(dataReg >> 8);
+  unsigned L = 2 + 1 + len;
+  m[k++] = (uint8_t)L, m[k++] = (uint8_t)(L >> 8), m[k++] = id;
+  memcpy(m + k, data, len);
+  k += len;
+  bool ok = xfer(addr, m, k, nullptr, 0);
+  IOSleep(10);
+  return ok;
+}
+
+/* GET_REPORT (Feature): ein Byte des Berichts zurücklesen, -1 bei Fehler */
+int ClokeI2CHID::getFeatureByte(uint8_t id, unsigned len, unsigned byteIndex) {
+  uint8_t m[8], r[40] = {};
+  unsigned k = 0;
+  if (len > 32 || !dataReg) return -1;
+  m[k++] = (uint8_t)cmdReg, m[k++] = (uint8_t)(cmdReg >> 8);
+  if (id < 15) m[k++] = (uint8_t)(0x30 | id), m[k++] = 0x02;
+  else m[k++] = 0x3f, m[k++] = 0x02, m[k++] = id;
+  m[k++] = (uint8_t)dataReg, m[k++] = (uint8_t)(dataReg >> 8);
+  if (!xfer(addr, m, k, r, 3 + len)) return -1;
+  /* Antwort: Länge (2), Report-ID, Daten */
+  return r[3 + byteIndex];
 }
 
 /* Kurzer HID-Parser: Maus-Anwendungssammlung (Generic Desktop 0x02) mit Tasten 1-3, X, Y, Rad */
@@ -445,6 +512,17 @@ static int32_t field(const uint8_t *r, unsigned n, const Field &f) {
 }
 
 void ClokeI2CHID::report(const uint8_t *r, unsigned n) {
+  if (ptpOn && n && r[0] == ptp.inId) {
+    if (ptpReports++ < 6) {
+      char hex[3 * 20 + 1];
+      unsigned m = n < 20 ? n : 20;
+      for (unsigned i = 0; i < m; i++) snprintf(hex + 3 * i, 4, "%02x ", r[i]);
+      hex[m ? 3 * m - 1 : 0] = 0;
+      LOG("touchpad report %u: [%s]", ptpReports, hex);
+    }
+    ptp_input(&ptpState, &ptp, r + 1, n - 1, nowMs(), ptpEmit, this);
+    return;
+  }
   if (mouseId) {
     if (!n || r[0] != mouseId) return;
     r++, n--;
