@@ -56,6 +56,11 @@ private:
   unsigned hz[4];
   char extra[1024]; /* Ergebnis des letzten Befehls, steht am Ende des Berichts */
   size_t extraLen;
+  /* bleibt stehen: was beim Start geschah (scanout-test) und die DPCD-Werte; sonst überschreibt der nächste
+   * Befehl (z. B. clokeos-brightness) das Ergebnis, bevor clokeos-diag es auf den Stick schreibt */
+  char sticky[2048];
+  size_t stickyLen;
+  bool toSticky;
 
   u32 rd(u32 reg) { return readl(mmio.base + reg); }
   void wr(u32 reg, u32 v) { writel(v, mmio.base + reg); }
@@ -141,27 +146,39 @@ static bool makeNode(void *, void *, IOService *, IONotifier *) {
 void ClokeIntelGfx::note(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
-  if (extraLen < sizeof extra) {
-    int n = vsnprintf(extra + extraLen, sizeof extra - extraLen, fmt, ap);
-    if (n > 0) extraLen = lkpi_min(extraLen + (size_t)n, sizeof extra - 1);
+  char *buf = toSticky ? sticky : extra;
+  size_t cap = toSticky ? sizeof sticky : sizeof extra, &len = toSticky ? stickyLen : extraLen;
+  if (len < cap) {
+    int n = vsnprintf(buf + len, cap - len, fmt, ap);
+    if (n > 0) len = lkpi_min(len + (size_t)n, cap - 1);
   }
   va_end(ap);
 }
 
+/* Bildfrequenz je Pipe: von einem Bildwechsel bis zum 30. danach messen (ein festes Fenster von 250 ms
+ * ergab am HP 57,7 statt 60 Hz, weil nur ganze Bilder zählen) */
 void ClokeIntelGfx::measureHz() {
-  u32 a[4], b[4];
-  for (unsigned p = 0; p < info.pipes; p++) a[p] = rd(PIPE_FRMCOUNT(p));
-  u64 t0 = ktime_get_ns();
-  IOSleep(250);
-  for (unsigned p = 0; p < info.pipes; p++) b[p] = rd(PIPE_FRMCOUNT(p));
-  u64 dt = ktime_get_ns() - t0;
-  for (unsigned p = 0; p < info.pipes; p++)
-    hz[p] = dt ? (unsigned)((u64)(b[p] - a[p]) * 1000000000000ull / dt) : 0; /* mHz */
+  for (unsigned p = 0; p < info.pipes; p++) {
+    hz[p] = 0;
+    if (!(rd(TRANS_CONF(p)) & TRANS_CONF_STATE)) continue;
+    u32 c0 = rd(PIPE_FRMCOUNT(p));
+    if (wait_for(rd(PIPE_FRMCOUNT(p)) != c0, 100)) continue; /* steht still (PSR?) */
+    u32 a = rd(PIPE_FRMCOUNT(p));
+    u64 t0 = ktime_get_ns();
+    if (wait_for(rd(PIPE_FRMCOUNT(p)) - a >= 30, 1000)) continue;
+    u64 dt = ktime_get_ns() - t0;
+    u32 frames = rd(PIPE_FRMCOUNT(p)) - a;
+    hz[p] = dt ? (unsigned)((u64)frames * 1000000000000ull / dt) : 0; /* mHz */
+  }
 }
 
 void ClokeIntelGfx::buildReport() {
   struct igfx_text t = {gReport, kReportSize, 0};
   igfx_report(&t, rdThunk, this, &info, pdev.device, mmio.phys, hz);
+  u16 gmch = pdev.pci->extendedConfigRead16(PCI_GMCH_CTRL);
+  igfx_printf(&t, "GGTT: GMCH_CTRL 0x%04x, %llu MB address space; aperture (BAR2) 0x%llx\n", gmch,
+              (unsigned long long)(igfx_ggtt_size(gmch) >> 20), (unsigned long long)pdev.bar[2].start);
+  if (stickyLen) igfx_printf(&t, "%s", sticky);
   if (extraLen) igfx_printf(&t, "%s", extra);
   gReportLen = t.len;
 }
@@ -350,15 +367,17 @@ int ClokeIntelGfx::scanoutTest(unsigned seconds) {
     goto out;
   }
   {
-    /* Belegt? Ungenutzte Einträge zeigen alle auf dieselbe Seite (scratch) oder sind 0 */
-    u64 first = pte[0];
-    for (u64 i = 0; i < pages; i++) {
-      saved[i] = pte[i];
-      if (saved[i] != first) {
-        note("scanout-test: GGTT range at 0x%llx is in use, not touching it\n", (unsigned long long)gpuAddr);
-        goto out;
-      }
+    /* Unter ClokeOS benutzt außer dem Bild der Firmware niemand die GGTT; ihre übrigen Einträge sind oft
+     * ungelöschte Reste im gestohlenen Speicher. Nur eine Überschneidung mit dem GOP-Bild wäre schlecht. */
+    u64 gopStart = oldSurf & ~0xfffull, gopEnd = gopStart + size;
+    note("scanout-test: GGTT %llu MB, using 0x%llx, PTE before 0x%llx, plane SURF 0x%08x SURFLIVE 0x%08x\n",
+         (unsigned long long)(ggtt >> 20), (unsigned long long)gpuAddr, (unsigned long long)pte[0], oldSurf,
+         rd(PLANE_SURFLIVE(P)));
+    if (gpuAddr < gopEnd && gpuAddr + size > gopStart) {
+      note("scanout-test: range overlaps the firmware's framebuffer, not touching it\n");
+      goto out;
     }
+    for (u64 i = 0; i < pages; i++) saved[i] = pte[i];
     /* Farbbalken (ClokeOS-Palette) mit weißem Rand, XRGB8888 */
     static const u32 bars[] = {0xf2c4d6, 0xe86a92, 0x8e3b62, 0x4a1f3d, 0x2f6fde, 0x34c759, 0xffcc00, 0xff3b30};
     u8 *px = (u8 *)buf->getBytesNoCopy();
@@ -376,6 +395,8 @@ int ClokeIntelGfx::scanoutTest(unsigned seconds) {
       addr64_t phys = buf->getPhysicalSegment(i << 12, &len, kIOMemoryMapperNone);
       if (!phys) goto restore;
       pte[i] = igfx_ggtt_pte(phys);
+      if (!i) note("scanout-test: first page phys 0x%llx -> PTE 0x%llx, read back 0x%llx\n", (unsigned long long)phys,
+                   (unsigned long long)igfx_ggtt_pte(phys), (unsigned long long)pte[0]);
     }
     (void)pte[pages - 1];
     wr(GFX_FLSH_CNTL, 1);
@@ -429,7 +450,9 @@ void ClokeIntelGfx::command(const char *cmd) {
     }
     setBrightness(sign * n, rel);
   } else if (!strncmp(cmd, "dpcd", 4)) {
+    toSticky = true;
     dumpDpcd();
+    toSticky = false;
   } else if (!strncmp(cmd, "scanout-test", 12)) {
     scanoutTest(3);
   } else if (!strncmp(cmd, "rescan", 6)) {
@@ -481,8 +504,11 @@ bool ClokeIntelGfx::start(IOService *provider) {
   }
   publish();
   if (lkpi_bootarg("cloke_gfx", 1) >= 2) {
+    toSticky = true;
+    note("boot: ");
     scanoutTest(3);
-    LOG("%s", extra);
+    toSticky = false;
+    LOG("%s", sticky);
   }
   gDrv = this;
   if (!gBsdNotifier)

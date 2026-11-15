@@ -92,6 +92,9 @@ static inline struct igfx_info igfx_identify(uint16_t did) {
 #define DP_AUX_CH_DATA(ch, i) (0x64014u + 0x100u * (ch) + 4u * (i))
 /* Stromversorgung der Anzeige-Bereiche */
 #define PWR_WELL_CTL2 0x45404u
+/* Panel Self Refresh (Gen12: je Transcoder); steht er an, holt die Anzeige keine neuen Bilder */
+#define TRANS_PSR_CTL(t) (0x60800u + 0x1000u * (t))
+#define TRANS_PSR2_CTL(t) (0x60900u + 0x1000u * (t))
 /* GGTT: Seitentabelle der GPU, ab Gen8 in der oberen Hälfte von BAR0 (GTTMMADR + 8 MB), 8 Byte je 4-KB-Seite.
  * Größe aus GMCH_CTRL (PCI-Konfiguration 0x50, GGMS Bits 7:6: 1 << GGMS MB Tabelle). Nach dem Ändern
  * von Einträgen den TLB über GFX_FLSH_CNTL leeren. */

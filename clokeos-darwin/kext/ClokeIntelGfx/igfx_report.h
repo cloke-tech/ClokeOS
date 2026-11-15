@@ -51,6 +51,9 @@ static inline void igfx_report(struct igfx_text *t, igfx_read_fn rd, void *c, co
       igfx_printf(t, "  output: DDI %c, %s, %u bpc\n", 'A' + m.ddi_port, igfx_ddi_mode_name(m.ddi_mode),
                   igfx_bpc_bits(m.bpc));
     igfx_printf(t, "  source %ux%u%s\n", m.src_w, m.src_h, m.scaled ? ", scaled by pipe scaler" : "");
+    if (info->display_ver >= 12)
+      igfx_printf(t, "  PSR: %s, PSR2: %s\n", (rd(c, TRANS_PSR_CTL(p)) & (1u << 31)) ? "on" : "off",
+                  (rd(c, TRANS_PSR2_CTL(p)) & (1u << 31)) ? "on" : "off");
     if (m.plane_on)
       igfx_printf(t, "  plane 1: %ux%u, stride %u bytes, tiling %u, surface 0x%08x, PLANE_CTL 0x%08x\n", m.plane_w,
                   m.plane_h, m.stride_bytes, m.tiling, m.surf, m.plane_ctl);
