@@ -83,6 +83,15 @@ with open(sys.argv[2], 'w') as f:
 PYFW
     xflags=(-I"$tmp/rtw88")
   fi
+  if [ "$name" = ClokeIntelGfx ]; then
+    # ClokeIntelFB ist ein IOFramebuffer: Header von IOGraphicsFamily aus PureDarwins Quellen
+    fetch_file "$PDSRC_URL" "$PDSRC_SHA256" "$PDSRC_TGZ" >/dev/null
+    rm -rf "$tmp/iogfx"; mkdir -p "$tmp/iogfx"
+    tar -xzf "$PDSRC_TGZ" -C "$tmp/iogfx" --strip-components=1 '*/src/Kernel/Extensions/IOGraphicsFamily/IOKit' \
+      '*/src/Kernel/Extensions/IOHIDFamily'
+    e="$tmp/iogfx/src/Kernel/Extensions"
+    xflags=(-I"$e/IOGraphicsFamily" -I"$e/IOHIDFamily/IOHIDSystem" -I"$e/IOHIDFamily/include" -I"$e/IOHIDFamily")
+  fi
   if [ "$name" = ClokeI2CHID ]; then
     extra=("$src/pdacpi/ClokeTrace.cpp")
     xflags=(-Dcloke_trace=i2c_trace -Dcloke_trace_show=i2c_trace_show -I"$src/pdacpi")

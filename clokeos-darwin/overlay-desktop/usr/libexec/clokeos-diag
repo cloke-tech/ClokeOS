@@ -23,7 +23,7 @@ ioreg -r -c IOPCIDevice -d 2 -l -w 0 2>/dev/null | awk '
   /"class-code" = </ && cls == "" { v = $0; sub(/.*= </, "", v); cls = substr(v, 5, 2) substr(v, 3, 2) substr(v, 1, 2) }
   END { flush() }'
 drv=""
-for c in ClokePS2 ApplePS2Controller ApplePS2Keyboard ClokeI2CHID IOUSBHIDDriver IOGOPFramebuffer IOIntelFramebuffer ClokeIntelGfx; do
+for c in ClokePS2 ApplePS2Controller ApplePS2Keyboard ClokeI2CHID IOUSBHIDDriver IOGOPFramebuffer IOIntelFramebuffer ClokeIntelGfx ClokeIntelFB; do
   n=$(ioreg -r -c $c -d 1 -w 0 2>/dev/null | grep -c "<class $c")
   (( n )) && drv+="$c x$n  "
 done
