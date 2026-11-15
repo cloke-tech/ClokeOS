@@ -261,7 +261,25 @@ Layer extensions that the next drivers will need: scatter-gather DMA (`dma_map_s
 
 ---
 
-## 5. Testing on the HP
+## 5. Touchpad on the HP (found while testing the graphics)
+
+Window dragging was erratic: windows got maximised, double clicks opened several windows, dragged windows
+jumped from A to B. Raw reports logged by `ClokeI2CHID` showed why: in the firmware's **mouse mode** the touchpad
+alternates reports "button down, ±1 count of motion" with all-zero reports (12–46 ms gaps) while the clickpad is
+held, and reports almost no motion while pressed. Debouncing (35, then 80 ms) only hides part of it.
+
+Fix (code, HP test pending): `ClokeI2CHID` now switches the touchpad into **precision touchpad mode** like Windows
+and Linux `hid-multitouch` do: feature report *Input Mode* = 3 (and the surface/button switches) via HID-over-I²C
+`SET_REPORT`, read back with `GET_REPORT`. Per-finger reports (contact ID, tip, X/Y, contact count, scan time,
+clickpad button) are interpreted by `kext/ClokeI2CHID/ptp.h`: the moving finger drives the pointer (also while
+another finger presses the clickpad), clickpad = left button or right with two fingers, tap = click, two-finger tap
+= right click, two-finger scroll in macOS direction; empty or repeated polls are dropped by scan time. Mouse mode
+stays as fallback (`cloke_ptp=0`). Host test: `kext/ClokeI2CHID/test/ptp_test.cpp`. Next for the touchpad: read the
+GPIO attention line instead of polling blindly (the pin is in the ACPI tables / GNVS).
+
+Also fixed on the way: XKB key codes (`cloakserver.c`, evdev instead of xfree86 – arrow keys work on the HP).
+
+## 6. Testing on the HP
 
 * Base: the 2.8 live stick (`~/Desktop/ClokeOS-live-x86_64.img`), copied, with the new loader, the new
   kernel (`kext/build.sh`) and the ramdisk's `clokeos-diag` / `clokeos-brightness` replaced via debugfs.
