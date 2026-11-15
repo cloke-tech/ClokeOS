@@ -114,12 +114,21 @@ int main() {
   for (auto &e : evs) wheel += e.w, assert(e.dx == 0 && e.dy == 0);
   printf("two-finger scroll up 180 units: wheel %d\n", wheel);
   assert(wheel < 0);
-  /* Klick mit zwei Fingern auf der Fläche = rechts */
+  /* Klick mit zwei Fingern auf der Fläche bleibt links (Ziehen mit zweitem Finger) */
   evs.clear();
   int xr[] = {500, 700}, yr[] = {600, 600};
   r = rep(2, xr, yr, 900, 2, true);
   ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 3000, emit, nullptr);
-  assert(evs.back().b == 2);
+  assert(evs.back().b == 1);
+  /* zwei Finger kurz antippen = rechts */
+  r = rep(0, xr, yr, 910, 0, false);
+  ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 3100, emit, nullptr);
+  evs.clear();
+  r = rep(2, xr, yr, 920, 2, false);
+  ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 4000, emit, nullptr);
+  r = rep(0, xr, yr, 930, 0, false);
+  ptp_input(&S, &L, r.data(), (unsigned)r.size(), t + 4080, emit, nullptr);
+  assert(evs.size() == 2 && evs[0].b == 2 && evs[1].b == 0);
   /* Hybrid wie am HP: ein Finger-Feld je Bericht; zwei Finger kommen in zwei Berichten (Anzahl 2, dann 0) */
   {
     std::vector<uint8_t> h = {0x05, 0x0D, 0x09, 0x05, 0xA1, 0x01, 0x85, 0x03};
@@ -149,8 +158,32 @@ int main() {
     for (auto &e : evs) w += e.w, assert(e.dx == 0 && e.dy == 0);
     printf("hybrid two-finger scroll: wheel %d\n", w);
     assert(w < 0);
+    /* Gerät schreibt die Anzahl 2 in jeden Bericht (nicht nach Spezifikation): trotzdem rollen */
+    one(0, 0, 0, 28, 0, false);
+    evs.clear();
+    for (int k = 0; k < 8; k++) {
+      one(0, 500, 300 + 25 * k, 30 + 2 * k, 2, true);
+      one(1, 800, 300 + 25 * k, 31 + 2 * k, 2, true);
+    }
+    w = 0;
+    for (auto &e : evs) w += e.w, assert(e.dx == 0 && e.dy == 0);
+    printf("hybrid scroll, count in every report: wheel %d\n", w);
+    assert(w > 0);
+    /* Klickfläche gedrückt, Gerät meldet 2 Kontakte, einer bewegt sich: Zeiger folgt sofort */
+    one(0, 0, 0, 58, 0, false);
+    evs.clear();
+    int mv = 0;
+    for (int k = 0; k < 6; k++) {
+      one(0, 1500 + 40 * k, 900, 70 + 2 * k, 2, true);
+      std::vector<uint8_t> r(10, 0);
+      r[0] = 3, r[1] = 1, r[2] = 0x20, r[3] = 0x03, r[4] = 0xa0, r[5] = 0x05, r[6] = (uint8_t)(71 + 2 * k), r[8] = 2, r[9] = 1;
+      ptp_input(&T, &H, r.data(), 10, 6000 + k, emit, nullptr);
+    }
+    for (auto &e : evs) mv += e.dx;
+    printf("clickpad drag, count 2 in every report: %d px\n", mv);
+    assert(mv > 50 && evs.back().b == 1);
     /* Finger hebt ab: Anzahl 1, Tip 0 -> Bild fertig, keine Finger */
-    one(0, 0, 0, 60, 0, false); /* alle Finger weg (Anzahl 0) */
+    one(0, 0, 0, 90, 0, false); /* alle Finger weg (Anzahl 0) */
     evs.clear();
     one(0, 500, 500, 100, 1, true);
     one(0, 500, 500, 140, 1, false);

@@ -61,10 +61,12 @@ grep -a -h -E 'X-Fehler|Abbruch|abort|Segmentation|Bus error|Fatal|fatal|SIGSEGV
 ls -t /Library/Logs/DiagnosticReports/*.crash /var/db/diagnostics/*.crash 2>/dev/null | head -3
 print "Touchpad mode (ClokeI2CHID):"
 dmesg 2>/dev/null | grep -E 'ClokeI2CHID: (touchpad|no precision|HID device|mouse report)' | tail -10 | sed 's/^\[ *[0-9.]*\]: //' | cut -c1-148
+print "Touchpad contacts/button changes (ClokeI2CHID, precision mode):"
+dmesg 2>/dev/null | grep -E 'ClokeI2CHID: ptp count' | tail -24 | sed 's/^\[ *[0-9.]*\]: ClokeI2CHID: ptp //' | cut -c1-148
 print "Touchpad buttons (ClokeI2CHID, raw changes and suppressed bounces):"
 dmesg 2>/dev/null | grep -E 'ClokeI2CHID: (btn|bounce)' | tail -30 | sed 's/^\[ *[0-9.]*\]: ClokeI2CHID: //' | paste -sd' ' - | fold -w 148
 print "Kernel (ClokePS2, ClokeI2CHID, PS/2, HID):"
-dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx|ClokeI2CHID: (btn|bounce|touchpad)' | tail -16 | cut -c1-148
+dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx|ClokeI2CHID: (btn|bounce|touchpad|ptp)' | tail -16 | cut -c1-148
 print "Disk and USB errors:"
 dmesg 2>/dev/null | grep -i -E 'nvme|I/O error|timed out|timeout|abort|xhci.*(error|fail|stall)|usb.*(error|fail|stall|reset)' | grep -v -E 'armed|checkpoint' | tail -8 | cut -c1-148
 print "Installer log:"

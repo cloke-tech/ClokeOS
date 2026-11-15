@@ -8,7 +8,7 @@
  * HID Usage Tables, Digitizer Page 0x0D). Dann meldet das Touchpad jeden Finger mit Position, und der Treiber
  * entscheidet selbst:
  *   - Zeiger folgt dem Finger, der sich bewegt (auch während ein anderer auf der Klickfläche drückt),
- *   - Klickfläche drücken = linke Taste, mit zwei Fingern auf dem Touchpad = rechte Taste,
+ *   - Klickfläche drücken = linke Taste (auch wenn ein zweiter Finger zieht),
  *   - kurz antippen = Klick, mit zwei Fingern = Rechtsklick,
  *   - zwei Finger bewegen = Rollen (Richtung wie macOS: Inhalt folgt den Fingern).
  * Eigener Code nach der Spezifikation; Linux' hid-multitouch (GPL) nur als Beschreibung gelesen.
@@ -209,7 +209,21 @@ static inline void ptp_input(PtpState *S, const PtpLayout *L, const uint8_t *r, 
   bool btnNow = L->button.off >= 0 && ptp_get(r, n, L->button);
   /* Ein Bericht mit Anzahl > 0 (oder ohne Anzahl-Feld) beginnt ein Bild; Anzahl 0 ist bei offenem Bild die
    * Fortsetzung (Hybrid), sonst "alle Finger weg" */
-  if (cnt != 0) {
+  /* Manche Touchpads (HP 15s?) schreiben die Gesamtzahl in jeden Bericht statt nur in den ersten: ein Bericht mit
+   * Anzahl > 0 setzt das offene Bild deshalb nur fort, wenn sein Finger darin noch fehlt */
+  bool continues = false;
+  if (cnt > 0 && S->frameWant && S->frameSeen < S->frameWant) {
+    continues = true;
+    for (int f = 0; f < L->fingers && continues; f++) {
+      if (L->tip[f].off >= 0 && !ptp_get(r, n, L->tip[f])) continue;
+      int32_t id = L->cid[f].off >= 0 ? ptp_get(r, n, L->cid[f]) : f;
+      for (int k = 0; k < S->frameHave; k++)
+        if (S->frame[k].cid == id) continues = false;
+    }
+  }
+  if (continues)
+    S->frameBtn = S->frameBtn || btnNow;
+  else if (cnt != 0) {
     S->frameHave = S->frameSeen = 0;
     S->frameWant = cnt > 0 ? cnt : 0;
     S->frameBtn = btnNow;
@@ -261,10 +275,10 @@ static inline void ptp_input(PtpState *S, const PtpLayout *L, const uint8_t *r, 
   if (nc > S->maxFingers) S->maxFingers = nc;
   if (best > 0) S->moved += best;
 
-  /* Klickfläche: Taste beim Drücken festlegen (zwei Finger = rechts) */
+  /* Klickfläche: immer links (ein Finger drückt, ein anderer zieht ein Fenster); rechts mit zwei Fingern tippen */
   uint8_t buttons = S->buttons & ~3u;
   if (btn) {
-    if (!S->clickButton) S->clickButton = nc >= 2 ? 2 : 1;
+    if (!S->clickButton) S->clickButton = 1;
     buttons |= S->clickButton;
     S->clicked = true;
   } else

@@ -240,7 +240,8 @@ class ClokeI2CHID : public IOService {
   PtpLayout ptp;
   PtpState ptpState;
   bool ptpOn = false;
-  unsigned ptpReports = 0;
+  unsigned ptpReports = 0, ptpKeyLog = 0;
+  int32_t ptpLastKey = -1;
   bool setFeature(uint8_t id, const uint8_t *data, unsigned len);
   int getFeatureByte(uint8_t id, unsigned len, unsigned byteIndex);
   static void ptpEmit(void *self, int dx, int dy, int wheel, uint8_t buttons) {
@@ -513,6 +514,18 @@ static int32_t field(const uint8_t *r, unsigned n, const Field &f) {
 
 void ClokeI2CHID::report(const uint8_t *r, unsigned n) {
   if (ptpOn && n && r[0] == ptp.inId) {
+    /* Rohbericht protokollieren, wenn sich Anzahl oder Taste ändern (erste 80), für clokeos-diag */
+    int32_t key = (ptp.count.off >= 0 ? ptp_get(r + 1, n - 1, ptp.count) : 0) * 2 +
+                  (ptp.button.off >= 0 && ptp_get(r + 1, n - 1, ptp.button) ? 1 : 0);
+    if (key != ptpLastKey && ptpKeyLog < 80) {
+      ptpKeyLog++;
+      char hex[3 * 20 + 1];
+      unsigned m = n < 20 ? n : 20;
+      for (unsigned i = 0; i < m; i++) snprintf(hex + 3 * i, 4, "%02x ", r[i]);
+      hex[m ? 3 * m - 1 : 0] = 0;
+      LOG("ptp count %d button %d at %llu ms [%s]", key / 2, key & 1, (unsigned long long)nowMs(), hex);
+    }
+    ptpLastKey = key;
     if (ptpReports++ < 6) {
       char hex[3 * 20 + 1];
       unsigned m = n < 20 ? n : 20;
