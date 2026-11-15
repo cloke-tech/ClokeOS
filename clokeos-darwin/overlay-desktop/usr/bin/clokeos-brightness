@@ -1,0 +1,15 @@
+#!/bin/zsh
+# Helligkeit des eingebauten Bildschirms (Intel-Grafik, kext/ClokeIntelGfx über /dev/clokeos_gfx).
+#   clokeos-brightness          aktuellen Wert zeigen
+#   clokeos-brightness 60       auf 60 % stellen (5..100)
+#   clokeos-brightness +10      heller, -10 dunkler
+dev=/dev/clokeos_gfx
+if [[ ! -e $dev ]]; then
+  print -u2 "clokeos-brightness: no display driver (/dev/clokeos_gfx missing; only Intel Gen11-13 graphics)"
+  exit 1
+fi
+if (( $# )); then
+  [[ $1 == (+|-|)<-> ]] || { print -u2 "usage: clokeos-brightness [0-100|+N|-N]"; exit 2 }
+  print -r -- "brightness $1" > $dev || exit 1
+fi
+grep -E '^(brightness|backlight)' $dev

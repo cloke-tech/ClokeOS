@@ -50,7 +50,7 @@ out="$WORK/out/kexts"
 tmp="$WORK/tmp/kexts"
 rm -rf "$out" "$tmp"
 mkdir -p "$out" "$tmp"
-cflags=(-target x86_64-apple-macos11 -mkernel -fno-builtin -fno-common -nostdinc -I"$hdr" -idirafter "$base/avail"
+cflags=(-target x86_64-apple-macos11 -mkernel -fno-builtin -fno-common -nostdinc -I"$hdr" -idirafter "$base/avail" -I"$src/include"
         -DKERNEL -O2 -Wall -Wextra -Wno-unused-parameter -Werror=return-type
         -ffile-prefix-map="$HERE"=clokeos-darwin -ffile-prefix-map="$WORK"=work)
 kexts=()

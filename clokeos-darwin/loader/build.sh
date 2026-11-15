@@ -32,6 +32,8 @@ tar -xzf "$XNU_LOADER_TGZ" -C "$b"
 patch -s -d "$xl" -p1 < "$src/xnu-loader.patch"
 cp "$src/splash.c" "$xl/src/"
 cp "$src/splash.h" "$xl/include/"
+cp "$src/gop.c" "$xl/src/"
+cp "$src/gop.h" "$xl/include/"
 python3 -I "$src/logo.py" "$HERE/../clokeos.html" "$xl/include/clokeos_logo.h" >/dev/null
 ln -s "$efi/inc" "$b/inc/efi" # xnu-loader bindet auch <efi/efipxebc.h> ein
 
@@ -51,7 +53,7 @@ for f in boxdraw smbios console crc data debug dpath error event exit guid hand 
   "$MINGW_CC" "${cflags[@]}" -w -c "$efi/lib/$f.c" -o "$o"
   objs+=("$o")
 done
-for f in main app boot console devtree fileio lowmem macho serial splash; do
+for f in main app boot console devtree fileio lowmem macho serial splash gop; do
   o="$b/obj/$f.o"
   "$MINGW_CC" "${cflags[@]}" -Wall -Wno-pointer-sign -Wno-unused-function -Wno-unused-local-typedefs \
     -I "$xl/include" -c "$xl/src/$f.c" -o "$o"

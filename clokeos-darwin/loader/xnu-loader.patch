@@ -287,16 +287,17 @@ diff -ruN a/src/jump.S b/src/jump.S
 \ No newline at end of file
 diff -ruN a/src/main.c b/src/main.c
 --- a/src/main.c	2026-08-17 22:51:23
-+++ b/src/main.c	2026-10-24 20:00:49
-@@ -6,6 +6,7 @@
++++ b/src/main.c	2026-11-15 12:00:00
+@@ -6,6 +6,8 @@
  #include "macho.h"
  #include "jump.h"
  #include "serial.h"
 +#include "splash.h"
++#include "gop.h"
  
  static VOID   *g_jump_entry;
  static UINT64  g_jump_args;
-@@ -26,7 +27,7 @@
+@@ -26,7 +28,7 @@
  
  static EFI_STATUS append_ramdisk_boot_arg(
      AppContext *ctx, const CHAR8 **cmdline, BOOLEAN *owned) {
@@ -305,7 +306,7 @@ diff -ruN a/src/main.c b/src/main.c
    UINTN len = 0;
    CHAR8 *copy = NULL;
  
-@@ -51,6 +52,574 @@
+@@ -51,6 +53,574 @@
    return EFI_SUCCESS;
  }
  
@@ -880,7 +881,7 @@ diff -ruN a/src/main.c b/src/main.c
  static EFI_STATUS load_ramdisk(AppContext *ctx) {
    EFI_FILE_PROTOCOL *root = NULL;
    FileBuffer image = {0};
-@@ -96,7 +665,7 @@
+@@ -96,7 +666,7 @@
  }
  
  #if defined(__x86_64__)
@@ -889,7 +890,7 @@ diff -ruN a/src/main.c b/src/main.c
    UINT64 *src64 = (UINT64 *)(UINTN)g_copy_src;
    UINT64 *dst64 = (UINT64 *)(UINTN)g_copy_dst;
    UINTN   words = (UINTN)((g_copy_bytes + 7) >> 3);
-@@ -246,6 +815,63 @@
+@@ -246,6 +816,66 @@
    if (EFI_ERROR(status))
      return status;
  
@@ -943,6 +944,9 @@ diff -ruN a/src/main.c b/src/main.c
 +  if (EFI_ERROR(status))
 +    log_error(L"key V: no verbose boot: %r\r\n", status);
 +
++  /* ClokeOS: Bildschirmmodus nach Boot-Arg cloke_gop= (gop.c), vor dem Logo, das sich nach dem Modus richtet */
++  clokeos_gop_select(&ctx, cmdline);
++
 +  if (!boot_cmdline_has_flag(cmdline, (const CHAR8 *)"-v")) {
 +    console_set_quiet(TRUE);
 +    status = splash_show(&ctx);
@@ -953,7 +957,7 @@ diff -ruN a/src/main.c b/src/main.c
    log_info(L"XNU EFI loader start\r\n");
  
    {
-@@ -257,7 +883,16 @@
+@@ -257,7 +887,16 @@
  
    EFI_HANDLE found_handle = NULL;
  
@@ -971,7 +975,7 @@ diff -ruN a/src/main.c b/src/main.c
        &ctx,
        L"\\EFI\\BOOT\\kernel",
        &kernel,
-@@ -440,10 +1075,53 @@
+@@ -440,10 +1079,54 @@
  
    log_info(L"entry vm=0x%lx -> host=0x%lx\r\n", entry_vmaddr, (UINT64)(UINTN)host_entry);
  
@@ -1018,6 +1022,7 @@ diff -ruN a/src/main.c b/src/main.c
 +    /* after placing the RAMDisk, so the drivers' allocations cannot take its room */
 +    clokeos_connect_all(&ctx);
 +    clokeos_dump_acpi(&ctx);
++    clokeos_gop_dump(&ctx);
 +    status = append_ramdisk_boot_arg(&ctx, &cmdline, &cmdline_owned);
 +    if (EFI_ERROR(status))
 +      log_error(L"failed to append rd=md0: %r\r\n", status);
@@ -1028,7 +1033,7 @@ diff -ruN a/src/main.c b/src/main.c
    BootArgsState boot_state = {0};
  
    ReleaseBootInfoGuard(&ctx, &bootinfo_guard_base, &bootinfo_guard_pages);
-@@ -456,42 +1134,6 @@
+@@ -456,42 +1139,6 @@
    if (EFI_ERROR(status)) {
      log_error(L"failed to collect memory map: %r\r\n", status);
      return status;

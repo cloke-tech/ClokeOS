@@ -12,10 +12,10 @@ prop() { # Zeichenkette aus ioreg: "name" = <"Wert"> oder "name" = "Wert"
 pe=$(ioreg -c IOPlatformExpertDevice -d 2 -w 0 2>/dev/null)
 print "ClokeOS ${VERSION:-?} ($(uname -m)) diagnostics - please take a photo of this window."
 print "Model: $(print -r -- $pe | prop manufacturer) $(print -r -- $pe | prop product-name) $(print -r -- $pe | prop model)  RAM: $(( $(sysctl -n hw.memsize) / 1048576 )) MB  boot-args: $(sysctl -n kern.bootargs 2>/dev/null | cut -c1-60)"
-print "PCI (USB, I2C/serial, SMBus, storage, network; vendor:device class -> driver):"
+print "PCI (display, USB, I2C/serial, SMBus, storage, network; vendor:device class -> driver):"
 ioreg -r -c IOPCIDevice -d 2 -l -w 0 2>/dev/null | awk '
   function le16(s) { return substr(s, 3, 2) substr(s, 1, 2) }
-  function flush() { if (name != "" && cls ~ /^(0c03|0c80|0c05|0106|0108|0200|0280)/) printf "  %-22s %s:%s %s -> %s\n", name, vid, did, cls, (drv == "" ? "NO DRIVER" : drv) }
+  function flush() { if (name != "" && cls ~ /^(0300|0380|0c03|0c80|0c05|0106|0108|0200|0280)/) printf "  %-22s %s:%s %s -> %s\n", name, vid, did, cls, (drv == "" ? "NO DRIVER" : drv) }
   /\+-o .*<class IOPCIDevice/ { flush(); name = $0; sub(/.*\+-o /, "", name); sub(/ .*/, "", name); vid = did = cls = drv = ""; next }
   /\+-o / { if (drv == "") { d = $0; sub(/.*\+-o /, "", d); sub(/ .*/, "", d); drv = d }; next }
   /"vendor-id" = </ && vid == "" { v = $0; sub(/.*= </, "", v); vid = le16(v) }
@@ -23,7 +23,7 @@ ioreg -r -c IOPCIDevice -d 2 -l -w 0 2>/dev/null | awk '
   /"class-code" = </ && cls == "" { v = $0; sub(/.*= </, "", v); cls = substr(v, 5, 2) substr(v, 3, 2) substr(v, 1, 2) }
   END { flush() }'
 drv=""
-for c in ClokePS2 ApplePS2Controller ApplePS2Keyboard ClokeI2CHID IOUSBHIDDriver; do
+for c in ClokePS2 ApplePS2Controller ApplePS2Keyboard ClokeI2CHID IOUSBHIDDriver IOGOPFramebuffer IOIntelFramebuffer ClokeIntelGfx; do
   n=$(ioreg -r -c $c -d 1 -w 0 2>/dev/null | grep -c "<class $c")
   (( n )) && drv+="$c x$n  "
 done
@@ -34,8 +34,19 @@ print "Network: ${net:-no address}"
 print "CPUs: hw.ncpu=$(sysctl -n hw.ncpu 2>/dev/null) physical=$(sysctl -n hw.physicalcpu 2>/dev/null)"
 dmesg 2>/dev/null | grep -E 'ClokeTrace|Started cpu' | tail -24 | cut -c1-148
 dmesg 2>/dev/null | grep -E 'ClokeRtw88' | tail -12 | cut -c1-148
+# Anzeige (kext/ClokeIntelGfx): Modus, Ausgang, Hintergrundlicht; einmal je Start auch die eDP-Fähigkeiten des Panels
+# (DPCD über AUX), damit klar ist, ob die Helligkeit über PWM oder über AUX geht
+if [[ -e /dev/clokeos_gfx ]]; then
+  print "Display (ClokeIntelGfx):"
+  if [[ -w /dev/clokeos_gfx && ! -e /var/tmp/clokeos-gfx-dpcd ]]; then
+    print dpcd > /dev/clokeos_gfx 2>/dev/null && : > /var/tmp/clokeos-gfx-dpcd
+  fi
+  cut -c1-148 < /dev/clokeos_gfx
+else
+  print "Display: no /dev/clokeos_gfx (ClokeIntelGfx not attached); GOP framebuffer: $(ioreg -r -c IOFramebuffer -d 1 -w 0 2>/dev/null | grep -o "<class [A-Za-z]*" | sort -u | tr "\n" " ")"
+fi
 print "Kernel (ClokePS2, ClokeI2CHID, PS/2, HID):"
-dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v ClokeTrace | tail -16 | cut -c1-148
+dmesg 2>/dev/null | grep -E 'Cloke|PS2|IOUSBHID' | grep -v -E 'ClokeTrace|ClokeIntelGfx' | tail -16 | cut -c1-148
 print "Disk and USB errors:"
 dmesg 2>/dev/null | grep -i -E 'nvme|I/O error|timed out|timeout|abort|xhci.*(error|fail|stall)|usb.*(error|fail|stall|reset)' | grep -v -E 'armed|checkpoint' | tail -8 | cut -c1-148
 print "Installer log:"
